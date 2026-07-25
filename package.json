@@ -1,0 +1,27 @@
+{
+  "name": "anyssh",
+  "private": true,
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "dev": "pnpm --filter @anyssh/client dev",
+    "dev:native": "pnpm --filter @anyssh/client tauri dev",
+    "build": "pnpm --filter @anyssh/client build",
+    "check:native": "cargo check --package anyssh-client",
+    "typecheck": "pnpm --filter @anyssh/client typecheck",
+    "test": "pnpm test:frontend && pnpm test:rust",
+    "test:frontend": "pnpm --filter @anyssh/client test",
+    "test:rust": "cargo test --workspace --exclude anyssh-client",
+    "test:e2e": "pnpm --filter @anyssh/client test:e2e",
+    "test:ssh:smoke": "bash scripts/test-ssh-smoke.sh",
+    "lint": "pnpm lint:frontend && pnpm lint:rust",
+    "lint:frontend": "pnpm --filter @anyssh/client lint",
+    "lint:rust": "cargo clippy --workspace --exclude anyssh-client --all-targets -- -D warnings",
+    "format": "pnpm --filter @anyssh/client format && cargo fmt --all",
+    "format:check": "pnpm --filter @anyssh/client format:check && cargo fmt --all -- --check",
+    "docs:check": "python3 scripts/check-doc-links.py",
+    "qa:browser": "bash scripts/qa/agent-browser-smoke.sh",
+    "qa:native:xvfb": "bash scripts/qa/native-xvfb-smoke.sh"
+  }
+}

@@ -1,0 +1,33 @@
+# JavaScript
+node_modules/
+dist/
+.vite/
+coverage/
+playwright-report/
+test-results/
+
+# Rust
+target/
+
+# Tauri/mobile generated output
+apps/client/src-tauri/gen/
+apps/client/src-tauri/target/
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# IDE/OS
+.idea/
+.DS_Store
+Thumbs.db
+
+# Agent/browser QA artifacts
+artifacts/
+dogfood-output/
+*.auth-state.json
+
+# Temporary files
+*.log
+*.tmp

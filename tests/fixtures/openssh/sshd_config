@@ -1,0 +1,20 @@
+Port 22
+ListenAddress 0.0.0.0
+Protocol 2
+
+PasswordAuthentication yes
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+PermitEmptyPasswords no
+PermitRootLogin no
+UsePAM no
+
+AllowUsers anyssh
+PrintMotd no
+PrintLastLog no
+X11Forwarding no
+AllowAgentForwarding no
+AllowTcpForwarding yes
+PermitTunnel no
+
+Subsystem sftp internal-sftp
