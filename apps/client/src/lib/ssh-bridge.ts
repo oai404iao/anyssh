@@ -9,10 +9,25 @@ export interface ConnectRequest {
   password: string;
   columns: number;
   rows: number;
+  jumpHost?: JumpHostRequest;
 }
+
+export interface JumpHostRequest {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+}
+
+export type SshSessionHop =
+  { kind: "jumpHost"; index: number } | { kind: "target" };
 
 export interface HostKeyEvent {
   type: "hostKey";
+  requestId: number;
+  hop: SshSessionHop;
+  host: string;
+  port: number;
   algorithm: string;
   fingerprintSha256: string;
 }
@@ -34,12 +49,14 @@ interface SessionCallbacks {
 interface PreviewSession {
   callbacks: SessionCallbacks;
   commandBuffer: string;
-  awaitingHostKey: boolean;
+  hostKeys: HostKeyEvent[];
+  hostKeyIndex: number;
   connected: boolean;
 }
 
 const previewSessions = new Map<string, PreviewSession>();
 let nextPreviewId = 1;
+let nextHostKeyRequestId = 1;
 const encoder = new TextEncoder();
 
 export async function connectSsh(
@@ -62,14 +79,15 @@ export async function connectSsh(
 
 export async function confirmHostKey(
   sessionId: string,
+  requestId: number,
   accepted: boolean,
 ): Promise<void> {
   if (!isNativeRuntime) {
-    confirmPreviewHostKey(sessionId, accepted);
+    confirmPreviewHostKey(sessionId, requestId, accepted);
     return;
   }
 
-  await invoke("ssh_confirm_host_key", { sessionId, accepted });
+  await invoke("ssh_confirm_host_key", { sessionId, requestId, accepted });
 }
 
 export async function sendSshInput(
@@ -114,21 +132,17 @@ function connectPreview(
   callbacks: SessionCallbacks,
 ): Promise<string> {
   const sessionId = `preview-${nextPreviewId++}`;
+  const hostKeys = createPreviewHostKeys(request);
   previewSessions.set(sessionId, {
     callbacks,
     commandBuffer: "",
-    awaitingHostKey: true,
+    hostKeys,
+    hostKeyIndex: 0,
     connected: false,
   });
 
   queueMicrotask(() => callbacks.onEvent({ type: "connecting" }));
-  window.setTimeout(() => {
-    callbacks.onEvent({
-      type: "hostKey",
-      algorithm: "ssh-ed25519",
-      fingerprintSha256: "SHA256:4G6Yp8sJ0B7x1uN3zR9Qm2cK5dL8vT6aW0fH3eP7nXs",
-    });
-  }, 180);
+  window.setTimeout(() => emitPreviewHostKey(sessionId), 180);
 
   callbacks.onData(
     encoder.encode(
@@ -139,17 +153,27 @@ function connectPreview(
   return Promise.resolve(sessionId);
 }
 
-function confirmPreviewHostKey(sessionId: string, accepted: boolean) {
+function confirmPreviewHostKey(
+  sessionId: string,
+  requestId: number,
+  accepted: boolean,
+) {
   const session = previewSessions.get(sessionId);
-  if (!session || !session.awaitingHostKey) return;
+  const activeHostKey = session?.hostKeys[session.hostKeyIndex];
+  if (!session || activeHostKey?.requestId !== requestId) return;
 
-  session.awaitingHostKey = false;
   if (!accepted) {
     session.callbacks.onData(
       encoder.encode("\r\n\x1b[31mHost key rejected.\x1b[0m\r\n"),
     );
     session.callbacks.onEvent({ type: "closed" });
     previewSessions.delete(sessionId);
+    return;
+  }
+
+  session.hostKeyIndex += 1;
+  if (session.hostKeyIndex < session.hostKeys.length) {
+    window.setTimeout(() => emitPreviewHostKey(sessionId), 120);
     return;
   }
 
@@ -168,6 +192,42 @@ function confirmPreviewHostKey(sessionId: string, accepted: boolean) {
       ),
     );
   }, 160);
+}
+
+function createPreviewHostKeys(request: ConnectRequest): HostKeyEvent[] {
+  const hostKeys: HostKeyEvent[] = [];
+
+  if (request.jumpHost) {
+    hostKeys.push({
+      type: "hostKey",
+      requestId: nextHostKeyRequestId++,
+      hop: { kind: "jumpHost", index: 1 },
+      host: request.jumpHost.host,
+      port: request.jumpHost.port,
+      algorithm: "ssh-ed25519",
+      fingerprintSha256: "SHA256:7Jv2eL8mQ4sA9wR1yT6pK3nH5cD0xBzGfUoNqPiMVaE",
+    });
+  }
+
+  hostKeys.push({
+    type: "hostKey",
+    requestId: nextHostKeyRequestId++,
+    hop: { kind: "target" },
+    host: request.host,
+    port: request.port,
+    algorithm: "ssh-ed25519",
+    fingerprintSha256: "SHA256:4G6Yp8sJ0B7x1uN3zR9Qm2cK5dL8vT6aW0fH3eP7nXs",
+  });
+
+  return hostKeys;
+}
+
+function emitPreviewHostKey(sessionId: string) {
+  const session = previewSessions.get(sessionId);
+  const hostKey = session?.hostKeys[session.hostKeyIndex];
+  if (session && hostKey) {
+    session.callbacks.onEvent(hostKey);
+  }
 }
 
 function sendPreviewInput(sessionId: string, input: string) {

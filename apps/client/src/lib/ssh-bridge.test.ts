@@ -35,7 +35,13 @@ describe("browser preview SSH bridge", () => {
       "hostKey",
     ]);
 
-    await confirmHostKey(sessionId, true);
+    const hostKeyEvent = events.find((event) => event.type === "hostKey");
+    expect(hostKeyEvent?.type).toBe("hostKey");
+    if (hostKeyEvent?.type !== "hostKey") {
+      throw new Error("host-key event was not emitted");
+    }
+
+    await confirmHostKey(sessionId, hostKeyEvent.requestId, true);
     await vi.runAllTimersAsync();
     expect(events.map((event) => event.type)).toEqual([
       "connecting",
@@ -49,6 +55,67 @@ describe("browser preview SSH bridge", () => {
 
     await disconnectSsh(sessionId);
     expect(events.at(-1)).toEqual({ type: "closed" });
+    vi.useRealTimers();
+  });
+
+  it("requires separate Jump Host and target confirmations", async () => {
+    vi.useFakeTimers();
+    const events: SshClientEvent[] = [];
+
+    const sessionId = await connectSsh(
+      {
+        host: "db.internal",
+        port: 22,
+        username: "target-user",
+        password: "target-password",
+        columns: 80,
+        rows: 24,
+        jumpHost: {
+          host: "gateway.example",
+          port: 22,
+          username: "jump-user",
+          password: "jump-password",
+        },
+      },
+      {
+        onEvent: (event) => events.push(event),
+        onData: () => {},
+      },
+    );
+
+    await vi.runAllTimersAsync();
+    const jumpHostKey = events.find((event) => event.type === "hostKey");
+    expect(jumpHostKey?.type).toBe("hostKey");
+    if (jumpHostKey?.type !== "hostKey") {
+      throw new Error("Jump Host key event was not emitted");
+    }
+    expect(jumpHostKey.hop).toEqual({ kind: "jumpHost", index: 1 });
+    expect(jumpHostKey.host).toBe("gateway.example");
+
+    await confirmHostKey(sessionId, jumpHostKey.requestId, true);
+    await vi.runAllTimersAsync();
+    const hostKeys = events.filter((event) => event.type === "hostKey");
+    expect(hostKeys).toHaveLength(2);
+    const targetHostKey = hostKeys[1];
+    expect(targetHostKey?.type).toBe("hostKey");
+    if (targetHostKey?.type !== "hostKey") {
+      throw new Error("target host-key event was not emitted");
+    }
+    expect(targetHostKey.hop).toEqual({ kind: "target" });
+    expect(targetHostKey.host).toBe("db.internal");
+    expect(events.some((event) => event.type === "connected")).toBe(false);
+
+    await confirmHostKey(sessionId, targetHostKey.requestId, true);
+    await vi.runAllTimersAsync();
+    expect(events.map((event) => event.type)).toEqual([
+      "connecting",
+      "hostKey",
+      "hostKey",
+      "authenticated",
+      "connected",
+    ]);
+
+    await disconnectSsh(sessionId);
     vi.useRealTimers();
   });
 });

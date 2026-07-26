@@ -31,11 +31,14 @@
 - `anyssh-storage`：SQLCipher 4.10、版本化 Schema、Credential 字段 AEAD、
   重启解锁和明文泄漏检查。
 - 原生 Vault 创建、错误 PIN、锁定和重新解锁流程。
+- `direct-tcpip` + `Channel::into_stream` + `connect_stream` 两跳 Jump Host。
+- Jump Host 与 Internal Target 独立 Host Key 确认、目标认证失败、握手超时、
+  取消和第一跳断开测试。
 - CI 工作流。
 
 当前仓库尚未完成：
 
-- Jump Host。
+- Jump Route 持久化和产品配置 UI。
 - 私钥和 SSH Agent 认证。
 - Windows、Android 和 iOS 构建验证。
 - Linux Wayland、IME 和真实桌面环境检查。

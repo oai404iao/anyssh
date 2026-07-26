@@ -132,7 +132,11 @@ function App() {
           break;
         case "hostKey":
           setStatus("verifying");
-          setStatusDetail("User confirmation is required.");
+          setStatusDetail(
+            event.hop.kind === "target"
+              ? "Target host confirmation is required."
+              : `Jump host ${event.hop.index} confirmation is required.`,
+          );
           setPendingHostKey(event);
           break;
         case "authenticated":
@@ -216,11 +220,11 @@ function App() {
   }
 
   async function handleHostKeyDecision(accepted: boolean) {
-    if (!sessionId) return;
+    if (!sessionId || !pendingHostKey) return;
 
     setPendingHostKey(null);
     try {
-      await confirmHostKey(sessionId, accepted);
+      await confirmHostKey(sessionId, pendingHostKey.requestId, accepted);
       if (!accepted) {
         setStatus("closed");
         setStatusDetail("Host key was rejected.");
@@ -596,7 +600,11 @@ function App() {
             <div className="dialog-icon">
               <LockIcon />
             </div>
-            <p className="eyebrow">First connection</p>
+            <p className="eyebrow">
+              {pendingHostKey.hop.kind === "target"
+                ? "Target host"
+                : `Jump host ${pendingHostKey.hop.index}`}
+            </p>
             <h2 id="host-key-title">Verify server identity</h2>
             <p>
               Confirm this fingerprint through a trusted channel before
@@ -606,7 +614,7 @@ function App() {
               <div>
                 <dt>Host</dt>
                 <dd>
-                  {form.host}:{form.port}
+                  {pendingHostKey.host}:{pendingHostKey.port}
                 </dd>
               </div>
               <div>

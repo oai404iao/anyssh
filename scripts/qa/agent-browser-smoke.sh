@@ -81,9 +81,15 @@ fi
 
 agent-browser --session "$SESSION" find role button click --name "Connect"
 agent-browser --session "$SESSION" wait --text "Verify server identity"
+agent-browser --session "$SESSION" wait --text "Target host"
 agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/02-host-key-dialog.png"
-agent-browser --session "$SESSION" snapshot -i >"$OUTPUT_DIR/02-host-key-snapshot.txt"
+agent-browser --session "$SESSION" snapshot >"$OUTPUT_DIR/02-host-key-snapshot.txt"
+
+if ! grep -F "SHA256:" "$OUTPUT_DIR/02-host-key-snapshot.txt" >/dev/null; then
+  echo "The host-key dialog did not expose its SHA-256 fingerprint." >&2
+  exit 1
+fi
 
 agent-browser --session "$SESSION" find role button click --name "Trust for this session"
 agent-browser --session "$SESSION" wait --text "Interactive shell is active."
@@ -142,7 +148,7 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
 
 - Desktop layout rendered at 1440x900.
 - Password reveal and hide changed the real input type.
-- Connect flow displayed a host-key confirmation dialog.
+- Connect flow displayed a target-scoped host-key dialog and SHA-256 fingerprint.
 - Trust action opened the browser QA terminal session.
 - Real keyboard events reached xterm.js.
 - Unicode/CJK/Nerd Font preview command rendered.

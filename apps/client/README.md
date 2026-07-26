@@ -19,3 +19,8 @@ Browser mode is explicitly marked as **Browser QA mode** and uses a local SSH te
 
 Native mode requires creation or unlocking of the Rust-owned encrypted Vault before the
 SSH workspace is mounted. Browser QA mode bypasses this gate and does not persist a PIN.
+
+The typed SSH bridge accepts an optional single Jump Host and scopes every host-key prompt
+to a request ID, route hop, host, and port. The Phase 0 connection form does not expose
+Jump Host editing yet; the Rust core and Docker protocol fixture provide the current
+end-to-end validation.

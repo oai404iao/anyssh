@@ -189,7 +189,8 @@ anyssh/
 
 - 封装连接、认证、重连和状态机，不让上层直接依赖 russh API。
 - 对 SSH 输出建立有界队列和背压。
-- 为 Jump Host 实现 `AsyncRead + AsyncWrite` Channel Stream 适配。
+- 在 `anyssh-ssh` 内封装 russh `Channel::into_stream()` 的
+  `AsyncRead + AsyncWrite` 适配，不向上层暴露 russh 类型。
 - 对 OpenSSH、Dropbear 和旧设备建立兼容测试。
 - 上线前对核心封装做独立安全审计。
 
@@ -266,6 +267,20 @@ TCP/Proxy -> Jump 1 SSH
 - 上游 HTTP CONNECT/SOCKS5 Proxy。
 
 Jump Route 使用有序列表存储，并在保存时检测循环引用。
+
+Phase 0 已验证单个 Jump Host：
+
+```text
+TCP -> Jump SSH Handle
+       -> channel_open_direct_tcpip(Target)
+          -> Channel::into_stream()
+             -> client::connect_stream()
+                -> Target SSH Handle -> PTY
+```
+
+两个 SSH Handle 在 Target Session 生命周期内同时存活，并按 Target、Jump 的
+顺序关闭。Host Key 确认携带不可复用的 Request ID、Hop、Host 和 Port，避免前一跳
+的延迟确认被下一跳误用。
 
 ### 5.6 Proxy 与端口转发
 

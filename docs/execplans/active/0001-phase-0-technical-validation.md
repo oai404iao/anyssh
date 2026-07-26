@@ -93,7 +93,7 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
 - [x] 2026-07-26：确认 Android/iOS 在 Phase 0 仅要求成功构建。
 - [x] 2026-07-26：完成 SQLCipher + PIN Slot、重启解锁、Record AEAD、
   明文扫描和迁移中断原型。
-- [ ] 完成两跳 Jump Host 原型。
+- [x] 2026-07-26：完成两跳 Jump Host 原型。
 - [ ] 建立目标平台 CI/设备验证。
 - [ ] 根据证据更新 ADR 状态并完成 Phase 0 报告。
 
@@ -243,6 +243,21 @@ Client -> Jump Host -> Internal Target
 - Internal Target 只能经 Jump Host 成功连接。
 - 不启动系统 `ssh` 子进程。
 
+当前结果：
+
+- Docker Fixture 使用独立 Edge/Internal 网络；Internal Target 不发布端口，
+  Client 无法解析目标别名，且 Target 只允许来自 Jump 容器内部地址的认证，
+  直接使用容器 IP 登录同样失败。
+- Jump Host 通过 `channel_open_direct_tcpip` 打开目标 Channel，再使用 russh
+  `Channel::into_stream()` 和 `client::connect_stream()` 建立第二层 SSH。
+- Jump Host 与 Target 使用独立运行时 Host Key、请求 ID、Hop 和 Endpoint 确认。
+- 已验证 Internal Target PTY 命令、取消 Host Key 等待、Target 密码错误、
+  Target 握手超时和第一跳容器终止。
+- 测试路径只启动 Fixture 容器和当前 Rust 测试进程，不调用系统 `ssh` 客户端。
+- Tauri Typed IPC 已接受可选单 Jump Host；Phase 0 表单尚未暴露配置 UI。
+
+状态：已完成；任意长度 Jump Route、持久化和产品 UI 留待后续阶段。
+
 ### Milestone 5：平台与图形验证
 
 验证：
@@ -363,6 +378,12 @@ ssh-target-internal
 - 2026-07-26：Tauri/WebKitGTK 进程还会间接加载系统 `libsqlite3.so`，同时
   AnySSH 可执行文件包含 bundled SQLCipher 的 SQLite 符号。当前运行测试通过，
   但符号可见性和跨平台共存仍需在接受 ADR-0003 前专项验证。
+- 2026-07-26：russh 0.62.4 已提供 `Channel::into_stream()`，无需 AnySSH 自行
+  实现底层 `AsyncRead + AsyncWrite` 状态机；仍需在 `anyssh-ssh` 中封装生命周期、
+  超时、取消和逐跳 Host Key。
+- 2026-07-26：Serde 的 enum `rename_all` 未重命名 struct variant 内的
+  `request_id`/`fingerprint_sha256` 字段，原生 Xvfb 暴露了空指纹和缺失
+  `requestId`。现已为 IPC 字段显式重命名并增加序列化回归测试。
 - 其余发现待执行过程中持续补充。
 
 ## Decision Log
@@ -376,6 +397,9 @@ ssh-target-internal
 - 2026-07-26：Android/iOS Phase 0 只要求成功构建，不要求模拟器或真机运行。
 - 2026-07-25：Browser QA mode 只模拟终端交互，不允许打开网络；真实 SSH 行为由 Docker OpenSSH smoke 覆盖。
 - 2026-07-25：任何 UI 变更除 Playwright 外，还必须运行 agent-browser 脚本并人工查看截图。
+- 2026-07-26：Phase 0 Jump Host 使用 russh 内置 `Channel::into_stream()` 接入
+  下一层 `client::connect_stream()`；Host Key 决策必须携带 Request ID，防止
+  延迟或重复操作被后续 Hop 消费。
 
 ## Outcomes & Retrospective
 

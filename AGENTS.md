@@ -18,7 +18,7 @@ React/xterm.js UI
 ```
 
 仓库当前处于 **Phase 0 技术验证实施阶段**。已经存在可构建的 React 前端、
-Rust Workspace、russh SSH 原型、SQLCipher/PIN Vault、Tauri IPC 适配、
+Rust Workspace、russh SSH/Jump Host 原型、SQLCipher/PIN Vault、Tauri IPC 适配、
 OpenSSH Fixture、Playwright E2E、agent-browser 与原生 Xvfb 真实交互检查。
 
 ## 仓库布局
@@ -163,8 +163,10 @@ Tauri Linux 原生编译额外需要 WebKitGTK 4.1、JavaScriptCoreGTK 4.1、GTK
 
 `pnpm test:ssh:smoke`：
 
-- 构建隔离 Alpine/OpenSSH Fixture。
+- 构建隔离 Alpine/OpenSSH Jump Host、Internal Target 和黑洞握手 Fixture。
 - 真实完成 TCP、SSH Handshake、Host Key 确认、密码认证、PTY 和命令输出。
+- 验证 `direct-tcpip` 两跳、逐跳 Host Key、取消、超时、Target 认证失败和
+  第一跳断开。
 - Fixture 凭据只能用于测试，不得替换为真实主机或真实密钥。
 
 ### Vault 检查

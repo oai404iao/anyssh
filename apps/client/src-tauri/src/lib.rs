@@ -10,7 +10,11 @@ use std::{
 };
 
 use anyssh_domain::{SshEndpoint, TerminalSize};
-use anyssh_ssh::{PasswordSessionConfig, SessionControl, SessionEvent, spawn_password_session};
+use anyssh_ssh::{
+    DEFAULT_CONNECTION_TIMEOUT, JumpPasswordSessionConfig, PasswordJumpHostConfig,
+    PasswordSessionConfig, SessionControl, SessionEvent, SessionHop, spawn_jump_password_session,
+    spawn_password_session,
+};
 use anyssh_storage::{LocalVault, VaultPresence};
 use anyssh_vault::PinKdfParameters;
 use serde::{Deserialize, Serialize};
@@ -172,7 +176,7 @@ impl SessionRegistry {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ConnectRequest {
     host: String,
@@ -181,6 +185,16 @@ struct ConnectRequest {
     password: String,
     columns: u32,
     rows: u32,
+    jump_host: Option<JumpHostRequest>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JumpHostRequest {
+    host: String,
+    port: u16,
+    username: String,
+    password: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -188,7 +202,13 @@ struct ConnectRequest {
 enum ClientEvent {
     Connecting,
     HostKey {
+        #[serde(rename = "requestId")]
+        request_id: u64,
+        hop: ClientSessionHop,
+        host: String,
+        port: u16,
         algorithm: String,
+        #[serde(rename = "fingerprintSha256")]
         fingerprint_sha256: String,
     },
     Authenticated,
@@ -200,6 +220,22 @@ enum ClientEvent {
         message: String,
     },
     Closed,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum ClientSessionHop {
+    JumpHost { index: usize },
+    Target,
+}
+
+impl From<SessionHop> for ClientSessionHop {
+    fn from(hop: SessionHop) -> Self {
+        match hop {
+            SessionHop::JumpHost { index } => Self::JumpHost { index },
+            SessionHop::Target => Self::Target,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -264,22 +300,60 @@ async fn ssh_connect(
     data: Channel<InvokeResponseBody>,
     registry: State<'_, SessionRegistry>,
 ) -> Result<String, String> {
-    let endpoint =
-        SshEndpoint::new(request.host, request.port).map_err(|error| error.to_string())?;
-    let terminal_size =
-        TerminalSize::new(request.columns, request.rows).map_err(|error| error.to_string())?;
-    let username = request.username.trim().to_owned();
+    let ConnectRequest {
+        host,
+        port,
+        username,
+        password,
+        columns,
+        rows,
+        jump_host,
+    } = request;
+    let password = Zeroizing::new(password);
+    let jump_host = jump_host.map(|request| {
+        let JumpHostRequest {
+            host,
+            port,
+            username,
+            password,
+        } = request;
+        (host, port, username, Zeroizing::new(password))
+    });
+
+    let endpoint = SshEndpoint::new(host, port).map_err(|error| error.to_string())?;
+    let terminal_size = TerminalSize::new(columns, rows).map_err(|error| error.to_string())?;
+    let username = username.trim().to_owned();
 
     if username.is_empty() {
         return Err("SSH username must not be empty".to_owned());
     }
 
-    let spawned = spawn_password_session(PasswordSessionConfig {
+    let target = PasswordSessionConfig {
         endpoint,
         username,
-        password: Zeroizing::new(request.password),
+        password,
         terminal_size,
-    });
+    };
+
+    let spawned = if let Some((host, port, username, password)) = jump_host {
+        let username = username.trim().to_owned();
+        if username.is_empty() {
+            return Err("Jump Host SSH username must not be empty".to_owned());
+        }
+
+        let endpoint = SshEndpoint::new(host, port).map_err(|error| error.to_string())?;
+        spawn_jump_password_session(JumpPasswordSessionConfig {
+            jump_host: PasswordJumpHostConfig {
+                endpoint,
+                username,
+                password,
+            },
+            target,
+            connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
+        })
+    } else {
+        spawn_password_session(target)
+    };
 
     let session_id = registry.new_id();
     registry.insert(session_id.clone(), spawned.control).await;
@@ -294,6 +368,10 @@ async fn ssh_connect(
             let result = match event {
                 SessionEvent::Connecting => events.send(ClientEvent::Connecting),
                 SessionEvent::HostKey(info) => events.send(ClientEvent::HostKey {
+                    request_id: info.request_id,
+                    hop: info.hop.into(),
+                    host: info.endpoint.host,
+                    port: info.endpoint.port,
                     algorithm: info.algorithm,
                     fingerprint_sha256: info.fingerprint_sha256,
                 }),
@@ -322,13 +400,14 @@ async fn ssh_connect(
 #[tauri::command]
 async fn ssh_confirm_host_key(
     session_id: String,
+    request_id: u64,
     accepted: bool,
     registry: State<'_, SessionRegistry>,
 ) -> Result<(), String> {
     registry
         .get(&session_id)
         .await?
-        .confirm_host_key(accepted)
+        .confirm_host_key(request_id, accepted)
         .await
         .map_err(|error| error.to_string())
 }
@@ -400,4 +479,54 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running AnySSH");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_key_event_uses_the_typed_bridge_field_names() {
+        let value = serde_json::to_value(ClientEvent::HostKey {
+            request_id: 7,
+            hop: ClientSessionHop::JumpHost { index: 1 },
+            host: "jump.example".to_owned(),
+            port: 22,
+            algorithm: "ssh-ed25519".to_owned(),
+            fingerprint_sha256: "SHA256:test".to_owned(),
+        })
+        .expect("host-key event should serialize");
+
+        assert_eq!(value["type"], "hostKey");
+        assert_eq!(value["requestId"], 7);
+        assert_eq!(value["fingerprintSha256"], "SHA256:test");
+        assert_eq!(value["hop"]["kind"], "jumpHost");
+        assert_eq!(value["hop"]["index"], 1);
+        assert!(value.get("request_id").is_none());
+        assert!(value.get("fingerprint_sha256").is_none());
+    }
+
+    #[test]
+    fn connect_request_accepts_an_optional_jump_host() {
+        let request: ConnectRequest = serde_json::from_value(serde_json::json!({
+            "host": "target.internal",
+            "port": 22,
+            "username": "target-user",
+            "password": "target-password",
+            "columns": 100,
+            "rows": 30,
+            "jumpHost": {
+                "host": "jump.example",
+                "port": 2222,
+                "username": "jump-user",
+                "password": "jump-password"
+            }
+        }))
+        .expect("typed Jump Host request should deserialize");
+
+        let jump_host = request.jump_host.expect("Jump Host should be present");
+        assert_eq!(jump_host.host, "jump.example");
+        assert_eq!(jump_host.port, 2222);
+        assert_eq!(jump_host.username, "jump-user");
+    }
 }

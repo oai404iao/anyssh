@@ -271,7 +271,7 @@ cat >"$RUN_DIR/report.md" <<EOF
 - An incorrect PIN was rejected without opening the workspace.
 - The same PIN reopened the existing Vault before the SSH session started.
 - Password input reached the native WebView.
-- Host-key confirmation was displayed and accepted.
+- Host-key confirmation displayed the scoped endpoint and SHA-256 fingerprint and was accepted.
 - The Rust SSH core authenticated against the Docker OpenSSH fixture.
 - X11 keyboard events reached xterm.js and created \`/tmp/anyssh-native-ok\` remotely.
 - Disconnect returned the UI to the disconnected state.

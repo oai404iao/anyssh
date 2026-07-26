@@ -45,6 +45,18 @@ SSH Engine 需要跨桌面和移动平台，支持现代算法、密码、公钥
 - Local/Remote/Dynamic Forward。
 - 大输出背压和取消。
 
+截至 2026-07-26：
+
+- 密码认证、PTY、Resize、Disconnect 和二进制输出已通过 OpenSSH Fixture。
+- `Client -> Jump Host -> Internal Target` 已通过隔离 Docker 网络验证。
+- Jump Host 使用 `direct-tcpip` Channel 的 `into_stream()` 接入下一层
+  `client::connect_stream()`，未启动系统 `ssh` 子进程。
+- Jump Host 与 Target 使用独立 Host Key 请求 ID、Endpoint 和确认步骤。
+- 已覆盖握手取消、Target 认证失败、Target 握手超时和第一跳丢失。
+
+私钥、Agent、Host Key 变化、Forward 完整矩阵和平台证据尚未齐全，因此本 ADR
+继续保持 Proposed。
+
 ## 相关文档
 
 - [总体技术设计：SSH](../design/technical-architecture-2026.md#5-ssh-技术方案)

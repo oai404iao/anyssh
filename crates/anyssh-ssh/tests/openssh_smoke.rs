@@ -35,7 +35,7 @@ async fn password_shell_against_openssh() {
                     assert!(info.fingerprint_sha256.starts_with("SHA256:"));
                     saw_host_key = true;
                     control
-                        .confirm_host_key(true)
+                        .confirm_host_key(info.request_id, true)
                         .await
                         .expect("host key decision should reach the session");
                 }
