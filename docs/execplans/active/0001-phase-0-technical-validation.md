@@ -96,7 +96,11 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
 - [x] 2026-07-26：完成两跳 Jump Host 原型。
 - [x] 2026-07-26：完成 OpenSSH 私钥与加密私钥认证原型。
 - [x] 2026-07-26：完成 Host Key 变化阻断和大输出背压验证。
-- [ ] 建立目标平台 CI/设备验证。
+- [x] 2026-07-26：完成原生 Wayland + IBus/libpinyin + SSH Terminal IME 验证。
+- [x] 2026-07-26：完成 Android ARM64 Debug APK 与 bundled SQLCipher 构建。
+- [x] 2026-07-26：建立独立 Linux/Android Docker Build Image 与 Evidence 导出。
+- [ ] Windows Build CI 已建立，等待 Runner 结果和运行证据。
+- [ ] iOS Build 因当前没有 macOS/Xcode 环境暂缓。
 - [ ] 根据证据更新 ADR 状态并完成 Phase 0 报告。
 
 ## Milestones
@@ -297,7 +301,19 @@ Client -> Jump Host -> Internal Target
 当前结果：
 
 - Linux X11：在 Xvfb 虚拟显示中通过真实 Tauri 启动和 SSH 交互检查。
-- Linux Wayland、真实桌面 IME、Windows、Android 和 iOS 尚待验证。
+- Linux Wayland：Weston 嵌套在 Xvfb 仅承担自动化输入和截图；AnySSH 进程移除
+  `DISPLAY`，强制 `GDK_BACKEND=wayland`，并通过真实 Wayland Socket 启动。
+- Linux IME：IBus/libpinyin 在 xterm.js 中提交 `中文`，经 Tauri IPC 和 Rust
+  SSH Core 到达 Docker OpenSSH，并创建远端 `/tmp/中文` Marker。
+- Android：JDK 17、SDK/Target SDK 36、Build Tools 35.0.0、
+  NDK 29.0.13846066 下成功产出 ARM64 Debug APK；APK 包含
+  `arm64-v8a/libanyssh_client_lib.so` 和 bundled SQLCipher。
+- Build Isolation：`infra/build/Dockerfile` 使用独立 `linux`/`android` Target；
+  容器从 Git 已跟踪和未忽略的文件生成隔离工作树，不继承宿主 Token，并仅复制
+  `artifacts/linux-build` 或 `artifacts/android-build` 回仓库。
+- Windows：原生 Build Job 已加入 GitHub Actions；仓库当前没有 Remote，
+  尚无 Windows Runner 结果。
+- iOS：维护者当前没有 Mac，Build 验证暂缓；Linux 结果不得冒充 Xcode Build。
 
 ### Milestone 6：Phase 0 关闭
 
@@ -349,7 +365,7 @@ Phase 0 最终验证必须覆盖：
 - Linux X11/Wayland 运行记录。
 - Windows 运行记录。
 - Android 构建记录。
-- iOS 构建记录。
+- iOS 构建记录暂缓，直到可用的 macOS/Xcode 环境。
 
 ## 测试环境建议
 
@@ -402,6 +418,28 @@ ssh-target-internal
 - 2026-07-26：Docker 容器使用随机 Host Port 时，`docker restart` 后 Host Port
   可能重新分配。Host Key 变化 Fixture 改为在容器内生成新 Key 并向 sshd 发送
   `SIGHUP`，保持 Endpoint 不变。
+- 2026-07-26：Tauri CLI 2.11.4 的 Android 模板使用 SDK/Target SDK 36，并固定
+  NDK 29.0.13846066。Android ARM64 构建证明 bundled SQLCipher 可与 Tauri、
+  russh 和当前 Rust Core 一起交叉编译。
+- 2026-07-26：Arch 的 Android Command-line Tools 安装在 root-owned
+  `/opt/android-sdk`，普通用户无法安装 SDK Component；本地验证改用可写的
+  `$HOME/Android/Sdk`。
+- 2026-07-26：Wayland 自动化可把 Weston 作为 Xvfb 中的嵌套 Compositor，
+  同时从 AnySSH 进程环境移除 `DISPLAY`。这样既能使用 XTest 注入输入和截图，
+  又能确保 GTK/WebKitGTK 不会回退到 X11。
+- 2026-07-26：QA 初版曾准备记录完整进程环境用于证明 Wayland Backend，这会
+  把与测试无关的宿主 Token 带入 Evidence。实现已改为清空 Session Environment，
+  并只保存 `GDK_BACKEND`、`GTK_IM_MODULE`、`WAYLAND_DISPLAY` 及必要的
+  `XDG_*` Wayland Session 白名单字段。
+- 2026-07-26：Android Container 首次构建暴露 `openssl-src` 会寻找
+  `aarch64-linux-android-ranlib`，而 NDK 仅提供 `llvm-ranlib`。Android Check
+  现显式设置 Target `AR`/`RANLIB` 并把 NDK LLVM Toolchain 加入 `PATH`。
+- 2026-07-26：Tauri Android 模板生成的 Gradle Wrapper JAR 来自较早的官方
+  Wrapper 版本。仓库将其替换为 Gradle 8.14.3 的官方 Wrapper JAR，并同时固定
+  Wrapper JAR 与 Distribution SHA-256，避免只校验下载的 Distribution。
+- 2026-07-26：独立 Build Image 与 Debug Compiler Cache 体积较大，尤其 Android
+  NDK Image。缓存按平台隔离到 `~/.cache/anyssh-build/`，需要在开发文档中明确
+  清理路径，不能把这些缓存纳入仓库或构建证据。
 - 其余发现待执行过程中持续补充。
 
 ## Decision Log
@@ -427,6 +465,15 @@ ssh-target-internal
 - 2026-07-26：Tauri Binary Channel 本身不提供 xterm 消费完成语义，因此增加
   8-Chunk Credit Window；只有 xterm `write` Callback 返回后 WebView 才发送
   `ssh_ack_output`，额度耗尽会停止读取 Core Event。
+- 2026-07-26：Android Phase 0 固定验证 ARM64 Debug APK，不要求 Emulator 或
+  真机；生成的 `src-tauri/gen/android` Source 纳入版本控制，Gradle Build
+  Output 继续由其局部 `.gitignore` 排除。
+- 2026-07-26：维护者当前没有 Mac，iOS Build 暂缓。Phase 0 保留缺失证据，
+  不在 Linux 上宣称 iOS 已验证。
+- 2026-07-26：任何 QA Evidence 禁止转储完整宿主进程环境；采用最小白名单。
+- 2026-07-26：Linux 与 Android Build 使用独立 Docker Target Image；Windows
+  保留原生 Windows Runner，因为 Linux Cross Build 不能替代 MSVC/WebView2
+  验证；iOS 仍必须等待 macOS/Xcode。
 
 ## Outcomes & Retrospective
 

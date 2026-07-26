@@ -100,7 +100,8 @@ static int screenshot(Display *display, Window root, const char *path) {
   return 0;
 }
 
-static int list_windows(Display *display, Window parent, int depth) {
+static int list_windows(Display *display, Window parent, int depth,
+                        const char *window_match) {
   Window root_return;
   Window parent_return;
   Window *children = NULL;
@@ -122,7 +123,8 @@ static int list_windows(Display *display, Window parent, int depth) {
       printf("window=0x%lx depth=%d geometry=%dx%d+%d+%d name=%s\n",
              children[index], depth, attributes.width, attributes.height,
              attributes.x, attributes.y, name ? name : "");
-      if (name && strstr(name, "AnySSH")) {
+      if (strcmp(window_match, "*") == 0 ||
+          (name && strstr(name, window_match))) {
         found = 1;
       }
       if (name) {
@@ -130,7 +132,7 @@ static int list_windows(Display *display, Window parent, int depth) {
       }
     }
 
-    if (list_windows(display, children[index], depth + 1)) {
+    if (list_windows(display, children[index], depth + 1, window_match)) {
       found = 1;
     }
   }
@@ -158,6 +160,23 @@ static void send_key(Display *display, KeySym symbol, int shift) {
   if (shift) {
     XTestFakeKeyEvent(display, shift_code, False, CurrentTime);
   }
+  XFlush(display);
+  usleep(35000);
+}
+
+static void send_ctrl_key(Display *display, KeySym symbol) {
+  KeyCode code = XKeysymToKeycode(display, symbol);
+  KeyCode control_code = XKeysymToKeycode(display, XK_Control_L);
+
+  if (!code || !control_code) {
+    fprintf(stderr, "No keycode for control shortcut\n");
+    exit(3);
+  }
+
+  XTestFakeKeyEvent(display, control_code, True, CurrentTime);
+  XTestFakeKeyEvent(display, code, True, CurrentTime);
+  XTestFakeKeyEvent(display, code, False, CurrentTime);
+  XTestFakeKeyEvent(display, control_code, False, CurrentTime);
   XFlush(display);
   usleep(35000);
 }
@@ -216,7 +235,8 @@ static void type_character(Display *display, char character) {
 
 static int usage(const char *program) {
   fprintf(stderr,
-          "usage: %s probe [SCREENSHOT.bmp] | click X Y | type TEXT | enter\n",
+          "usage: %s probe [SCREENSHOT.bmp] | click X Y | type TEXT | "
+          "enter | ctrl-a | backspace | space | tab\n",
           program);
   return 1;
 }
@@ -234,7 +254,9 @@ int main(int argc, char **argv) {
   root = DefaultRootWindow(display);
 
   if ((argc == 2 || argc == 3) && strcmp(argv[1], "probe") == 0) {
-    int found = list_windows(display, root, 0);
+    const char *window_match = getenv("ANYSSH_X11_WINDOW_MATCH");
+    int found =
+        list_windows(display, root, 0, window_match ? window_match : "AnySSH");
     if (argc == 3 && screenshot(display, root, argv[2]) != 0) {
       result = 5;
     } else if (!found) {
@@ -252,6 +274,14 @@ int main(int argc, char **argv) {
     }
   } else if (argc == 2 && strcmp(argv[1], "enter") == 0) {
     send_key(display, XK_Return, 0);
+  } else if (argc == 2 && strcmp(argv[1], "ctrl-a") == 0) {
+    send_ctrl_key(display, XK_a);
+  } else if (argc == 2 && strcmp(argv[1], "backspace") == 0) {
+    send_key(display, XK_BackSpace, 0);
+  } else if (argc == 2 && strcmp(argv[1], "space") == 0) {
+    send_key(display, XK_space, 0);
+  } else if (argc == 2 && strcmp(argv[1], "tab") == 0) {
+    send_key(display, XK_Tab, 0);
   } else {
     result = usage(argv[0]);
   }

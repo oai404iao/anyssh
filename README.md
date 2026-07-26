@@ -30,8 +30,11 @@ AnySSH 是一个处于 Phase 0 技术验证阶段的开源跨平台 SSH 客户�
 - 原生 Vault 创建、锁定和解锁界面。
 - Docker OpenSSH 真实协议测试。
 - Vitest、Playwright 和 agent-browser 测试路径。
+- 原生 Wayland + IBus/libpinyin + xterm.js 中文组合输入到真实 SSH Shell。
+- Android ARM64 Debug APK 构建，包含 Rust SSH、Vault 与 bundled SQLCipher。
 
-Jump Host/私钥的产品配置与 Vault 集成、SSH Agent 和移动平台构建验证尚未完成。
+Jump Host/私钥的产品配置与 Vault 集成、SSH Agent 和 Windows 运行验证尚未完成。
+iOS 因当前没有 macOS/Xcode 环境暂缓。
 
 当前活动计划：
 
@@ -60,6 +63,10 @@ pnpm test:ssh:smoke
 pnpm test:e2e
 pnpm qa:browser
 pnpm qa:native:xvfb
+pnpm qa:native:wayland
+pnpm check:android
+pnpm check:container:linux
+pnpm check:container:android
 ```
 
 ## Linux 原生依赖
@@ -67,7 +74,14 @@ pnpm qa:native:xvfb
 当前 Tauri 2 Linux 壳依赖 WebKitGTK 4.1 ABI。在 Arch Linux 上安装：
 
 ```bash
-sudo pacman -S --needed webkit2gtk-4.1
+sudo pacman -S --needed \
+  webkit2gtk-4.1 \
+  weston \
+  wayland-utils \
+  ibus \
+  ibus-libpinyin \
+  libappindicator \
+  patchelf
 pnpm check:native
 ```
 
@@ -79,7 +93,34 @@ pnpm check:native
 
 ```bash
 pnpm qa:native:xvfb
+pnpm qa:native:wayland
 ```
+
+Wayland 检查把 Weston 嵌套在 Xvfb 中用于自动化，但 AnySSH 进程本身不继承
+`DISPLAY`，并强制使用 `GDK_BACKEND=wayland`。测试会通过 IBus/libpinyin 把
+`中文` 输入 xterm.js，并验证远端 OpenSSH Fixture 收到对应 UTF-8 文件名。
+
+## Android 构建
+
+Android Phase 0 使用 JDK 17、Android SDK 36、Build Tools 35.0.0 和
+NDK 29.0.13846066：
+
+```bash
+pnpm check:container:android
+```
+
+该命令在独立 Docker Image 中构建 ARM64 Debug APK，并检查 Application ID 和
+Rust Native Library。宿主机已经具备完整 Android Toolchain 时，也可直接运行
+`pnpm check:android`。
+
+Linux 独立构建环境使用：
+
+```bash
+pnpm check:container:linux
+```
+
+Windows 仍使用原生 Windows CI 验证 MSVC/WebView2。iOS 构建必须等待可用的
+macOS/Xcode 环境，Linux Docker 不能替代。
 
 ## 许可证
 

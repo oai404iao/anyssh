@@ -825,6 +825,9 @@ Desktop
 ### Linux
 
 - 同时测试 X11 与原生 Wayland Session。
+- Phase 0 已在 AnySSH 进程无 `DISPLAY` 的条件下使用
+  `GDK_BACKEND=wayland` 启动 WebKitGTK，并通过 IBus/libpinyin 把中文组合输入
+  送入 xterm.js 和真实 SSH Shell。
 - WebKitGTK 必须准备软件/非 WebGL 回退。
 - 支持 Secret Service 不等于所有发行版都已配置 Keyring。
 - 分发优先：Flatpak、AppImage，之后补 deb/rpm。
@@ -839,12 +842,18 @@ Desktop
 
 ### Android
 
+- Phase 0 基线为 JDK 17、SDK/Target SDK 36、Build Tools 35.0.0、
+  NDK 29.0.13846066 和 ARM64 Debug APK。
+- 当前证据只证明 Tauri、russh、Vault 与 bundled SQLCipher 可交叉编译，
+  不代表软键盘、生命周期或 Keystore 已通过设备验证。
 - 长时间后台 SSH/Tunnel 需要 Foreground Service 和常驻通知。
 - 应用进入后台后是否继续连接应由用户配置。
 - 后台限制和应用商店政策必须纳入设计。
 
 ### iOS
 
+- iOS 必须由 macOS/Xcode 完成构建；Linux 编译结果不能作为替代证据。
+- 当前维护者没有 Mac，Phase 0 的 iOS Build 证据暂缓。
 - 不承诺应用在后台长期维持任意 SSH 连接或 Tunnel。
 - 进入后台后保存 UI 状态；恢复时重连或提示连接已断开。
 - WebDAV 后台同步只能作为 best-effort，前台解锁时必须再次同步。
@@ -873,6 +882,10 @@ Desktop
 ### 供应链
 
 - 提交 Cargo.lock 和 pnpm lockfile。
+- Linux/Android Build 使用固定 Rust/Node Base Image Digest 和独立 Docker
+  Target；Android Command-line Tools、Gradle Wrapper JAR 与 Gradle
+  Distribution 校验固定 Hash。
+- Build Container 不继承宿主环境变量，只接收 Git 已跟踪和未忽略的源文件。
 - `cargo audit`、`cargo deny`、许可证检查。
 - npm 依赖审计。
 - 生成 CycloneDX SBOM。
@@ -894,8 +907,8 @@ Desktop
   - 不支持 ETag、弱 ETag、错误 MOVE/PROPFIND 实现。
 - UI：
   - X11、Wayland、Windows。
-  - Android 真机。
-  - iPhone/iPad 真机。
+  - Android Phase 0 先完成 Build；产品阶段补 Emulator/真机。
+  - iOS Phase 0 先完成 Xcode Build；产品阶段补 iPhone/iPad。
 - Fuzz：
   - Sync Operation 解码。
   - SOCKS5/HTTP CONNECT Parser。

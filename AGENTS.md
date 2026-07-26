@@ -42,12 +42,17 @@ any_ssh/
 |   |-- anyssh-vault/                 # VMK、PIN Key Slot、HKDF、Bootstrap
 |   `-- anyssh-storage/               # SQLCipher、Schema、Record AEAD
 |-- scripts/
+|   |-- build-in-container.sh          # 独立 Linux/Android Build Image 入口
+|   |-- check-android-build.sh         # Android ARM64 APK 与 bundled SQLCipher 构建
+|   |-- check-linux-build.sh           # Linux Tauri ELF 构建与链接检查
 |   |-- test-ssh-smoke.sh             # Docker OpenSSH 真实协议检查
 |   |-- check-doc-links.py            # 本地 Markdown 链接检查
 |   `-- qa/
 |       |-- agent-browser-smoke.sh    # Agent 驱动的浏览器 UI 检查
-|       `-- native-xvfb-smoke.sh      # 无桌面环境的原生 Tauri SSH 检查
+|       |-- native-xvfb-smoke.sh      # 无桌面环境的原生 Tauri X11 SSH 检查
+|       `-- native-wayland-ime-smoke.sh # Wayland + IBus + SSH IME 检查
 |-- tests/fixtures/openssh/           # 隔离 OpenSSH Docker Fixture
+|-- infra/build/                      # 固定 Rust/Node/Android/Linux Build Images
 `-- docs/
     |-- README.md                     # 全部文档导航
     |-- project/                      # 产品目标、范围、状态、路线图
@@ -112,6 +117,9 @@ pnpm dev
 # Tauri 原生窗口；需要平台系统依赖
 pnpm dev:native
 pnpm check:native
+pnpm check:android
+pnpm check:container:linux
+pnpm check:container:android
 
 # Arch Linux 当前需要 WebKitGTK 4.1 ABI；webkitgtk-6.0 不能替代
 sudo pacman -S --needed webkit2gtk-4.1
@@ -141,6 +149,9 @@ pnpm qa:browser
 # Xvfb 下启动真实 Tauri/WebKitGTK，并连接 Docker OpenSSH
 pnpm qa:native:xvfb
 
+# Weston 原生 Wayland、IBus/libpinyin、xterm 中文组合输入
+pnpm qa:native:wayland
+
 # 文档链接
 pnpm docs:check
 
@@ -149,7 +160,14 @@ pnpm format
 pnpm format:check
 ```
 
-Tauri Linux 原生编译额外需要 WebKitGTK 4.1、JavaScriptCoreGTK 4.1、GTK3 等系统依赖。当前 CI 的 `native-linux-check` 是规范验证路径。
+Tauri Linux 原生编译额外需要 WebKitGTK 4.1、JavaScriptCoreGTK 4.1、GTK3 等系统依赖。
+当前 CI 使用 `native-linux-check`、`linux-container-build`、`android-build` 和
+`windows-build` 记录平台构建证据；iOS 因缺少 macOS/Xcode 环境暂缓。
+
+Linux 和 Android 的规范 Build 路径优先使用 `infra/build/Dockerfile` 的独立
+Target Image。容器入口只复制 Git 已跟踪和未忽略的工作树文件，不继承宿主环境变量，
+不挂载 Docker Socket，移除 Linux Capability，并只把 `artifacts/` Build
+Evidence 复制回仓库。
 
 ## 测试要求
 
@@ -182,6 +200,25 @@ Tauri Linux 原生编译额外需要 WebKitGTK 4.1、JavaScriptCoreGTK 4.1、GTK
 
 `pnpm qa:native:xvfb` 还必须覆盖原生 Vault 创建、错误 PIN、锁定和重新解锁。
 同时必须验证 Tauri/xterm Ack 背压能排空 4 MiB 输出并继续执行后续远端命令。
+
+`pnpm qa:native:wayland` 必须在 AnySSH 进程没有 `DISPLAY` 的条件下：
+
+- 强制 `GDK_BACKEND=wayland`。
+- 通过 Weston Wayland Socket 启动真实 Tauri/WebKitGTK。
+- 使用 IBus/libpinyin 在 xterm.js 中提交中文组合文本。
+- 通过远端 OpenSSH 文件 Marker 验证 UTF-8 文本真正到达 SSH Shell。
+
+`pnpm check:android` 必须产出 ARM64 Debug APK，并验证：
+
+- Application ID 为 `com.spiredive.anyssh`。
+- APK 包含 `arm64-v8a/libanyssh_client_lib.so`。
+- SSH、Vault 和 bundled SQLCipher 成功交叉编译。
+
+`pnpm check:container:linux` 和 `pnpm check:container:android` 必须分别调用上述
+平台检查，不允许依赖宿主已安装的 WebKitGTK、JDK、Android SDK 或 NDK。
+
+QA 报告不得保存完整进程环境；只允许白名单式记录当前测试必需且不含秘密的
+环境字段。
 
 ### Playwright E2E
 

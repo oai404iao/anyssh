@@ -9,8 +9,7 @@ test-results/
 # Rust
 target/
 
-# Tauri/mobile generated output
-apps/client/src-tauri/gen/
+# Tauri build output
 apps/client/src-tauri/target/
 
 # Local environment

@@ -9,6 +9,9 @@
     "dev:native": "pnpm --filter @anyssh/client tauri dev",
     "build": "pnpm --filter @anyssh/client build",
     "check:native": "cargo check --package anyssh-client",
+    "check:android": "bash scripts/check-android-build.sh",
+    "check:container:linux": "bash scripts/build-in-container.sh linux",
+    "check:container:android": "bash scripts/build-in-container.sh android",
     "typecheck": "pnpm --filter @anyssh/client typecheck",
     "test": "pnpm test:frontend && pnpm test:rust",
     "test:frontend": "pnpm --filter @anyssh/client test",
@@ -23,6 +26,7 @@
     "format:check": "pnpm --filter @anyssh/client format:check && cargo fmt --all -- --check",
     "docs:check": "python3 scripts/check-doc-links.py",
     "qa:browser": "bash scripts/qa/agent-browser-smoke.sh",
-    "qa:native:xvfb": "bash scripts/qa/native-xvfb-smoke.sh"
+    "qa:native:xvfb": "bash scripts/qa/native-xvfb-smoke.sh",
+    "qa:native:wayland": "bash scripts/qa/native-wayland-ime-smoke.sh"
   }
 }

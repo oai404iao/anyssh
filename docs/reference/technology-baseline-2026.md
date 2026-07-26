@@ -6,6 +6,12 @@
 | 领域 | 基线 |
 | --- | --- |
 | Tauri | 2.11.x |
+| Android JDK | OpenJDK 17 |
+| Android SDK / Target SDK | 36 |
+| Android Build Tools | 35.0.0 |
+| Android NDK | 29.0.13846066（Tauri CLI 2.11.4 基线） |
+| Build Container Rust | `rust:1.93.1-bookworm` 固定 Manifest Digest |
+| Build Container Node | `node:24.13.0-bookworm-slim` 固定 Manifest Digest |
 | React | 19.x |
 | Vite | 8.x |
 | xterm.js | 6.0.x |
