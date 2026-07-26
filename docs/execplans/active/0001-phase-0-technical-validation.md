@@ -2,7 +2,7 @@
 
 - 状态：Active
 - 创建日期：2026-07-25
-- 最后更新：2026-07-25
+- 最后更新：2026-07-26
 - 负责人：项目维护者与执行 Agent
 
 ## 目的与用户价值
@@ -24,7 +24,7 @@
 - 项目身份、许可证和 Bundle ID 决策。
 - Cargo/pnpm/Tauri Monorepo 初始化。
 - Linux/Windows 桌面应用壳。
-- Android/iOS 最小构建与启动验证。
+- Android/iOS 最小构建验证。
 - 单 Host SSH PTY 原型。
 - Host Key TOFU 与变化阻断。
 - 密码和私钥认证。
@@ -90,7 +90,9 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
 - [x] 2026-07-25：本机安装 WebKitGTK 4.1 后通过原生 Tauri `cargo check`。
 - [x] 2026-07-25：在无桌面环境的 Xvfb 中启动真实 Tauri/WebKitGTK，
   完成 Host Key 确认、密码认证、远端命令和 Disconnect。
-- [ ] 完成 SQLCipher + PIN Slot 原型。
+- [x] 2026-07-26：确认 Android/iOS 在 Phase 0 仅要求成功构建。
+- [x] 2026-07-26：完成 SQLCipher + PIN Slot、重启解锁、Record AEAD、
+  明文扫描和迁移中断原型。
 - [ ] 完成两跳 Jump Host 原型。
 - [ ] 建立目标平台 CI/设备验证。
 - [ ] 根据证据更新 ADR 状态并完成 Phase 0 报告。
@@ -115,9 +117,7 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
 
 ### Milestone 1：项目身份与仓库基础
 
-需要项目负责人确认：
-
-1. Phase 0 的 Android/iOS 目标是仅构建，还是要求真机启动。
+项目身份和 Phase 0 移动端验收标准均已确认。
 
 随后：
 
@@ -134,8 +134,7 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
 - 新 clone 可以使用文档中的准确命令启动、检查和构建当前平台应用。
 - CI 调用与 AGENTS.md 相同的命令。
 
-状态：项目名、许可证、Bundle ID、工程 scaffold 与 CI 已完成；Android/iOS
-验收标准仍待负责人确认。
+状态：已完成。
 
 ### Milestone 2：SSH Terminal 垂直链路
 
@@ -208,6 +207,20 @@ PIN
 - 应用重启后只能通过正确 PIN 解锁数据。
 - 数据库文件中搜索不到测试 Host、用户名和密码。
 - 错误和中断不会静默破坏 Vault。
+
+当前结果：
+
+- 已创建 `anyssh-vault` 和 `anyssh-storage`。
+- Bootstrap 只包含格式版本、随机 Vault/Slot ID、Argon2id 参数和加密 VMK。
+- SQLCipher 4.10.0 community 与 XChaCha20-Poly1305 Credential 字段加密通过。
+- 正确 PIN、错误 PIN、损坏 Slot、重启解锁和迁移中断回滚测试通过。
+- 原生 Xvfb 流程已验证创建、锁定、错误 PIN、重新解锁和后续 SSH Session。
+- 数据库、WAL、Sidecar、Bootstrap 中未检出测试 Host、用户名、密码、PIN 或
+  `SQLite format 3` Header。
+- Tauri 当前通过 `spawn_blocking` 和单个 `VaultManager` 串行化解锁状态；
+  完整 DB Actor 与 Repository Command 队列留待 Host 持久化阶段。
+
+状态：已完成；跨平台 SQLCipher 构建证据将在 Milestone 5 补充。
 
 ### Milestone 4：两跳 Jump Host
 
@@ -307,8 +320,8 @@ Phase 0 最终验证必须覆盖：
 
 - Linux X11/Wayland 运行记录。
 - Windows 运行记录。
-- Android 构建和启动记录。
-- iOS 构建和启动记录。
+- Android 构建记录。
+- iOS 构建记录。
 
 ## 测试环境建议
 
@@ -342,6 +355,14 @@ ssh-target-internal
 - 2026-07-25：agent-browser 能可靠检查 Browser QA UI、密码控件、Host Key Dialog、xterm 键盘输入和响应式布局；它不等于 Native Tauri SSH 协议测试，因此必须与 OpenSSH Fixture 并存。
 - 2026-07-25：初次真实截图暴露了运行环境缺少 Nerd Font 的问题；已内置 JetBrains Mono Nerd Font。Emoji ZWJ 在 xterm Canvas 中仍需单独兼容验证。
 - 2026-07-25：agent-browser 视频录制依赖系统 `ffmpeg`；当前环境使用逐步截图作为证据。
+- 2026-07-26：`rusqlite 0.40.x` 对应的 `libsqlite3-sys 0.38.x` 构建脚本使用
+  Rust 1.93 尚未稳定的 `cfg_select`；Phase 0 暂时固定
+  `rusqlite 0.39.x`/`libsqlite3-sys 0.37.x`。
+- 2026-07-26：bundled SQLCipher 在 Linux 报告版本
+  `4.10.0 community`；原生 Xvfb 截图确认 Lock/Unlock UI 可用。
+- 2026-07-26：Tauri/WebKitGTK 进程还会间接加载系统 `libsqlite3.so`，同时
+  AnySSH 可执行文件包含 bundled SQLCipher 的 SQLite 符号。当前运行测试通过，
+  但符号可见性和跨平台共存仍需在接受 ADR-0003 前专项验证。
 - 其余发现待执行过程中持续补充。
 
 ## Decision Log
@@ -352,6 +373,7 @@ ssh-target-internal
 - 2026-07-25：正式项目名称确认为 `AnySSH`，主项目许可证确认为
   `AGPL-3.0-only`。
 - 2026-07-25：正式 Bundle/Application ID 确认为 `com.spiredive.anyssh`。
+- 2026-07-26：Android/iOS Phase 0 只要求成功构建，不要求模拟器或真机运行。
 - 2026-07-25：Browser QA mode 只模拟终端交互，不允许打开网络；真实 SSH 行为由 Docker OpenSSH smoke 覆盖。
 - 2026-07-25：任何 UI 变更除 Playwright 外，还必须运行 agent-browser 脚本并人工查看截图。
 

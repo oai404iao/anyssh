@@ -17,7 +17,9 @@ React/xterm.js UI
         -> Platform Security APIs
 ```
 
-仓库当前处于 **Phase 0 技术验证实施阶段**。已经存在可构建的 React 前端、Rust Workspace、russh SSH 原型、Tauri IPC 适配、OpenSSH Fixture、Playwright E2E 和 agent-browser 真实交互检查。
+仓库当前处于 **Phase 0 技术验证实施阶段**。已经存在可构建的 React 前端、
+Rust Workspace、russh SSH 原型、SQLCipher/PIN Vault、Tauri IPC 适配、
+OpenSSH Fixture、Playwright E2E、agent-browser 与原生 Xvfb 真实交互检查。
 
 ## 仓库布局
 
@@ -36,7 +38,9 @@ any_ssh/
 |   `-- src-tauri/                    # Tauri 壳、命令与 Session Registry
 |-- crates/
 |   |-- anyssh-domain/                # Endpoint、TerminalSize 等领域值对象
-|   `-- anyssh-ssh/                   # russh Session、Host Key、PTY、背压
+|   |-- anyssh-ssh/                   # russh Session、Host Key、PTY、背压
+|   |-- anyssh-vault/                 # VMK、PIN Key Slot、HKDF、Bootstrap
+|   `-- anyssh-storage/               # SQLCipher、Schema、Record AEAD
 |-- scripts/
 |   |-- test-ssh-smoke.sh             # Docker OpenSSH 真实协议检查
 |   |-- check-doc-links.py            # 本地 Markdown 链接检查
@@ -53,7 +57,7 @@ any_ssh/
     `-- reference/                    # 外部技术基线、术语等参考资料
 ```
 
-后续计划中的 Vault、Storage、Sync 等目录见
+后续计划中的 App、Platform、Sync 等目录见
 [`docs/design/technical-architecture-2026.md`](docs/design/technical-architecture-2026.md)。
 不要创建没有真实代码的空 crate。
 
@@ -89,6 +93,8 @@ Proposed ADR 是待验证方案，不是不可变事实。若 Phase 0 验证结�
 - Tauri 原生检查使用 `cargo check --package anyssh-client`。
 - Rust Core 不依赖 React/Tauri；Tauri 可以依赖 Core。
 - 不把业务逻辑放进 Tauri command；command 只校验、转换和调用 Core。
+- VMK、KEK、数据库 Key 和解密后的 Credential 不得序列化到前端。
+- Vault Bootstrap 只能包含版本、随机 ID、KDF 参数和加密 Key Slot。
 - 新增依赖时检查其 AGPLv3 兼容性，并更新 lockfile。
 - 第三方字体和素材必须保留各自的许可证文件或声明。
 
@@ -121,6 +127,7 @@ pnpm test:frontend
 # Rust 核心
 pnpm lint:rust
 pnpm test:rust
+pnpm test:vault
 
 # 真实 OpenSSH Docker Fixture
 pnpm test:ssh:smoke
@@ -159,6 +166,17 @@ Tauri Linux 原生编译额外需要 WebKitGTK 4.1、JavaScriptCoreGTK 4.1、GTK
 - 构建隔离 Alpine/OpenSSH Fixture。
 - 真实完成 TCP、SSH Handshake、Host Key 确认、密码认证、PTY 和命令输出。
 - Fixture 凭据只能用于测试，不得替换为真实主机或真实密钥。
+
+### Vault 检查
+
+`pnpm test:rust` 必须覆盖：
+
+- PIN Slot 创建、正确/错误 PIN、损坏 Slot。
+- SQLCipher 重启解锁和 Credential 字段 AEAD。
+- 数据库、WAL、Sidecar 与 Bootstrap 明文扫描。
+- Schema migration 中断回滚。
+
+`pnpm qa:native:xvfb` 还必须覆盖原生 Vault 创建、错误 PIN、锁定和重新解锁。
 
 ### Playwright E2E
 

@@ -27,6 +27,7 @@ for command in \
   cc \
   dbus-run-session \
   docker \
+  grep \
   pkg-config \
   pnpm \
   setsid \
@@ -50,6 +51,7 @@ if ss -ltn 2>/dev/null | grep -Eq '127\.0\.0\.1:2222[[:space:]]'; then
 fi
 
 mkdir -p "$RUN_DIR"
+mkdir -p "$RUN_DIR/xdg-cache" "$RUN_DIR/xdg-config" "$RUN_DIR/xdg-data"
 cc \
   -O2 \
   -Wall \
@@ -116,7 +118,13 @@ if [[ ! -S "/tmp/.X11-unix/X${DISPLAY_NUMBER}" ]]; then
 fi
 
 setsid dbus-run-session -- \
-  bash -lc "cd '$ROOT_DIR' && pnpm dev:native" \
+  bash -lc "
+    export XDG_CACHE_HOME='$RUN_DIR/xdg-cache'
+    export XDG_CONFIG_HOME='$RUN_DIR/xdg-config'
+    export XDG_DATA_HOME='$RUN_DIR/xdg-data'
+    cd '$ROOT_DIR'
+    pnpm dev:native
+  " \
   >"$RUN_DIR/native.log" 2>&1 &
 APP_GROUP=$!
 
@@ -140,16 +148,73 @@ if [[ "$WINDOW_READY" -ne 1 ]]; then
   exit 1
 fi
 
-sleep 2
-"$DRIVER" probe "$RUN_DIR/01-native-ready.bmp" >"$RUN_DIR/windows.txt"
+sleep 3
+"$DRIVER" probe "$RUN_DIR/01-vault-create.bmp" >"$RUN_DIR/windows.txt"
+"$DRIVER" click 640 445
+sleep 0.25
+"$DRIVER" type "246810"
+"$DRIVER" click 640 522
+sleep 0.25
+"$DRIVER" type "246810"
+sleep 0.5
+"$DRIVER" probe "$RUN_DIR/02-vault-pin-entered.bmp" >/dev/null
+"$DRIVER" click 640 577
+
+VAULT_ROOT="$RUN_DIR/xdg-data/com.spiredive.anyssh/vault"
+VAULT_READY=0
+for _ in $(seq 1 60); do
+  if [[ -f "$VAULT_ROOT/vault.bootstrap.json" &&
+    -f "$VAULT_ROOT/vault.db" ]]; then
+    VAULT_READY=1
+    break
+  fi
+  sleep 0.25
+done
+
+if [[ "$VAULT_READY" -ne 1 ]]; then
+  echo "The encrypted Vault was not created." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-vault-create.bmp" >/dev/null || true
+  tail -n 120 "$RUN_DIR/native.log" >&2
+  exit 1
+fi
+
+if grep -R -a -F "246810" "$VAULT_ROOT" >/dev/null 2>&1; then
+  echo "The test PIN leaked into a Vault file." >&2
+  exit 1
+fi
+if head -c 16 "$VAULT_ROOT/vault.db" | grep -a -F "SQLite format 3" >/dev/null; then
+  echo "The Vault database has a plaintext SQLite header." >&2
+  exit 1
+fi
+
+sleep 1
+"$DRIVER" probe "$RUN_DIR/03-native-ready.bmp" >/dev/null
+"$DRIVER" click 1208 44
+sleep 1
+"$DRIVER" probe "$RUN_DIR/04-vault-locked.bmp" >/dev/null
+"$DRIVER" click 640 475
+sleep 0.25
+"$DRIVER" type "000000"
+"$DRIVER" click 640 530
+sleep 3
+"$DRIVER" probe "$RUN_DIR/05-vault-wrong-pin.bmp" >/dev/null
+"$DRIVER" click 640 450
+sleep 0.25
+"$DRIVER" type "246810"
+sleep 0.5
+"$DRIVER" probe "$RUN_DIR/06-vault-unlock-pin-entered.bmp" >/dev/null
+"$DRIVER" click 640 530
+sleep 3
+"$DRIVER" probe "$RUN_DIR/07-vault-reunlocked.bmp" >/dev/null
+
 "$DRIVER" click 1100 440
 sleep 0.25
 "$DRIVER" type "anyssh-test"
 sleep 0.5
-"$DRIVER" probe "$RUN_DIR/02-password-entered.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/08-password-entered.bmp" >/dev/null
 "$DRIVER" click 1100 495
 sleep 1
-"$DRIVER" probe "$RUN_DIR/03-host-key-dialog.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/09-host-key-dialog.bmp" >/dev/null
 
 COMMAND_SUCCEEDED=0
 for _ in $(seq 1 20); do
@@ -175,10 +240,13 @@ if [[ "$COMMAND_SUCCEEDED" -ne 1 ]]; then
   exit 1
 fi
 
-"$DRIVER" probe "$RUN_DIR/04-command-succeeded.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/10-command-succeeded.bmp" >/dev/null
+"$DRIVER" click 1117 44
+sleep 1
+"$DRIVER" probe "$RUN_DIR/11-disconnected.bmp" >/dev/null
 "$DRIVER" click 1208 44
 sleep 1
-"$DRIVER" probe "$RUN_DIR/05-disconnected.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/12-vault-locked-after-session.bmp" >/dev/null
 
 if ! kill -0 "$APP_GROUP" >/dev/null 2>&1; then
   echo "The native process exited unexpectedly." >&2
@@ -196,19 +264,33 @@ cat >"$RUN_DIR/report.md" <<EOF
 
 - Tauri launched a mapped X11 window named \`AnySSH\` without a desktop environment.
 - WebKitGTK loaded the React/xterm.js application through the native runtime.
+- A PIN Slot created a SQLCipher Vault inside an isolated app-data directory.
+- The test PIN was absent from the Bootstrap, database, WAL, and sidecar files.
+- The SQLCipher database did not expose the plaintext SQLite file header.
+- Lock Vault dropped the unlocked Rust storage state and returned to the PIN gate.
+- An incorrect PIN was rejected without opening the workspace.
+- The same PIN reopened the existing Vault before the SSH session started.
 - Password input reached the native WebView.
 - Host-key confirmation was displayed and accepted.
 - The Rust SSH core authenticated against the Docker OpenSSH fixture.
 - X11 keyboard events reached xterm.js and created \`/tmp/anyssh-native-ok\` remotely.
 - Disconnect returned the UI to the disconnected state.
+- Lock Vault returned to the PIN gate after the SSH session ended.
 
 ## Evidence
 
-- \`01-native-ready.bmp\`
-- \`02-password-entered.bmp\`
-- \`03-host-key-dialog.bmp\`
-- \`04-command-succeeded.bmp\`
-- \`05-disconnected.bmp\`
+- \`01-vault-create.bmp\`
+- \`02-vault-pin-entered.bmp\`
+- \`03-native-ready.bmp\`
+- \`04-vault-locked.bmp\`
+- \`05-vault-wrong-pin.bmp\`
+- \`06-vault-unlock-pin-entered.bmp\`
+- \`07-vault-reunlocked.bmp\`
+- \`08-password-entered.bmp\`
+- \`09-host-key-dialog.bmp\`
+- \`10-command-succeeded.bmp\`
+- \`11-disconnected.bmp\`
+- \`12-vault-locked-after-session.bmp\`
 - \`windows.txt\`
 - \`native.log\`
 EOF

@@ -21,10 +21,13 @@ AnySSH 是一个处于 Phase 0 技术验证阶段的开源跨平台 SSH 客户�
 - Tauri 2 + React + xterm.js 应用原型。
 - Rust Workspace 与 russh SSH Core。
 - Host Key 确认、密码认证、PTY、输入、Resize 和 Disconnect。
+- 随机 VMK、Argon2id PIN Slot、HKDF 子密钥和版本化 Bootstrap。
+- SQLCipher 4.10 整库加密与 XChaCha20-Poly1305 Credential 字段加密。
+- 原生 Vault 创建、锁定和解锁界面。
 - Docker OpenSSH 真实协议测试。
 - Vitest、Playwright 和 agent-browser 测试路径。
 
-SQLCipher Vault、Jump Host 和移动平台验证尚未完成。
+Jump Host、私钥认证和移动平台构建验证尚未完成。
 
 当前活动计划：
 

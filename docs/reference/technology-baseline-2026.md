@@ -1,6 +1,6 @@
 # 2026 技术版本基线
 
-> 最后核验：2026-07-25
+> 最后核验：2026-07-26
 > 用途：Phase 0 初始化依赖时的参考起点，不是永久版本锁定。
 
 | 领域 | 基线 |
@@ -10,8 +10,8 @@
 | Vite | 8.x |
 | xterm.js | 6.0.x |
 | Rust SSH | russh 0.62.x |
-| SQLCipher | 4.10.x |
-| rusqlite | 0.40.x |
+| SQLCipher | 4.10.0 community（当前 bundled 验证值） |
+| rusqlite | 0.39.x |
 | Tokio | 1.x |
 | PIN KDF | Argon2id / RFC 9106 |
 | Record AEAD | XChaCha20-Poly1305 |
@@ -25,6 +25,8 @@
 - 不为了追求“最新”采用 RC 或预发布密码学依赖。
 - 自动更新工具可以创建 PR，但不能自动合并安全关键依赖。
 - 版本升级若改变数据格式、安全属性或平台支持范围，必须创建 ADR 或迁移 ExecPlan。
+- Rust 1.93 基线暂时固定 `rusqlite 0.39.x` / `libsqlite3-sys 0.37.x`；
+  0.38.x 的构建脚本使用了该工具链尚未稳定的 `cfg_select`。
 
 ## 主要核验来源
 

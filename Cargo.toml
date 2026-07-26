@@ -3,10 +3,14 @@ members = [
   "apps/client/src-tauri",
   "crates/anyssh-domain",
   "crates/anyssh-ssh",
+  "crates/anyssh-storage",
+  "crates/anyssh-vault",
 ]
 default-members = [
   "crates/anyssh-domain",
   "crates/anyssh-ssh",
+  "crates/anyssh-storage",
+  "crates/anyssh-vault",
 ]
 resolver = "3"
 
@@ -19,11 +23,22 @@ license = "AGPL-3.0-only"
 [workspace.dependencies]
 anyssh-domain = { path = "crates/anyssh-domain" }
 anyssh-ssh = { path = "crates/anyssh-ssh" }
+anyssh-storage = { path = "crates/anyssh-storage" }
+anyssh-vault = { path = "crates/anyssh-vault" }
+argon2 = { version = "0.5.3", features = ["std", "zeroize"] }
+base64 = "0.22"
 bytes = "1.10"
+chacha20poly1305 = "0.10.1"
+getrandom = "0.3.4"
+hkdf = "0.12.4"
+libsqlite3-sys = { version = "=0.37.0", default-features = false }
 russh = "0.62.4"
+rusqlite = { version = "=0.39.0", default-features = false, features = ["bundled-sqlcipher-vendored-openssl"] }
 secrecy = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.10.9"
+tempfile = "3.23"
 thiserror = "2.0"
 tokio = { version = "1.47", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1"

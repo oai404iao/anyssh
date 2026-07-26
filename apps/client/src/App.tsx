@@ -1,5 +1,13 @@
-import { FormEvent, useCallback, useMemo, useRef, useState } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { TerminalPane, type TerminalHandle } from "./components/TerminalPane";
+import { VaultGate } from "./components/VaultGate";
 import {
   confirmHostKey,
   connectSsh,
@@ -10,6 +18,13 @@ import {
   type HostKeyEvent,
   type SshClientEvent,
 } from "./lib/ssh-bridge";
+import {
+  createVault,
+  getVaultStatus,
+  lockVault,
+  unlockVault,
+  type VaultStatus,
+} from "./lib/vault-bridge";
 import "./App.css";
 
 type ConnectionStatus =
@@ -69,6 +84,31 @@ function App() {
   );
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
+  const [vaultError, setVaultError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isNativeRuntime) return;
+
+    let active = true;
+    void getVaultStatus()
+      .then((nextStatus) => {
+        if (active) setVaultStatus(nextStatus);
+      })
+      .catch((statusError) => {
+        if (!active) return;
+        setVaultStatus({
+          state: "damaged",
+          vaultId: null,
+          cipherVersion: null,
+        });
+        setVaultError(String(statusError));
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const connected = status === "connected";
   const busy = ["connecting", "verifying", "authenticated"].includes(status);
@@ -199,6 +239,38 @@ function App() {
     await disconnectSsh(sessionId);
   }
 
+  async function handleVaultSubmit(pin: string) {
+    setVaultError(null);
+    try {
+      const nextStatus =
+        vaultStatus?.state === "uninitialized"
+          ? await createVault(pin)
+          : await unlockVault(pin);
+      setVaultStatus(nextStatus);
+      setStatus("idle");
+      setStatusDetail("Native SSH runtime is available.");
+      setError(null);
+    } catch (vaultOperationError) {
+      setVaultError(String(vaultOperationError));
+    }
+  }
+
+  async function handleVaultLock() {
+    setForm((current) => ({ ...current, password: "" }));
+    setPasswordVisible(false);
+    setPendingHostKey(null);
+    setSessionId(null);
+    setStatus("closed");
+    setStatusDetail("The Vault is locked.");
+    setVaultError(null);
+
+    try {
+      setVaultStatus(await lockVault());
+    } catch (vaultOperationError) {
+      setVaultError(String(vaultOperationError));
+    }
+  }
+
   const handleTerminalInput = useCallback(
     (input: string) => {
       if (!sessionId || !connected) return;
@@ -228,6 +300,17 @@ function App() {
       host: host.target.slice(0, separator),
       port: host.target.slice(separator + 1),
     }));
+  }
+
+  if (isNativeRuntime && vaultStatus?.state !== "unlocked") {
+    return (
+      <VaultGate
+        error={vaultError}
+        onClearError={() => setVaultError(null)}
+        onSubmit={handleVaultSubmit}
+        status={vaultStatus}
+      />
+    );
   }
 
   return (
@@ -299,7 +382,11 @@ function App() {
               {isNativeRuntime ? "Native runtime" : "Browser QA mode"}
             </strong>
             <small>
-              {isNativeRuntime ? "Rust core ready" : "No network connections"}
+              {isNativeRuntime
+                ? vaultStatus?.cipherVersion
+                  ? `SQLCipher ${vaultStatus.cipherVersion}`
+                  : "Rust core ready"
+                : "No network connections"}
             </small>
           </div>
         </div>
@@ -323,6 +410,15 @@ function App() {
                 type="button"
               >
                 Disconnect
+              </button>
+            )}
+            {isNativeRuntime && (
+              <button
+                className="secondary-button"
+                onClick={() => void handleVaultLock()}
+                type="button"
+              >
+                Lock Vault
               </button>
             )}
           </div>

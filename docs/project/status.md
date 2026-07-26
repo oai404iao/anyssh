@@ -1,6 +1,6 @@
 # 项目状态
 
-> 更新日期：2026-07-25
+> 更新日期：2026-07-26
 
 ## 当前阶段
 
@@ -26,11 +26,15 @@
 - 本机 WebKitGTK 4.1 原生 `cargo check`。
 - 无桌面环境下通过 Xvfb 启动 Tauri，并经原生 WebView 连接 Docker OpenSSH、
   确认 Host Key、输入远端命令和断开。
+- `anyssh-vault`：随机 256-bit VMK、Argon2id PIN Slot、XChaCha20-Poly1305
+  包装和 HKDF-SHA-256 子密钥。
+- `anyssh-storage`：SQLCipher 4.10、版本化 Schema、Credential 字段 AEAD、
+  重启解锁和明文泄漏检查。
+- 原生 Vault 创建、错误 PIN、锁定和重新解锁流程。
 - CI 工作流。
 
 当前仓库尚未完成：
 
-- SQLCipher 与 VMK Vault。
 - Jump Host。
 - 私钥和 SSH Agent 认证。
 - Windows、Android 和 iOS 构建验证。
@@ -40,12 +44,12 @@
 ## 待项目负责人确认
 
 1. 首个公开版本是否以 Linux + Windows 为主要交付平台。
-2. Android/iOS 在 Phase 0 中是“可构建”还是“可运行原型”目标。
 
 ## 已确认项目身份
 
 - 产品和仓库名称：`AnySSH`。
 - Bundle/Application ID：`com.spiredive.anyssh`。
+- Android/iOS Phase 0 验收标准：成功构建，不要求模拟器或真机运行。
 - 主许可证：GNU Affero General Public License v3.0 only，
   SPDX 标识为 `AGPL-3.0-only`。
 - 第三方资源继续使用各自许可证，例如内置 Nerd Font 使用 OFL-1.1。

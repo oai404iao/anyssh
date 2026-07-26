@@ -19,7 +19,7 @@
 | 异步运行时 | Tokio | 1.x |
 | SSH 协议 | russh | 0.62.x |
 | 本地数据库 | SQLite + SQLCipher | SQLCipher 4.10.x |
-| Rust 数据访问 | rusqlite，单独 DB Actor | 0.40.x |
+| Rust 数据访问 | rusqlite，单独 DB Actor | 0.39.x（Rust 1.93 Phase 0 固定） |
 | 记录级加密 | XChaCha20-Poly1305 | RustCrypto |
 | PIN/同步密码 KDF | Argon2id | RFC 9106 |
 | 子密钥派生 | HKDF-SHA-256 | 独立用途、独立上下文 |
@@ -448,6 +448,9 @@ monospace
 ---
 
 ## 8. 本地加密 Vault
+
+Phase 0 已实现的精确 Bootstrap、PIN Slot 和 Schema 格式见
+[Vault Bootstrap v1](vault-bootstrap-v1.md)。
 
 ### 8.1 威胁目标
 

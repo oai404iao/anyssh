@@ -13,6 +13,7 @@
     "test": "pnpm test:frontend && pnpm test:rust",
     "test:frontend": "pnpm --filter @anyssh/client test",
     "test:rust": "cargo test --workspace --exclude anyssh-client",
+    "test:vault": "cargo test --package anyssh-vault --package anyssh-storage",
     "test:e2e": "pnpm --filter @anyssh/client test:e2e",
     "test:ssh:smoke": "bash scripts/test-ssh-smoke.sh",
     "lint": "pnpm lint:frontend && pnpm lint:rust",

@@ -43,7 +43,19 @@
 - 模拟迁移中断后可以恢复。
 - 旧 Key Slot 轮换不需要重加密全部数据库。
 
+### 当前证据
+
+- 2026-07-26：Linux bundled SQLCipher 4.10.0 community 创建、重启解锁通过。
+- 2026-07-26：测试 Host、用户名、密码、SQLite 明文 Header 在数据库、WAL、
+  Sidecar 和 Bootstrap 中均未检出。
+- 2026-07-26：Credential 密码使用独立 XChaCha20-Poly1305 AAD 加密。
+- 2026-07-26：Schema migration 中断事务回滚通过。
+- Linux WebKitGTK 同时引入系统 SQLite；bundled SQLCipher 的符号共存需要继续
+  验证，当前未因此把本 ADR 提升为 Accepted。
+- Windows、Android 和 iOS 构建证据仍缺失，因此 ADR 保持 Proposed。
+
 ## 相关文档
 
 - [总体技术设计：本地 Vault](../design/technical-architecture-2026.md#8-本地加密-vault)
+- [Vault Bootstrap v1](../design/vault-bootstrap-v1.md)
 - [ADR-0005](0005-vmk-multiple-key-slots.md)

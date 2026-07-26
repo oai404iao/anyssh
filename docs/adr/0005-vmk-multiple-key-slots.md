@@ -46,7 +46,16 @@
 - 删除某个 Slot 不影响其他 Slot。
 - 生物信息变化后可以通过 PIN 恢复并创建新 Platform Slot。
 
+### 当前证据
+
+- 2026-07-26：随机 256-bit VMK、版本化 PIN Slot 和 Argon2id KEK 已实现。
+- 2026-07-26：正确 PIN、错误 PIN、损坏 Ciphertext 和不安全 KDF 参数测试通过。
+- 2026-07-26：锁定会销毁 Rust 中持有的 `LocalVault`，随后可用同一 PIN
+  重新解包 VMK。
+- Platform、Sync 和 Recovery Slot 尚未实现，因此 ADR 保持 Proposed。
+
 ## 相关文档
 
 - [ADR-0003](0003-double-layer-local-encryption.md)
 - [总体技术设计：密钥层次](../design/technical-architecture-2026.md#82-密钥层次)
+- [Vault Bootstrap v1](../design/vault-bootstrap-v1.md)

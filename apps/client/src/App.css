@@ -810,6 +810,146 @@ input:focus-visible {
   justify-content: center;
 }
 
+.vault-gate {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(
+      circle at 50% 12%,
+      rgba(53, 205, 182, 0.12),
+      transparent 28rem
+    ),
+    radial-gradient(
+      circle at 10% 90%,
+      rgba(94, 81, 180, 0.11),
+      transparent 26rem
+    ),
+    var(--background);
+}
+
+.vault-gate-card {
+  width: min(440px, 100%);
+  padding: 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: 20px;
+  background: rgba(14, 20, 34, 0.94);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.42);
+}
+
+.vault-gate-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 34px;
+}
+
+.vault-gate-brand strong,
+.vault-gate-brand small {
+  display: block;
+}
+
+.vault-gate-brand strong {
+  font-size: 16px;
+}
+
+.vault-gate-brand small {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.vault-gate-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  margin-bottom: 18px;
+  border: 1px solid rgba(107, 230, 210, 0.22);
+  border-radius: 14px;
+  color: var(--cyan);
+  background: rgba(107, 230, 210, 0.07);
+}
+
+.vault-gate-icon svg {
+  width: 21px;
+}
+
+.vault-gate h1 {
+  margin: 0;
+  color: var(--text);
+  font-size: 24px;
+  letter-spacing: -0.035em;
+}
+
+.vault-gate-card > p:not(.eyebrow) {
+  margin: 10px 0 23px;
+  color: #8b96aa;
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.vault-gate form {
+  display: grid;
+  gap: 14px;
+}
+
+.vault-gate label {
+  display: grid;
+  gap: 7px;
+  color: #8792a7;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.vault-gate input {
+  width: 100%;
+  height: 43px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  background: rgba(4, 7, 13, 0.52);
+}
+
+.vault-gate input:focus,
+.vault-gate input:hover {
+  border-color: rgba(107, 230, 210, 0.36);
+}
+
+.vault-gate-error {
+  padding: 10px 11px;
+  border: 1px solid rgba(255, 124, 141, 0.24);
+  border-radius: 9px;
+  color: #ff9cab;
+  background: rgba(255, 124, 141, 0.07);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.vault-gate-security {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 24px;
+}
+
+.vault-gate-security span {
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: #738096;
+  background: rgba(255, 255, 255, 0.02);
+  font-family: "AnySSH Nerd Mono", monospace;
+  font-size: 8px;
+}
+
+.danger-text {
+  color: var(--danger);
+}
+
 @media (max-width: 1050px) {
   .app-shell {
     grid-template-columns: 78px minmax(0, 1fr);
