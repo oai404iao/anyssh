@@ -43,7 +43,7 @@ export type SshClientEvent =
 
 interface SessionCallbacks {
   onEvent(event: SshClientEvent): void;
-  onData(data: Uint8Array): void;
+  onData(data: Uint8Array): void | Promise<void>;
 }
 
 interface PreviewSession {
@@ -70,11 +70,43 @@ export async function connectSsh(
   const events = new Channel<SshClientEvent>();
   events.onmessage = callbacks.onEvent;
 
-  const data = new Channel<ArrayBuffer>();
-  data.onmessage = (message) =>
-    callbacks.onData(normalizeBinaryMessage(message));
+  let resolveSessionId!: (sessionId: string | null) => void;
+  const sessionIdReady = new Promise<string | null>((resolve) => {
+    resolveSessionId = resolve;
+  });
 
-  return invoke<string>("ssh_connect", { request, events, data });
+  const data = new Channel<ArrayBuffer>();
+  data.onmessage = (message) => {
+    const bytes = normalizeBinaryMessage(message);
+    void Promise.resolve()
+      .then(() => callbacks.onData(bytes))
+      .catch((error) => {
+        console.error("Terminal output consumer failed", error);
+      })
+      .then(async () => {
+        try {
+          const sessionId = await sessionIdReady;
+          if (sessionId) {
+            await acknowledgeSshOutput(sessionId);
+          }
+        } catch {
+          // The session can close while an xterm write callback is still queued.
+        }
+      });
+  };
+
+  try {
+    const sessionId = await invoke<string>("ssh_connect", {
+      request,
+      events,
+      data,
+    });
+    resolveSessionId(sessionId);
+    return sessionId;
+  } catch (error) {
+    resolveSessionId(null);
+    throw error;
+  }
 }
 
 export async function confirmHostKey(
@@ -100,6 +132,10 @@ export async function sendSshInput(
   }
 
   await invoke("ssh_send", { sessionId, input });
+}
+
+async function acknowledgeSshOutput(sessionId: string): Promise<void> {
+  await invoke("ssh_ack_output", { sessionId });
 }
 
 export async function resizeSsh(

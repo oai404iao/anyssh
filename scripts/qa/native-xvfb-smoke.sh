@@ -240,6 +240,27 @@ if [[ "$COMMAND_SUCCEEDED" -ne 1 ]]; then
   exit 1
 fi
 
+LARGE_OUTPUT_SUCCEEDED=0
+"$DRIVER" click 500 260
+"$DRIVER" type \
+  "head -c 4194304 /dev/zero | tr '\\0' x; touch /tmp/anyssh-native-large-ok"
+"$DRIVER" enter
+for _ in $(seq 1 120); do
+  if docker exec "$CONTAINER_NAME" \
+    test -f /tmp/anyssh-native-large-ok >/dev/null 2>&1; then
+    LARGE_OUTPUT_SUCCEEDED=1
+    break
+  fi
+  sleep 0.5
+done
+
+if [[ "$LARGE_OUTPUT_SUCCEEDED" -ne 1 ]]; then
+  echo "The native terminal did not drain the 4 MiB output stream." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-large-output.bmp" >/dev/null || true
+  tail -n 120 "$RUN_DIR/native.log" >&2
+  exit 1
+fi
+
 "$DRIVER" probe "$RUN_DIR/10-command-succeeded.bmp" >/dev/null
 "$DRIVER" click 1117 44
 sleep 1
@@ -274,6 +295,8 @@ cat >"$RUN_DIR/report.md" <<EOF
 - Host-key confirmation displayed the scoped endpoint and SHA-256 fingerprint and was accepted.
 - The Rust SSH core authenticated against the Docker OpenSSH fixture.
 - X11 keyboard events reached xterm.js and created \`/tmp/anyssh-native-ok\` remotely.
+- A 4 MiB terminal stream drained through Tauri/xterm acknowledgement backpressure and
+  created \`/tmp/anyssh-native-large-ok\` after the output completed.
 - Disconnect returned the UI to the disconnected state.
 - Lock Vault returned to the PIN gate after the SSH session ended.
 

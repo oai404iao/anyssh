@@ -165,6 +165,8 @@ Tauri Linux 原生编译额外需要 WebKitGTK 4.1、JavaScriptCoreGTK 4.1、GTK
 
 - 构建隔离 Alpine/OpenSSH Jump Host、Internal Target 和黑洞握手 Fixture。
 - 真实完成 TCP、SSH Handshake、Host Key 确认、密码认证、PTY 和命令输出。
+- 验证未加密/口令保护私钥、错误口令、未授权 Key 和密码 Jump + 私钥 Target。
+- 验证已保存 Host Key 匹配免提示、Host Key 变化硬阻断和 4 MiB 输出背压。
 - 验证 `direct-tcpip` 两跳、逐跳 Host Key、取消、超时、Target 认证失败和
   第一跳断开。
 - Fixture 凭据只能用于测试，不得替换为真实主机或真实密钥。
@@ -179,6 +181,7 @@ Tauri Linux 原生编译额外需要 WebKitGTK 4.1、JavaScriptCoreGTK 4.1、GTK
 - Schema migration 中断回滚。
 
 `pnpm qa:native:xvfb` 还必须覆盖原生 Vault 创建、错误 PIN、锁定和重新解锁。
+同时必须验证 Tauri/xterm Ack 背压能排空 4 MiB 输出并继续执行后续远端命令。
 
 ### Playwright E2E
 

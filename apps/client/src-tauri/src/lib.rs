@@ -25,10 +25,18 @@ use tauri::{
 use tokio::sync::RwLock;
 use zeroize::Zeroizing;
 
+const OUTPUT_ACK_BUFFER: usize = 64;
+const MAX_IN_FLIGHT_OUTPUT_CHUNKS: usize = 8;
+
 #[derive(Clone, Default)]
 struct SessionRegistry {
-    sessions: Arc<RwLock<HashMap<String, SessionControl>>>,
+    sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
     next_id: Arc<AtomicU64>,
+}
+
+struct SessionEntry {
+    control: SessionControl,
+    output_acknowledgements: tokio::sync::mpsc::Sender<()>,
 }
 
 #[derive(Clone)]
@@ -149,8 +157,19 @@ impl SessionRegistry {
         format!("ssh-{id}")
     }
 
-    async fn insert(&self, id: String, control: SessionControl) {
-        self.sessions.write().await.insert(id, control);
+    async fn insert(
+        &self,
+        id: String,
+        control: SessionControl,
+        output_acknowledgements: tokio::sync::mpsc::Sender<()>,
+    ) {
+        self.sessions.write().await.insert(
+            id,
+            SessionEntry {
+                control,
+                output_acknowledgements,
+            },
+        );
     }
 
     async fn get(&self, id: &str) -> Result<SessionControl, String> {
@@ -158,8 +177,23 @@ impl SessionRegistry {
             .read()
             .await
             .get(id)
-            .cloned()
+            .map(|entry| entry.control.clone())
             .ok_or_else(|| format!("SSH session `{id}` was not found"))
+    }
+
+    async fn acknowledge_output(&self, id: &str) -> Result<(), String> {
+        let acknowledgements = self
+            .sessions
+            .read()
+            .await
+            .get(id)
+            .map(|entry| entry.output_acknowledgements.clone())
+            .ok_or_else(|| format!("SSH session `{id}` was not found"))?;
+
+        acknowledgements
+            .send(())
+            .await
+            .map_err(|_| format!("SSH session `{id}` is no longer receiving terminal output"))
     }
 
     async fn remove(&self, id: &str) {
@@ -171,9 +205,27 @@ impl SessionRegistry {
             .write()
             .await
             .drain()
-            .map(|(_, control)| control)
+            .map(|(_, entry)| entry.control)
             .collect()
     }
+}
+
+async fn await_output_capacity(
+    acknowledgements: &mut tokio::sync::mpsc::Receiver<()>,
+    in_flight_chunks: &mut usize,
+) -> bool {
+    while acknowledgements.try_recv().is_ok() {
+        *in_flight_chunks = in_flight_chunks.saturating_sub(1);
+    }
+
+    while *in_flight_chunks >= MAX_IN_FLIGHT_OUTPUT_CHUNKS {
+        match acknowledgements.recv().await {
+            Some(()) => *in_flight_chunks = in_flight_chunks.saturating_sub(1),
+            None => return false,
+        }
+    }
+
+    true
 }
 
 #[derive(Deserialize)]
@@ -356,13 +408,18 @@ async fn ssh_connect(
     };
 
     let session_id = registry.new_id();
-    registry.insert(session_id.clone(), spawned.control).await;
+    let (output_acknowledgements, mut output_acknowledgement_receiver) =
+        tokio::sync::mpsc::channel(OUTPUT_ACK_BUFFER);
+    registry
+        .insert(session_id.clone(), spawned.control, output_acknowledgements)
+        .await;
 
     let registry = registry.inner().clone();
     let event_session_id = session_id.clone();
 
     tauri::async_runtime::spawn(async move {
         let mut session_events = spawned.events;
+        let mut in_flight_output_chunks = 0usize;
 
         while let Some(event) = session_events.recv().await {
             let result = match event {
@@ -377,7 +434,24 @@ async fn ssh_connect(
                 }),
                 SessionEvent::Authenticated => events.send(ClientEvent::Authenticated),
                 SessionEvent::Connected => events.send(ClientEvent::Connected),
-                SessionEvent::Data(bytes) => data.send(InvokeResponseBody::Raw(bytes.to_vec())),
+                SessionEvent::Data(bytes) => {
+                    if !await_output_capacity(
+                        &mut output_acknowledgement_receiver,
+                        &mut in_flight_output_chunks,
+                    )
+                    .await
+                    {
+                        registry.remove(&event_session_id).await;
+                        break;
+                    }
+
+                    in_flight_output_chunks += 1;
+                    let sent = data.send(InvokeResponseBody::Raw(bytes.to_vec()));
+                    if sent.is_err() {
+                        in_flight_output_chunks = in_flight_output_chunks.saturating_sub(1);
+                    }
+                    sent
+                }
                 SessionEvent::ExitStatus(code) => events.send(ClientEvent::ExitStatus { code }),
                 SessionEvent::Error(message) => events.send(ClientEvent::Error { message }),
                 SessionEvent::Closed => {
@@ -410,6 +484,14 @@ async fn ssh_confirm_host_key(
         .confirm_host_key(request_id, accepted)
         .await
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn ssh_ack_output(
+    session_id: String,
+    registry: State<'_, SessionRegistry>,
+) -> Result<(), String> {
+    registry.acknowledge_output(&session_id).await
 }
 
 #[tauri::command]
@@ -473,6 +555,7 @@ pub fn run() {
             vault_lock,
             ssh_connect,
             ssh_confirm_host_key,
+            ssh_ack_output,
             ssh_send,
             ssh_resize,
             ssh_disconnect
@@ -528,5 +611,27 @@ mod tests {
         assert_eq!(jump_host.host, "jump.example");
         assert_eq!(jump_host.port, 2222);
         assert_eq!(jump_host.username, "jump-user");
+    }
+
+    #[tokio::test]
+    async fn output_window_waits_for_webview_acknowledgement() {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        let mut in_flight = MAX_IN_FLIGHT_OUTPUT_CHUNKS;
+        sender
+            .send(())
+            .await
+            .expect("acknowledgement should enter the test channel");
+
+        assert!(await_output_capacity(&mut receiver, &mut in_flight).await);
+        assert_eq!(in_flight, MAX_IN_FLIGHT_OUTPUT_CHUNKS - 1);
+    }
+
+    #[tokio::test]
+    async fn output_window_closes_when_the_ack_channel_is_dropped() {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        drop(sender);
+        let mut in_flight = MAX_IN_FLIGHT_OUTPUT_CHUNKS;
+
+        assert!(!await_output_capacity(&mut receiver, &mut in_flight).await);
     }
 }

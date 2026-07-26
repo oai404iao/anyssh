@@ -11,6 +11,8 @@ EDGE_NETWORK="anyssh-edge-$RUN_SUFFIX"
 INTERNAL_NETWORK="anyssh-internal-$RUN_SUFFIX"
 TARGET_ALIAS="ssh-target-internal"
 BLACKHOLE_ALIAS="ssh-blackhole"
+KEY_PASSPHRASE="anyssh-key-passphrase"
+KEY_DIR=""
 
 cleanup() {
   docker rm -f \
@@ -18,10 +20,42 @@ cleanup() {
     "$TARGET_CONTAINER" \
     "$BLACKHOLE_CONTAINER" >/dev/null 2>&1 || true
   docker network rm "$EDGE_NETWORK" "$INTERNAL_NETWORK" >/dev/null 2>&1 || true
+  if [[ -n "$KEY_DIR" ]]; then
+    rm -rf "$KEY_DIR"
+  fi
 }
 trap cleanup EXIT
 
 cd "$ROOT_DIR"
+
+if ! command -v ssh-keygen >/dev/null 2>&1; then
+  echo "ssh-keygen is required for the private-key authentication fixture." >&2
+  exit 1
+fi
+
+KEY_DIR="$(mktemp -d)"
+ssh-keygen \
+  -q \
+  -t ed25519 \
+  -N "" \
+  -C "anyssh-phase0-unencrypted" \
+  -f "$KEY_DIR/id_ed25519_unencrypted"
+ssh-keygen \
+  -q \
+  -t ed25519 \
+  -N "$KEY_PASSPHRASE" \
+  -C "anyssh-phase0-encrypted" \
+  -f "$KEY_DIR/id_ed25519_encrypted"
+ssh-keygen \
+  -q \
+  -t ed25519 \
+  -N "" \
+  -C "anyssh-phase0-unauthorized" \
+  -f "$KEY_DIR/id_ed25519_unauthorized"
+cat \
+  "$KEY_DIR/id_ed25519_unencrypted.pub" \
+  "$KEY_DIR/id_ed25519_encrypted.pub" \
+  >"$KEY_DIR/authorized_keys"
 
 docker build \
   --quiet \
@@ -84,6 +118,20 @@ docker run \
   'printf "#!/bin/sh\nsleep 60\n" >/tmp/hold-open && chmod +x /tmp/hold-open && exec nc -lk -p 22 -e /tmp/hold-open' \
   >/dev/null
 
+install_authorized_keys() {
+  local container="$1"
+  docker exec "$container" \
+    sh -c 'mkdir -p /home/anyssh/.ssh && chmod 700 /home/anyssh/.ssh'
+  docker cp \
+    "$KEY_DIR/authorized_keys" \
+    "$container:/home/anyssh/.ssh/authorized_keys" >/dev/null
+  docker exec "$container" \
+    sh -c 'chown -R anyssh:anyssh /home/anyssh/.ssh && chmod 600 /home/anyssh/.ssh/authorized_keys'
+}
+
+install_authorized_keys "$JUMP_CONTAINER"
+install_authorized_keys "$TARGET_CONTAINER"
+
 FIXTURES_READY=false
 for _ in $(seq 1 100); do
   if ssh-keyscan -p "$JUMP_PORT" 127.0.0.1 >/dev/null 2>&1 \
@@ -113,6 +161,43 @@ ANYSSH_TEST_SSH_PORT="$JUMP_PORT" \
     --ignored \
     --nocapture
 
+ANYSSH_TEST_SSH_HOST=127.0.0.1 \
+ANYSSH_TEST_SSH_PORT="$JUMP_PORT" \
+  cargo test \
+    --package anyssh-ssh \
+    --test backpressure_smoke \
+    -- \
+    --ignored \
+    --nocapture \
+    --test-threads=1
+
+ANYSSH_TEST_JUMP_HOST=127.0.0.1 \
+ANYSSH_TEST_JUMP_PORT="$JUMP_PORT" \
+ANYSSH_TEST_TARGET_HOST="$TARGET_ALIAS" \
+ANYSSH_TEST_TARGET_PORT=22 \
+ANYSSH_TEST_UNENCRYPTED_KEY="$KEY_DIR/id_ed25519_unencrypted" \
+ANYSSH_TEST_ENCRYPTED_KEY="$KEY_DIR/id_ed25519_encrypted" \
+ANYSSH_TEST_UNAUTHORIZED_KEY="$KEY_DIR/id_ed25519_unauthorized" \
+ANYSSH_TEST_KEY_PASSPHRASE="$KEY_PASSPHRASE" \
+  cargo test \
+    --package anyssh-ssh \
+    --test private_key_smoke \
+    -- \
+    --ignored \
+    --nocapture \
+    --test-threads=1
+
+ANYSSH_TEST_JUMP_HOST=127.0.0.1 \
+ANYSSH_TEST_JUMP_PORT="$JUMP_PORT" \
+ANYSSH_TEST_JUMP_CONTAINER="$JUMP_CONTAINER" \
+  cargo test \
+    --package anyssh-ssh \
+    --test host_key_change_smoke \
+    -- \
+    --ignored \
+    --nocapture \
+    --test-threads=1
+
 ANYSSH_TEST_JUMP_HOST=127.0.0.1 \
 ANYSSH_TEST_JUMP_PORT="$JUMP_PORT" \
 ANYSSH_TEST_TARGET_HOST="$TARGET_ALIAS" \
@@ -129,4 +214,4 @@ ANYSSH_TEST_JUMP_CONTAINER="$JUMP_CONTAINER" \
     --nocapture \
     --test-threads=1
 
-echo "OpenSSH direct and Jump Host smoke tests passed."
+echo "OpenSSH auth, host-key, backpressure, and Jump Host smoke tests passed."

@@ -25,7 +25,9 @@ describe("browser preview SSH bridge", () => {
       },
       {
         onEvent: (event) => events.push(event),
-        onData: (data) => output.push(decoder.decode(data)),
+        onData: (data) => {
+          output.push(decoder.decode(data));
+        },
       },
     );
 

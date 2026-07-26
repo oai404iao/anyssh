@@ -48,14 +48,21 @@ SSH Engine 需要跨桌面和移动平台，支持现代算法、密码、公钥
 截至 2026-07-26：
 
 - 密码认证、PTY、Resize、Disconnect 和二进制输出已通过 OpenSSH Fixture。
+- 未加密和口令保护 Ed25519 OpenSSH 私钥已通过真实认证；错误口令与未授权
+  Private Key 均被拒绝。
+- 已保存 SHA-256 Fingerprint 匹配时无需重复提示；Fixture 轮换 Host Key 后
+  连接被硬阻断且不允许再次 TOFU。
+- 4 MiB 连续输出使 64 项 Core Queue 达到容量上限；原生 Tauri 另限制最多
+  8 个未确认 Chunk，并由 xterm `write` Callback Ack 后继续读取，输出完成后仍能
+  执行后续远端命令。
 - `Client -> Jump Host -> Internal Target` 已通过隔离 Docker 网络验证。
 - Jump Host 使用 `direct-tcpip` Channel 的 `into_stream()` 接入下一层
   `client::connect_stream()`，未启动系统 `ssh` 子进程。
 - Jump Host 与 Target 使用独立 Host Key 请求 ID、Endpoint 和确认步骤。
-- 已覆盖握手取消、Target 认证失败、Target 握手超时和第一跳丢失。
+- 已覆盖密码 Jump Host + 私钥 Target、握手取消、Target 认证失败、
+  Target 握手超时和第一跳丢失。
 
-私钥、Agent、Host Key 变化、Forward 完整矩阵和平台证据尚未齐全，因此本 ADR
-继续保持 Proposed。
+Agent、Forward 完整矩阵和平台证据尚未齐全，因此本 ADR继续保持 Proposed。
 
 ## 相关文档
 

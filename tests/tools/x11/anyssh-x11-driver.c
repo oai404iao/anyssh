@@ -195,6 +195,18 @@ static void type_character(Display *display, char character) {
     case ':':
       send_key(display, XK_semicolon, 1);
       break;
+    case ';':
+      send_key(display, XK_semicolon, 0);
+      break;
+    case '\\':
+      send_key(display, XK_backslash, 0);
+      break;
+    case '|':
+      send_key(display, XK_backslash, 1);
+      break;
+    case '\'':
+      send_key(display, XK_apostrophe, 0);
+      break;
     default:
       fprintf(stderr, "Unsupported character: 0x%02x\n",
               (unsigned char)character);

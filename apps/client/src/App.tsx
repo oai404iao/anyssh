@@ -203,7 +203,15 @@ function App() {
         },
         {
           onEvent: handleClientEvent,
-          onData: (data) => terminalRef.current?.write(data),
+          onData: (data) =>
+            new Promise<void>((resolve) => {
+              const terminal = terminalRef.current;
+              if (terminal) {
+                terminal.write(data, resolve);
+              } else {
+                resolve();
+              }
+            }),
         },
       );
 

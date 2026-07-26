@@ -13,7 +13,7 @@ import "@xterm/xterm/css/xterm.css";
 export interface TerminalHandle {
   focus(): void;
   reset(): void;
-  write(data: string | Uint8Array): void;
+  write(data: string | Uint8Array, callback?: () => void): void;
 }
 
 interface TerminalPaneProps {
@@ -33,7 +33,7 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
       () => ({
         focus: () => terminalRef.current?.focus(),
         reset: () => terminalRef.current?.reset(),
-        write: (data) => terminalRef.current?.write(data),
+        write: (data, callback) => terminalRef.current?.write(data, callback),
       }),
       [],
     );

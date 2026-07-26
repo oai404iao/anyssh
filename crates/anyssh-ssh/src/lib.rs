@@ -15,7 +15,10 @@ use bytes::Bytes;
 use russh::{
     ChannelMsg, Disconnect,
     client::{self, Config, Handle, Handler},
-    keys::ssh_key::{self, HashAlg},
+    keys::{
+        PrivateKeyWithHashAlg, decode_secret_key,
+        ssh_key::{self, HashAlg},
+    },
 };
 use thiserror::Error;
 use tokio::{
@@ -26,12 +29,14 @@ use tokio::{
 use tracing::{debug, warn};
 use zeroize::Zeroizing;
 
-const EVENT_BUFFER: usize = 64;
-const COMMAND_BUFFER: usize = 64;
+pub const SESSION_EVENT_BUFFER_CAPACITY: usize = 64;
+pub const SESSION_COMMAND_BUFFER_CAPACITY: usize = 64;
 const HOST_KEY_DECISION_BUFFER: usize = 4;
 const HOST_KEY_DECISION_TIMEOUT: Duration = Duration::from_secs(60);
 pub const DEFAULT_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
 const CHANNEL_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
+const MAX_PRIVATE_KEY_BYTES: usize = 1024 * 1024;
+const MAX_PRIVATE_KEY_PASSPHRASE_BYTES: usize = 64 * 1024;
 
 pub struct PasswordSessionConfig {
     pub endpoint: SshEndpoint,
@@ -69,6 +74,30 @@ impl fmt::Debug for PasswordJumpHostConfig {
     }
 }
 
+pub struct PrivateKeySessionConfig {
+    pub endpoint: SshEndpoint,
+    pub username: String,
+    pub private_key: Zeroizing<String>,
+    pub passphrase: Option<Zeroizing<String>>,
+    pub terminal_size: TerminalSize,
+}
+
+impl fmt::Debug for PrivateKeySessionConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PrivateKeySessionConfig")
+            .field("endpoint", &self.endpoint)
+            .field("username", &self.username)
+            .field("private_key", &"<redacted>")
+            .field(
+                "passphrase",
+                &self.passphrase.as_ref().map(|_| "<redacted>"),
+            )
+            .field("terminal_size", &self.terminal_size)
+            .finish()
+    }
+}
+
 pub struct JumpPasswordSessionConfig {
     pub jump_host: PasswordJumpHostConfig,
     pub target: PasswordSessionConfig,
@@ -81,6 +110,76 @@ impl fmt::Debug for JumpPasswordSessionConfig {
             .debug_struct("JumpPasswordSessionConfig")
             .field("jump_host", &self.jump_host)
             .field("target", &self.target)
+            .field("connection_timeout", &self.connection_timeout)
+            .finish()
+    }
+}
+
+pub enum SessionAuthentication {
+    Password {
+        password: Zeroizing<String>,
+    },
+    PrivateKey {
+        private_key: Zeroizing<String>,
+        passphrase: Option<Zeroizing<String>>,
+    },
+}
+
+impl fmt::Debug for SessionAuthentication {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Password { .. } => formatter
+                .debug_struct("Password")
+                .field("password", &"<redacted>")
+                .finish(),
+            Self::PrivateKey { passphrase, .. } => formatter
+                .debug_struct("PrivateKey")
+                .field("private_key", &"<redacted>")
+                .field("passphrase", &passphrase.as_ref().map(|_| "<redacted>"))
+                .finish(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostKeyPolicy {
+    Prompt,
+    RequireSha256 { fingerprint: String },
+}
+
+pub struct SshConnectionConfig {
+    pub endpoint: SshEndpoint,
+    pub username: String,
+    pub authentication: SessionAuthentication,
+    pub host_key_policy: HostKeyPolicy,
+}
+
+impl fmt::Debug for SshConnectionConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SshConnectionConfig")
+            .field("endpoint", &self.endpoint)
+            .field("username", &self.username)
+            .field("authentication", &self.authentication)
+            .field("host_key_policy", &self.host_key_policy)
+            .finish()
+    }
+}
+
+pub struct SshSessionConfig {
+    pub target: SshConnectionConfig,
+    pub jump_host: Option<SshConnectionConfig>,
+    pub terminal_size: TerminalSize,
+    pub connection_timeout: Duration,
+}
+
+impl fmt::Debug for SshSessionConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SshSessionConfig")
+            .field("target", &self.target)
+            .field("jump_host", &self.jump_host)
+            .field("terminal_size", &self.terminal_size)
             .field("connection_timeout", &self.connection_timeout)
             .finish()
     }
@@ -249,22 +348,93 @@ pub struct SpawnedSession {
     pub events: mpsc::Receiver<SessionEvent>,
 }
 
-enum SessionPlan {
-    Direct(PasswordSessionConfig),
-    Jump(JumpPasswordSessionConfig),
+pub fn spawn_password_session(config: PasswordSessionConfig) -> SpawnedSession {
+    let PasswordSessionConfig {
+        endpoint,
+        username,
+        password,
+        terminal_size,
+    } = config;
+    spawn_session(SshSessionConfig {
+        target: SshConnectionConfig {
+            endpoint,
+            username,
+            authentication: SessionAuthentication::Password { password },
+            host_key_policy: HostKeyPolicy::Prompt,
+        },
+        jump_host: None,
+        terminal_size,
+        connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
+    })
 }
 
-pub fn spawn_password_session(config: PasswordSessionConfig) -> SpawnedSession {
-    spawn_session(SessionPlan::Direct(config))
+pub fn spawn_private_key_session(config: PrivateKeySessionConfig) -> SpawnedSession {
+    let PrivateKeySessionConfig {
+        endpoint,
+        username,
+        private_key,
+        passphrase,
+        terminal_size,
+    } = config;
+    spawn_session(SshSessionConfig {
+        target: SshConnectionConfig {
+            endpoint,
+            username,
+            authentication: SessionAuthentication::PrivateKey {
+                private_key,
+                passphrase,
+            },
+            host_key_policy: HostKeyPolicy::Prompt,
+        },
+        jump_host: None,
+        terminal_size,
+        connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
+    })
 }
 
 pub fn spawn_jump_password_session(config: JumpPasswordSessionConfig) -> SpawnedSession {
-    spawn_session(SessionPlan::Jump(config))
+    let JumpPasswordSessionConfig {
+        jump_host,
+        target,
+        connection_timeout,
+    } = config;
+    let PasswordJumpHostConfig {
+        endpoint: jump_endpoint,
+        username: jump_username,
+        password: jump_password,
+    } = jump_host;
+    let PasswordSessionConfig {
+        endpoint: target_endpoint,
+        username: target_username,
+        password: target_password,
+        terminal_size,
+    } = target;
+
+    spawn_session(SshSessionConfig {
+        target: SshConnectionConfig {
+            endpoint: target_endpoint,
+            username: target_username,
+            authentication: SessionAuthentication::Password {
+                password: target_password,
+            },
+            host_key_policy: HostKeyPolicy::Prompt,
+        },
+        jump_host: Some(SshConnectionConfig {
+            endpoint: jump_endpoint,
+            username: jump_username,
+            authentication: SessionAuthentication::Password {
+                password: jump_password,
+            },
+            host_key_policy: HostKeyPolicy::Prompt,
+        }),
+        terminal_size,
+        connection_timeout,
+    })
 }
 
-fn spawn_session(plan: SessionPlan) -> SpawnedSession {
-    let (event_sender, event_receiver) = mpsc::channel(EVENT_BUFFER);
-    let (command_sender, command_receiver) = mpsc::channel(COMMAND_BUFFER);
+pub fn spawn_session(config: SshSessionConfig) -> SpawnedSession {
+    let (event_sender, event_receiver) = mpsc::channel(SESSION_EVENT_BUFFER_CAPACITY);
+    let (command_sender, command_receiver) = mpsc::channel(SESSION_COMMAND_BUFFER_CAPACITY);
     let (host_key_sender, host_key_receiver) = mpsc::channel(HOST_KEY_DECISION_BUFFER);
     let cancellation = SessionCancellation::default();
     let pending_host_key_request = Arc::new(AtomicU64::new(0));
@@ -280,7 +450,7 @@ fn spawn_session(plan: SessionPlan) -> SpawnedSession {
     };
 
     tokio::spawn(run_session(
-        plan,
+        config,
         event_sender,
         command_receiver,
         Arc::new(Mutex::new(host_key_receiver)),
@@ -296,7 +466,7 @@ fn spawn_session(plan: SessionPlan) -> SpawnedSession {
 }
 
 async fn run_session(
-    plan: SessionPlan,
+    config: SshSessionConfig,
     events: mpsc::Sender<SessionEvent>,
     mut commands: mpsc::Receiver<SessionCommand>,
     host_key_decisions: Arc<Mutex<mpsc::Receiver<HostKeyDecision>>>,
@@ -311,32 +481,16 @@ async fn run_session(
         return;
     }
 
-    let result = match plan {
-        SessionPlan::Direct(config) => {
-            connect_and_run_direct(
-                config,
-                &events,
-                &mut commands,
-                host_key_decisions,
-                pending_host_key_request,
-                next_host_key_request,
-                &cancellation,
-            )
-            .await
-        }
-        SessionPlan::Jump(config) => {
-            connect_and_run_jump(
-                config,
-                &events,
-                &mut commands,
-                host_key_decisions,
-                pending_host_key_request,
-                next_host_key_request,
-                &cancellation,
-            )
-            .await
-        }
-    };
+    let result = connect_and_run(
+        config,
+        &events,
+        &mut commands,
+        host_key_decisions,
+        pending_host_key_request,
+        next_host_key_request,
+        &cancellation,
+    )
+    .await;
 
     if let Err(error) = result
         && !matches!(error, SessionError::Cancelled)
@@ -348,8 +502,8 @@ async fn run_session(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn connect_and_run_direct(
-    config: PasswordSessionConfig,
+async fn connect_and_run(
+    config: SshSessionConfig,
     events: &mpsc::Sender<SessionEvent>,
     commands: &mut mpsc::Receiver<SessionCommand>,
     host_key_decisions: Arc<Mutex<mpsc::Receiver<HostKeyDecision>>>,
@@ -357,88 +511,92 @@ async fn connect_and_run_direct(
     next_host_key_request: Arc<AtomicU64>,
     cancellation: &SessionCancellation,
 ) -> Result<(), SessionError> {
-    let connection_timeout = DEFAULT_CONNECTION_TIMEOUT;
-    let client_config = make_client_config();
-    let hop = SessionHop::Target;
-    let session = connect_tcp_endpoint(
-        &config.endpoint,
-        hop,
-        client_config,
-        events,
-        host_key_decisions,
-        pending_host_key_request,
-        next_host_key_request,
-        cancellation,
+    let SshSessionConfig {
+        target,
+        jump_host,
+        terminal_size,
         connection_timeout,
-    )
-    .await?;
+    } = config;
 
-    run_target_session(
-        session,
-        config,
-        events,
-        commands,
-        cancellation,
-        connection_timeout,
-    )
-    .await
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn connect_and_run_jump(
-    config: JumpPasswordSessionConfig,
-    events: &mpsc::Sender<SessionEvent>,
-    commands: &mut mpsc::Receiver<SessionCommand>,
-    host_key_decisions: Arc<Mutex<mpsc::Receiver<HostKeyDecision>>>,
-    pending_host_key_request: Arc<AtomicU64>,
-    next_host_key_request: Arc<AtomicU64>,
-    cancellation: &SessionCancellation,
-) -> Result<(), SessionError> {
-    if config.connection_timeout.is_zero() {
+    if connection_timeout.is_zero() {
         return Err(SessionError::InvalidConnectionTimeout);
     }
 
     let client_config = make_client_config();
+    let Some(jump_host) = jump_host else {
+        let target_session = connect_tcp_endpoint(
+            &target.endpoint,
+            SessionHop::Target,
+            target.host_key_policy.clone(),
+            client_config,
+            events,
+            host_key_decisions,
+            pending_host_key_request,
+            next_host_key_request,
+            cancellation,
+            connection_timeout,
+        )
+        .await?;
+
+        return run_target_session(
+            target_session,
+            target,
+            terminal_size,
+            events,
+            commands,
+            cancellation,
+            connection_timeout,
+        )
+        .await;
+    };
+
+    let SshConnectionConfig {
+        endpoint: jump_endpoint,
+        username: jump_username,
+        authentication: jump_authentication,
+        host_key_policy: jump_host_key_policy,
+    } = jump_host;
     let jump_hop = SessionHop::JumpHost { index: 1 };
     let mut jump_session = connect_tcp_endpoint(
-        &config.jump_host.endpoint,
+        &jump_endpoint,
         jump_hop.clone(),
+        jump_host_key_policy,
         client_config.clone(),
         events,
         host_key_decisions.clone(),
         pending_host_key_request.clone(),
         next_host_key_request.clone(),
         cancellation,
-        config.connection_timeout,
+        connection_timeout,
     )
     .await?;
 
     let result = async {
-        authenticate_password(
+        authenticate(
             &mut jump_session,
             &jump_hop,
-            &config.jump_host.username,
-            config.jump_host.password.as_str(),
+            &jump_username,
+            jump_authentication,
             cancellation,
-            config.connection_timeout,
+            connection_timeout,
         )
         .await?;
 
         debug!(
-            host = %config.jump_host.endpoint.host,
-            port = config.jump_host.endpoint.port,
+            host = %jump_endpoint.host,
+            port = jump_endpoint.port,
             "jump host authenticated"
         );
 
         let target_channel = await_ssh_operation(
             jump_session.channel_open_direct_tcpip(
-                config.target.endpoint.host.clone(),
-                u32::from(config.target.endpoint.port),
+                target.endpoint.host.clone(),
+                u32::from(target.endpoint.port),
                 "127.0.0.1",
                 0,
             ),
             cancellation,
-            config.connection_timeout,
+            connection_timeout,
             jump_hop.clone(),
             "direct-tcpip channel",
         )
@@ -446,25 +604,27 @@ async fn connect_and_run_jump(
 
         let target_session = connect_stream_endpoint(
             target_channel.into_stream(),
-            &config.target.endpoint,
+            &target.endpoint,
             SessionHop::Target,
+            target.host_key_policy.clone(),
             client_config,
             events,
             host_key_decisions,
             pending_host_key_request,
             next_host_key_request,
             cancellation,
-            config.connection_timeout,
+            connection_timeout,
         )
         .await?;
 
         run_target_session(
             target_session,
-            config.target,
+            target,
+            terminal_size,
             events,
             commands,
             cancellation,
-            config.connection_timeout,
+            connection_timeout,
         )
         .await
     }
@@ -481,6 +641,7 @@ async fn connect_and_run_jump(
 async fn connect_tcp_endpoint(
     endpoint: &SshEndpoint,
     hop: SessionHop,
+    host_key_policy: HostKeyPolicy,
     client_config: Arc<Config>,
     events: &mpsc::Sender<SessionEvent>,
     host_key_decisions: Arc<Mutex<mpsc::Receiver<HostKeyDecision>>>,
@@ -519,6 +680,7 @@ async fn connect_tcp_endpoint(
         socket,
         endpoint,
         hop,
+        host_key_policy,
         client_config,
         events,
         host_key_decisions,
@@ -535,6 +697,7 @@ async fn connect_stream_endpoint<R>(
     stream: R,
     endpoint: &SshEndpoint,
     hop: SessionHop,
+    host_key_policy: HostKeyPolicy,
     client_config: Arc<Config>,
     events: &mpsc::Sender<SessionEvent>,
     host_key_decisions: Arc<Mutex<mpsc::Receiver<HostKeyDecision>>>,
@@ -546,6 +709,7 @@ async fn connect_stream_endpoint<R>(
 where
     R: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
+    let host_key_mismatch = Arc::new(Mutex::new(None));
     let handler = ClientHandler {
         events: events.clone(),
         host_key_decisions,
@@ -554,33 +718,59 @@ where
         cancellation: cancellation.clone(),
         hop: hop.clone(),
         endpoint: endpoint.clone(),
+        host_key_policy,
+        host_key_mismatch: host_key_mismatch.clone(),
         accepted_fingerprint: None,
     };
 
-    await_ssh_operation(
+    let result = await_ssh_operation(
         client::connect_stream(client_config, stream, handler),
         cancellation,
         connection_timeout,
-        hop,
+        hop.clone(),
         "SSH handshake",
     )
-    .await
+    .await;
+
+    match result {
+        Ok(session) => Ok(session),
+        Err(error) => {
+            if let Some(mismatch) = host_key_mismatch.lock().await.take() {
+                Err(SessionError::HostKeyChanged {
+                    hop,
+                    host: endpoint.host.clone(),
+                    port: endpoint.port,
+                    expected: mismatch.expected,
+                    actual: mismatch.actual,
+                })
+            } else {
+                Err(error)
+            }
+        }
+    }
 }
 
 async fn run_target_session(
     mut session: Handle<ClientHandler>,
-    config: PasswordSessionConfig,
+    config: SshConnectionConfig,
+    terminal_size: TerminalSize,
     events: &mpsc::Sender<SessionEvent>,
     commands: &mut mpsc::Receiver<SessionCommand>,
     cancellation: &SessionCancellation,
     connection_timeout: Duration,
 ) -> Result<(), SessionError> {
+    let SshConnectionConfig {
+        username,
+        authentication,
+        ..
+    } = config;
+
     let result = async {
-        authenticate_password(
+        authenticate(
             &mut session,
             &SessionHop::Target,
-            &config.username,
-            config.password.as_str(),
+            &username,
+            authentication,
             cancellation,
             connection_timeout,
         )
@@ -601,8 +791,8 @@ async fn run_target_session(
             channel.request_pty(
                 true,
                 "xterm-256color",
-                config.terminal_size.columns,
-                config.terminal_size.rows,
+                terminal_size.columns,
+                terminal_size.rows,
                 0,
                 0,
                 &[],
@@ -642,20 +832,133 @@ async fn run_target_session(
     result
 }
 
+async fn authenticate(
+    session: &mut Handle<ClientHandler>,
+    hop: &SessionHop,
+    username: &str,
+    authentication: SessionAuthentication,
+    cancellation: &SessionCancellation,
+    connection_timeout: Duration,
+) -> Result<(), SessionError> {
+    if username.trim().is_empty() {
+        return Err(SessionError::InvalidUsername { hop: hop.clone() });
+    }
+
+    match authentication {
+        SessionAuthentication::Password { password } => {
+            authenticate_password(
+                session,
+                hop,
+                username,
+                password,
+                cancellation,
+                connection_timeout,
+            )
+            .await
+        }
+        SessionAuthentication::PrivateKey {
+            private_key,
+            passphrase,
+        } => {
+            authenticate_private_key(
+                session,
+                hop,
+                username,
+                private_key,
+                passphrase,
+                cancellation,
+                connection_timeout,
+            )
+            .await
+        }
+    }
+}
+
 async fn authenticate_password(
     session: &mut Handle<ClientHandler>,
     hop: &SessionHop,
     username: &str,
-    password: &str,
+    password: Zeroizing<String>,
     cancellation: &SessionCancellation,
     connection_timeout: Duration,
 ) -> Result<(), SessionError> {
     let authentication = await_ssh_operation(
-        session.authenticate_password(username, password),
+        session.authenticate_password(username, password.as_str()),
         cancellation,
         connection_timeout,
         hop.clone(),
         "password authentication",
+    )
+    .await?;
+
+    if authentication.success() {
+        Ok(())
+    } else {
+        Err(SessionError::AuthenticationFailed { hop: hop.clone() })
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn authenticate_private_key(
+    session: &mut Handle<ClientHandler>,
+    hop: &SessionHop,
+    username: &str,
+    private_key: Zeroizing<String>,
+    passphrase: Option<Zeroizing<String>>,
+    cancellation: &SessionCancellation,
+    connection_timeout: Duration,
+) -> Result<(), SessionError> {
+    if private_key.is_empty()
+        || private_key.len() > MAX_PRIVATE_KEY_BYTES
+        || passphrase
+            .as_ref()
+            .is_some_and(|value| value.len() > MAX_PRIVATE_KEY_PASSPHRASE_BYTES)
+    {
+        return Err(SessionError::InvalidPrivateKey { hop: hop.clone() });
+    }
+
+    let decode_task = tokio::task::spawn_blocking(move || {
+        decode_secret_key(
+            private_key.as_str(),
+            passphrase.as_ref().map(|value| value.as_str()),
+        )
+    });
+    let decoded_key = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(SessionError::Cancelled),
+        result = decode_task => {
+            result
+                .map_err(|_| SessionError::PrivateKeyTaskFailed { hop: hop.clone() })?
+                .map_err(|source| SessionError::PrivateKeyDecode {
+                    hop: hop.clone(),
+                    source,
+                })?
+        }
+    };
+
+    let hash_alg = if decoded_key.algorithm().is_rsa() {
+        await_ssh_operation(
+            session.best_supported_rsa_hash(),
+            cancellation,
+            connection_timeout,
+            hop.clone(),
+            "RSA signature negotiation",
+        )
+        .await?
+        .flatten()
+    } else {
+        None
+    };
+
+    let authentication = await_ssh_operation(
+        session.authenticate_publickey(
+            username,
+            PrivateKeyWithHashAlg::new(Arc::new(decoded_key), hash_alg),
+        ),
+        cancellation,
+        connection_timeout,
+        hop.clone(),
+        "private-key authentication",
     )
     .await?;
 
@@ -814,6 +1117,11 @@ impl Drop for PendingHostKeyRequest {
     }
 }
 
+struct HostKeyMismatch {
+    expected: String,
+    actual: String,
+}
+
 struct ClientHandler {
     events: mpsc::Sender<SessionEvent>,
     host_key_decisions: Arc<Mutex<mpsc::Receiver<HostKeyDecision>>>,
@@ -822,6 +1130,8 @@ struct ClientHandler {
     cancellation: SessionCancellation,
     hop: SessionHop,
     endpoint: SshEndpoint,
+    host_key_policy: HostKeyPolicy,
+    host_key_mismatch: Arc<Mutex<Option<HostKeyMismatch>>>,
     accepted_fingerprint: Option<String>,
 }
 
@@ -836,6 +1146,19 @@ impl Handler for ClientHandler {
 
         if self.accepted_fingerprint.as_deref() == Some(fingerprint_sha256.as_str()) {
             return Ok(true);
+        }
+
+        if let HostKeyPolicy::RequireSha256 { fingerprint } = &self.host_key_policy {
+            if fingerprint == &fingerprint_sha256 {
+                self.accepted_fingerprint = Some(fingerprint_sha256);
+                return Ok(true);
+            }
+
+            *self.host_key_mismatch.lock().await = Some(HostKeyMismatch {
+                expected: fingerprint.clone(),
+                actual: fingerprint_sha256,
+            });
+            return Ok(false);
         }
 
         let request_id = self.next_host_key_request.fetch_add(1, Ordering::Relaxed);
@@ -922,6 +1245,26 @@ enum SessionError {
     },
     #[error("{hop} authentication failed")]
     AuthenticationFailed { hop: SessionHop },
+    #[error("{hop} host key changed for {host}:{port} (expected {expected}, received {actual})")]
+    HostKeyChanged {
+        hop: SessionHop,
+        host: String,
+        port: u16,
+        expected: String,
+        actual: String,
+    },
+    #[error("{hop} SSH username is empty")]
+    InvalidUsername { hop: SessionHop },
+    #[error("{hop} private key is invalid")]
+    InvalidPrivateKey { hop: SessionHop },
+    #[error("{hop} private key could not be decoded")]
+    PrivateKeyDecode {
+        hop: SessionHop,
+        #[source]
+        source: russh::keys::Error,
+    },
+    #[error("{hop} private-key decoding task failed")]
+    PrivateKeyTaskFailed { hop: SessionHop },
     #[error("SSH connection timeout must be greater than zero")]
     InvalidConnectionTimeout,
     #[error("SSH event receiver closed")]
@@ -946,6 +1289,22 @@ mod tests {
         let debug = format!("{config:?}");
         assert!(debug.contains("<redacted>"));
         assert!(!debug.contains("do-not-log-me"));
+    }
+
+    #[test]
+    fn private_key_debug_output_is_redacted() {
+        let config = PrivateKeySessionConfig {
+            endpoint: SshEndpoint::new("example.com", 22).expect("valid endpoint"),
+            username: "alice".to_owned(),
+            private_key: Zeroizing::new("private-key-material".to_owned()),
+            passphrase: Some(Zeroizing::new("private-key-passphrase".to_owned())),
+            terminal_size: TerminalSize::default(),
+        };
+
+        let debug = format!("{config:?}");
+        assert!(debug.contains("<redacted>"));
+        assert!(!debug.contains("private-key-material"));
+        assert!(!debug.contains("private-key-passphrase"));
     }
 
     #[tokio::test]

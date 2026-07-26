@@ -24,3 +24,7 @@ The typed SSH bridge accepts an optional single Jump Host and scopes every host-
 to a request ID, route hop, host, and port. The Phase 0 connection form does not expose
 Jump Host editing yet; the Rust core and Docker protocol fixture provide the current
 end-to-end validation.
+
+Native terminal output uses an acknowledgement window: Tauri keeps at most eight chunks
+in flight and React acknowledges each chunk from the xterm.js `write` callback. Browser QA
+mode does not invoke native acknowledgement commands.

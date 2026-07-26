@@ -94,6 +94,8 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
 - [x] 2026-07-26：完成 SQLCipher + PIN Slot、重启解锁、Record AEAD、
   明文扫描和迁移中断原型。
 - [x] 2026-07-26：完成两跳 Jump Host 原型。
+- [x] 2026-07-26：完成 OpenSSH 私钥与加密私钥认证原型。
+- [x] 2026-07-26：完成 Host Key 变化阻断和大输出背压验证。
 - [ ] 建立目标平台 CI/设备验证。
 - [ ] 根据证据更新 ADR 状态并完成 Phase 0 报告。
 
@@ -170,11 +172,22 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
 
 当前结果：
 
-- 已验证真实 OpenSSH 密码认证、Host Key 人工确认、PTY、命令输出和 Disconnect。
+- 已验证真实 OpenSSH 密码认证、未加密/口令保护 Ed25519 私钥、Host Key
+  人工确认、PTY、命令输出和 Disconnect。
+- 已验证错误私钥口令、未授权 Private Key，以及 Password Jump Host ->
+  Private Key Target 混合认证。
 - 已建立有界 Rust Event Channel 和 Tauri Raw Binary Channel。
+- 已验证已保存 Fingerprint 匹配时不重复提示，Fixture 轮换 Host Key 后直接
+  阻断且不允许重新 TOFU。
+- 4 MiB 连续输出会填满 64 项 Event Queue；停止消费时 SSH Window Flow Control
+  产生背压，恢复消费后输出与结束标记完整到达。
+- Tauri 到 WebView 额外限制最多 8 个未确认 Binary Chunk；xterm `write`
+  Callback 通过 `ssh_ack_output` 归还额度。原生 Xvfb 已验证 4 MiB 输出完成后
+  仍能创建后续远端 Marker 并正常 Disconnect。
 - 已通过 `pnpm qa:native:xvfb` 验证原生 WebView -> Tauri IPC -> Rust SSH Core
   -> Docker OpenSSH 的完整交互链路。
-- 大输出专项基准、私钥认证和 Host Key 变化 Fixture 尚待补充。
+
+状态：已完成。
 
 ### Milestone 3：最小加密 Vault
 
@@ -384,6 +397,11 @@ ssh-target-internal
 - 2026-07-26：Serde 的 enum `rename_all` 未重命名 struct variant 内的
   `request_id`/`fingerprint_sha256` 字段，原生 Xvfb 暴露了空指纹和缺失
   `requestId`。现已为 IPC 字段显式重命名并增加序列化回归测试。
+- 2026-07-26：OpenSSH 私钥解码是同步操作，加密 Key 还可能执行较重的 KDF；
+  AnySSH 将 `decode_secret_key` 放入 `spawn_blocking`，避免阻塞 Tokio Worker。
+- 2026-07-26：Docker 容器使用随机 Host Port 时，`docker restart` 后 Host Port
+  可能重新分配。Host Key 变化 Fixture 改为在容器内生成新 Key 并向 sshd 发送
+  `SIGHUP`，保持 Endpoint 不变。
 - 其余发现待执行过程中持续补充。
 
 ## Decision Log
@@ -400,6 +418,15 @@ ssh-target-internal
 - 2026-07-26：Phase 0 Jump Host 使用 russh 内置 `Channel::into_stream()` 接入
   下一层 `client::connect_stream()`；Host Key 决策必须携带 Request ID，防止
   延迟或重复操作被后续 Hop 消费。
+- 2026-07-26：SSH Core 使用统一的 `SessionAuthentication` 和
+  `SshConnectionConfig` 表达逐跳密码/私钥 Credential。原始私钥暂不加入
+  WebView/Tauri IPC；产品集成必须从 Rust Vault 按 Credential ID 解密后直接交给
+  SSH Core。
+- 2026-07-26：已保存 Host Key 使用 `HostKeyPolicy::RequireSha256`；Fingerprint
+  不匹配时直接返回 changed-key 错误，不再提供“信任本次”路径。
+- 2026-07-26：Tauri Binary Channel 本身不提供 xterm 消费完成语义，因此增加
+  8-Chunk Credit Window；只有 xterm `write` Callback 返回后 WebView 才发送
+  `ssh_ack_output`，额度耗尽会停止读取 Core Event。
 
 ## Outcomes & Retrospective
 

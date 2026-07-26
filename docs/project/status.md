@@ -34,12 +34,18 @@
 - `direct-tcpip` + `Channel::into_stream` + `connect_stream` 两跳 Jump Host。
 - Jump Host 与 Internal Target 独立 Host Key 确认、目标认证失败、握手超时、
   取消和第一跳断开测试。
+- 未加密与口令保护 Ed25519 OpenSSH 私钥认证、错误口令、未授权 Key，以及
+  Password Jump Host -> Private Key Target 混合认证。
+- TOFU Fingerprint 重用、Host Key 轮换硬阻断且不重新弹出信任确认。
+- 4 MiB 连续终端输出下队列达到 64 项上限并在恢复消费后无截断完成。
+- 原生 Tauri/WebKitGTK 使用最多 8 个未确认 Chunk；xterm `write` Callback Ack 后
+  才继续读取 Core Event，并在 4 MiB 输出后成功执行后续远端命令。
 - CI 工作流。
 
 当前仓库尚未完成：
 
 - Jump Route 持久化和产品配置 UI。
-- 私钥和 SSH Agent 认证。
+- 私钥 Credential 的 Vault/Tauri 产品集成和 SSH Agent 认证。
 - Windows、Android 和 iOS 构建验证。
 - Linux Wayland、IME 和真实桌面环境检查。
 - Host/Group 持久化。

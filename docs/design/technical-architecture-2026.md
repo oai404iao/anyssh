@@ -230,6 +230,15 @@ anyssh/
 - 支持导入、导出 OpenSSH `known_hosts`。
 - 支持同一地址的多个端口和经 Jump Host 访问的目标。
 
+SSH Core 将校验策略显式建模为：
+
+- `Prompt`：首次连接发送带 Request ID 的确认事件。
+- `RequireSha256`：只接受已保存 Fingerprint；不匹配时返回 changed-key 错误，
+  不提供重新信任入口。
+
+Phase 0 已通过运行中轮换 OpenSSH Fixture Host Key 验证变化硬阻断。Fingerprint
+的加密持久化和 OpenSSH `known_hosts` 导入/导出仍属于后续 Repository 工作。
+
 ### 5.4 认证方式
 
 MVP 支持：
@@ -240,6 +249,14 @@ MVP 支持：
 - 加密私钥及其 passphrase。
 - 系统 SSH Agent。
 - 应用内置 Agent。
+
+Phase 0 SSH Core 使用 `SessionAuthentication` 统一表达 Password 和 Private Key，
+因此 Jump 与 Target 可以选择不同 Credential。OpenSSH Key 文本和 Passphrase
+进入 `Zeroizing<String>`，同步的 `decode_secret_key` 在 Blocking Pool 解码；
+解析错误不把 Key、Passphrase 或底层错误细节发送给 WebView。
+
+当前 Tauri IPC 只暴露临时密码认证。私钥产品集成不得把原始 Key 序列化到 React；
+应由 Rust Vault 使用 Credential ID 解密并直接交给 `anyssh-ssh`。
 
 后续支持：
 
@@ -418,6 +435,21 @@ Host 只保存对 Credential/Key/Route 的 ID 引用，不复制密码或私钥�
 - 前端调用 `terminal.write(Uint8Array, callback)`。
 - 排队数据超过阈值时暂停 SSH Channel 读取。
 - Scrollback 默认 10,000 行，可配置并设置硬上限。
+
+Phase 0 Core 的 Event Queue 固定为 64 项。Tauri IPC Adapter 另外维护最多
+8 个未确认 Binary Chunk：
+
+```text
+russh Channel
+  -> Core Event Queue (64)
+  -> Tauri Binary Channel Credit Window (8)
+  -> xterm.write(bytes, ack)
+  -> ssh_ack_output
+```
+
+额度耗尽时 Tauri 停止读取 Core Event，随后 `events.send().await` 停止读取 russh
+Channel，SSH Window Flow Control 把背压传回远端。原生 Xvfb 的 4 MiB 输出测试在
+排空后仍能执行后续远端命令并正常断开。
 
 ### 7.3 字体与 Unicode
 
