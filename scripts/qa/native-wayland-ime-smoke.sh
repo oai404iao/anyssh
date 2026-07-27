@@ -370,10 +370,8 @@ set_ibus_engine "xkb:us::eng"
 "$DRIVER" type "touch /tmp/"
 set_ibus_engine "libpinyin"
 "$DRIVER" type "zhongwen"
-"$DRIVER" space
+"$DRIVER" type "1"
 sleep 1
-"$DRIVER" enter
-sleep 0.5
 set_ibus_engine "xkb:us::eng"
 "$DRIVER" enter
 
