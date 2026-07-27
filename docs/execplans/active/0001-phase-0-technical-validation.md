@@ -681,6 +681,11 @@ ssh-target-internal
   Footer 文本按设计隐藏，但主 Workspace 已正常渲染。截图同时暴露 Compact
   Sidebar 的裸 Text Node 没有被现有 Child Selector 隐藏；修复改为等待
   `Local lab` Heading，并在 Compact 模式将 Nav Font Size 设为 0。
+- 2026-07-27：Compact 修复提交 `a5e1b9a` 的 Run `30269934230` 已显示干净的
+  Icon-only Sidebar，并完成 Windows Vault 创建。下一步失败仅因自动化仍按
+  `Credentials 0` Accessible Name 查找 Nav；Compact 模式隐藏 Count 后名称变为
+  `Credentials`。Windows Smoke 改为使用稳定的 Primary Nav 结构位置，而不依赖
+  响应式可见文本或 Count。
 - 2026-07-27：Commit `9f14940` 的 GitHub Actions Run `30243415893` 九个 Job
   全部通过。OpenSSH Log 明确执行
   `encrypted_private_key_flows_from_credential_id_to_ssh_core`，Windows、Android、

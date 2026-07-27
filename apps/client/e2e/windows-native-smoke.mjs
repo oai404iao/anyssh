@@ -76,7 +76,7 @@ async function createVaultAndRepository(targetPage) {
   ).toBeVisible();
   await capture(targetPage, "02-native-ready.png", "02-native-ready.txt");
 
-  await targetPage.getByRole("button", { name: /^Credentials \d+$/ }).click();
+  await targetPage.locator(".primary-nav .nav-item").nth(2).click();
   await targetPage.getByRole("button", { name: "New password" }).click();
   const credentialDialog = targetPage.getByRole("dialog", {
     name: "New Password Credential",
@@ -95,7 +95,7 @@ async function createVaultAndRepository(targetPage) {
       .filter({ hasText: "Windows QA password" }),
   ).toBeVisible();
 
-  await targetPage.getByRole("button", { name: /^Hosts \d+$/ }).click();
+  await targetPage.locator(".primary-nav .nav-item").nth(1).click();
   await targetPage.getByRole("button", { name: "New host" }).click();
   const hostDialog = targetPage.getByRole("dialog", { name: "New Host" });
   await hostDialog.getByLabel("Display name").fill("Windows QA host");
@@ -109,7 +109,7 @@ async function createVaultAndRepository(targetPage) {
     targetPage.locator(".resource-card").filter({ hasText: "Windows QA host" }),
   ).toBeVisible();
 
-  await targetPage.getByRole("button", { name: /^Jump routes \d+$/ }).click();
+  await targetPage.locator(".primary-nav .nav-item").nth(3).click();
   await targetPage.getByRole("button", { name: "New route" }).click();
   const routeDialog = targetPage.getByRole("dialog", {
     name: "New Jump Route",
@@ -163,19 +163,19 @@ async function unlockRestartedVault(targetPage) {
     targetPage.getByRole("heading", { level: 1, name: "Local lab" }),
   ).toBeVisible();
 
-  await targetPage.getByRole("button", { name: /^Credentials \d+$/ }).click();
+  await targetPage.locator(".primary-nav .nav-item").nth(2).click();
   await assert(
     targetPage
       .locator(".resource-card")
       .filter({ hasText: "Windows QA password" }),
   ).toBeVisible();
 
-  await targetPage.getByRole("button", { name: /^Hosts \d+$/ }).click();
+  await targetPage.locator(".primary-nav .nav-item").nth(1).click();
   await assert(
     targetPage.locator(".resource-card").filter({ hasText: "Windows QA host" }),
   ).toBeVisible();
 
-  await targetPage.getByRole("button", { name: /^Jump routes \d+$/ }).click();
+  await targetPage.locator(".primary-nav .nav-item").nth(3).click();
   await assert(
     targetPage
       .locator(".resource-card")
