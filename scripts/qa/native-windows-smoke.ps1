@@ -210,8 +210,19 @@ function Start-SshFixture {
     )
   }
 
-  & ssh-add.exe $AgentKeyPath *> $null
-  if ($LASTEXITCODE -ne 0) {
+  $PreviousErrorActionPreference = $ErrorActionPreference
+  try {
+    # Windows OpenSSH writes the successful "Identity added" message to stderr.
+    # Windows PowerShell promotes native stderr to NativeCommandError when the
+    # script-level preference is Stop, so decide success from the exit code.
+    $ErrorActionPreference = "Continue"
+    & ssh-add.exe $AgentKeyPath 2>&1 | Out-Null
+    $SshAddExitCode = $LASTEXITCODE
+  }
+  finally {
+    $ErrorActionPreference = $PreviousErrorActionPreference
+  }
+  if ($SshAddExitCode -ne 0) {
     throw "Unable to load the Windows SSH Agent fixture key."
   }
 
