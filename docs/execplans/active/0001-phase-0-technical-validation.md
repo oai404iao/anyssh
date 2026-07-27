@@ -102,7 +102,8 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
 - [x] 2026-07-27：GitHub Actions Windows Runner 成功产出 x86-64 Debug EXE。
 - [x] 2026-07-27：首次远端 CI 验证 Frontend、Rust、OpenSSH、Browser、
   Windows、Linux Container 和 Android Container Job。
-- [ ] 原生 Wayland CI 启动差异已修复并在本地通过，等待远端重跑。
+- [x] 2026-07-27：远端 Run `30235453657` 的全部九个 CI Job 通过，包括
+  原生 X11、Wayland/IBus、Windows、Linux Container 和 Android Container。
 - [ ] Windows 运行证据仍待补充。
 - [ ] iOS Build 因当前没有 macOS/Xcode 环境暂缓。
 - [ ] 根据证据更新 ADR 状态并完成 Phase 0 报告。
@@ -461,6 +462,12 @@ ssh-target-internal
   切换 Engine 时会把末字再次提交，产生合法 UTF-8 `中文文`；Arch 环境提交
   `中文`。QA 不再把发行版相关的候选后缀当作 AnySSH 编码错误，而是验证远端
   文件名具有 `中文` UTF-8 前缀并保存完整 Byte Evidence。
+- 2026-07-27：GitHub Actions Run `30235453657` 在 Commit `91641e4` 上九个
+  Job 全部通过；Wayland Artifact 包含 CJK 可读截图、远端 UTF-8 Byte、Backend
+  Environment 白名单和 Disconnect Evidence。
+- 2026-07-27：GitHub Runner 会提示部分 `@v4` Action 仍以 Node 20 为目标并被
+  强制运行在 Node 24。当前不影响验证结果，但后续应核验并升级到官方
+  Node 24 Native Action Major。
 - 其余发现待执行过程中持续补充。
 
 ## Decision Log
