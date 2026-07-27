@@ -49,8 +49,12 @@ Tauri UI 运行在 WebView 中。前端状态、DevTools、日志、错误序列
   `privateKey`/`passphrase` 字段。Private Key 由 DB Actor 解密后经
   `anyssh-app` 直接 move 到 SSH Core；Credential Summary、Debug 和 IPC JSON
   均不包含 Secret。
+- 2026-07-27：Host IPC 只返回 endpoint 与 Credential/Route ID，Jump Route
+  只返回有序 Host ID；`deny_unknown_fields` 会拒绝 Host 内嵌 Password 或
+  Route 内嵌 Credential。
 
 ## 相关文档
 
 - [总体技术设计：分层规则](../design/technical-architecture-2026.md#分层规则)
 - [Credential Repository v1](../design/credential-repository-v1.md)
+- [Host 与 Jump Route Repository v1](../design/host-jump-route-repository-v1.md)

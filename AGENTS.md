@@ -41,7 +41,7 @@ any_ssh/
 |   |-- anyssh-domain/                # Endpoint、TerminalSize 等领域值对象
 |   |-- anyssh-ssh/                   # russh Session、Host Key、PTY、背压
 |   |-- anyssh-vault/                 # VMK、PIN Key Slot、HKDF、Bootstrap
-|   `-- anyssh-storage/               # DB Actor、SQLCipher、Schema、Record AEAD
+|   `-- anyssh-storage/               # DB Actor、Schema v3、Repository、Record AEAD
 |-- scripts/
 |   |-- build-in-container.sh          # 独立 Linux/Android Build Image 入口
 |   |-- check-android-build.sh         # Android ARM64 APK 与 bundled SQLCipher 构建
@@ -104,6 +104,8 @@ Proposed ADR 是待验证方案，不是不可变事实。若 Phase 0 验证结�
   Runtime State 中直接持有 `LocalVault`/`rusqlite::Connection`。
 - SSH Private Key/Passphrase 不得出现在 Tauri IPC。Connect IPC 只传 Credential
   ID，`anyssh-app` 在 Rust 内解析并直接构造 SSH Authentication。
+- Host 只保存可选 Credential/Jump Route ID；Jump Route Step 只保存 Host ID。
+  不得在 Host 或 Route 中复制 Username、Password、Private Key 或 Passphrase。
 - VMK、KEK、数据库 Key 和解密后的 Credential 不得序列化到前端。
 - Vault Bootstrap 只能包含版本、随机 ID、KDF 参数和加密 Key Slot。
 - 新增依赖时检查其 AGPLv3 兼容性，并更新 lockfile。
@@ -202,7 +204,9 @@ Evidence 复制回仓库。
 
 - PIN Slot 创建、正确/错误 PIN、损坏 Slot。
 - DB Actor 有界 Queue、oneshot Response、串行生命周期和 Shutdown。
-- Schema v1 -> v2 Credential Migration、中断回滚和 Locked Repository 拒绝。
+- Schema v1 -> v2 Credential Migration、Schema v2 -> v3 旧 Host Password
+  转 Credential Migration，以及中断回滚。
+- Host/Jump Route 引用占用、顺序恢复、直接/间接循环和 Locked Repository 拒绝。
 - SQLCipher 重启解锁和 Credential 字段 AEAD。
 - 数据库、WAL、Sidecar 与 Bootstrap 明文扫描。
 - Schema migration 中断回滚。
@@ -410,11 +414,15 @@ Clear
 | Rust Workspace | `Cargo.toml` |
 | React 入口 | `apps/client/src/App.tsx` |
 | Terminal Adapter | `apps/client/src/components/TerminalPane.tsx` |
-| Browser/Native Bridge | `apps/client/src/lib/ssh-bridge.ts` |
+| SSH Bridge | `apps/client/src/lib/ssh-bridge.ts` |
+| Credential Bridge | `apps/client/src/lib/credential-bridge.ts` |
+| Host/Route Bridge | `apps/client/src/lib/host-bridge.ts` |
 | Tauri IPC | `apps/client/src-tauri/src/lib.rs` |
 | Application Core | `crates/anyssh-app/src/lib.rs` |
 | DB Actor | `crates/anyssh-storage/src/actor.rs` |
 | Credential Model | `crates/anyssh-storage/src/credential.rs` |
+| Host Model | `crates/anyssh-storage/src/host.rs` |
+| Jump Route Model | `crates/anyssh-storage/src/jump_route.rs` |
 | SSH Core | `crates/anyssh-ssh/src/lib.rs` |
 | OpenSSH Fixture | `tests/fixtures/openssh/` |
 | Playwright E2E | `apps/client/e2e/connect-preview.spec.ts` |

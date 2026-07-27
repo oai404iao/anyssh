@@ -19,6 +19,7 @@
 - [2026 总体技术架构](design/technical-architecture-2026.md)
 - [Vault Bootstrap v1](design/vault-bootstrap-v1.md)
 - [Credential Repository v1](design/credential-repository-v1.md)
+- [Host 与 Jump Route Repository v1](design/host-jump-route-repository-v1.md)
 
 Design 文档回答“系统如何工作、模块边界是什么”。
 

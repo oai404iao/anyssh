@@ -11,9 +11,11 @@ use tokio::sync::{mpsc, oneshot};
 use zeroize::Zeroizing;
 
 use crate::{
-    CredentialSecret, CredentialSummary, LocalVault, ResolvedCredential, StorageError,
-    VaultPresence,
+    CredentialSecret, CredentialSummary, HostSummary, JumpRouteSummary, LocalVault,
+    ResolvedCredential, StorageError, VaultPresence,
     credential::{CredentialRecord, generate_credential_id},
+    host::generate_host_id,
+    jump_route::generate_jump_route_id,
 };
 
 pub const DEFAULT_DATABASE_COMMAND_QUEUE_CAPACITY: usize = 16;
@@ -199,6 +201,94 @@ impl DatabaseActorHandle {
             .await
     }
 
+    pub async fn create_host(
+        &self,
+        display_name: String,
+        host: String,
+        port: u16,
+        credential_id: Option<String>,
+        jump_route_id: Option<String>,
+    ) -> Result<HostSummary, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::CreateHost {
+            display_name,
+            host,
+            port,
+            credential_id,
+            jump_route_id,
+            response,
+        })
+        .await
+    }
+
+    pub async fn update_host(
+        &self,
+        id: String,
+        display_name: String,
+        host: String,
+        port: u16,
+        credential_id: Option<String>,
+        jump_route_id: Option<String>,
+    ) -> Result<HostSummary, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::UpdateHost {
+            id,
+            display_name,
+            host,
+            port,
+            credential_id,
+            jump_route_id,
+            response,
+        })
+        .await
+    }
+
+    pub async fn list_hosts(&self) -> Result<Vec<HostSummary>, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::ListHosts { response })
+            .await
+    }
+
+    pub async fn delete_host(&self, id: String) -> Result<bool, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::DeleteHost { id, response })
+            .await
+    }
+
+    pub async fn create_jump_route(
+        &self,
+        label: String,
+        host_ids: Vec<String>,
+    ) -> Result<JumpRouteSummary, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::CreateJumpRoute {
+            label,
+            host_ids,
+            response,
+        })
+        .await
+    }
+
+    pub async fn update_jump_route(
+        &self,
+        id: String,
+        label: String,
+        host_ids: Vec<String>,
+    ) -> Result<JumpRouteSummary, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::UpdateJumpRoute {
+            id,
+            label,
+            host_ids,
+            response,
+        })
+        .await
+    }
+
+    pub async fn list_jump_routes(&self) -> Result<Vec<JumpRouteSummary>, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::ListJumpRoutes { response })
+            .await
+    }
+
+    pub async fn delete_jump_route(&self, id: String) -> Result<bool, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::DeleteJumpRoute { id, response })
+            .await
+    }
+
     pub async fn shutdown(&self) -> Result<(), DatabaseActorError> {
         self.request(|response| DatabaseCommand::Shutdown { response })
             .await
@@ -257,6 +347,11 @@ type CredentialSummaryResponse = oneshot::Sender<Result<CredentialSummary, Datab
 type CredentialListResponse = oneshot::Sender<Result<Vec<CredentialSummary>, DatabaseActorError>>;
 type CredentialDeleteResponse = oneshot::Sender<Result<bool, DatabaseActorError>>;
 type ResolvedCredentialResponse = oneshot::Sender<Result<ResolvedCredential, DatabaseActorError>>;
+type HostSummaryResponse = oneshot::Sender<Result<HostSummary, DatabaseActorError>>;
+type HostListResponse = oneshot::Sender<Result<Vec<HostSummary>, DatabaseActorError>>;
+type JumpRouteSummaryResponse = oneshot::Sender<Result<JumpRouteSummary, DatabaseActorError>>;
+type JumpRouteListResponse = oneshot::Sender<Result<Vec<JumpRouteSummary>, DatabaseActorError>>;
+type DeleteResponse = oneshot::Sender<Result<bool, DatabaseActorError>>;
 type EmptyResponse = oneshot::Sender<Result<(), DatabaseActorError>>;
 
 enum DatabaseCommand {
@@ -297,6 +392,48 @@ enum DatabaseCommand {
     ResolveCredential {
         id: String,
         response: ResolvedCredentialResponse,
+    },
+    CreateHost {
+        display_name: String,
+        host: String,
+        port: u16,
+        credential_id: Option<String>,
+        jump_route_id: Option<String>,
+        response: HostSummaryResponse,
+    },
+    UpdateHost {
+        id: String,
+        display_name: String,
+        host: String,
+        port: u16,
+        credential_id: Option<String>,
+        jump_route_id: Option<String>,
+        response: HostSummaryResponse,
+    },
+    ListHosts {
+        response: HostListResponse,
+    },
+    DeleteHost {
+        id: String,
+        response: DeleteResponse,
+    },
+    CreateJumpRoute {
+        label: String,
+        host_ids: Vec<String>,
+        response: JumpRouteSummaryResponse,
+    },
+    UpdateJumpRoute {
+        id: String,
+        label: String,
+        host_ids: Vec<String>,
+        response: JumpRouteSummaryResponse,
+    },
+    ListJumpRoutes {
+        response: JumpRouteListResponse,
+    },
+    DeleteJumpRoute {
+        id: String,
+        response: DeleteResponse,
     },
     Shutdown {
         response: EmptyResponse,
@@ -411,6 +548,105 @@ impl DatabaseActorState {
             .resolve_credential(id)
             .map_err(DatabaseActorError::from)
     }
+
+    fn create_host(
+        &mut self,
+        display_name: String,
+        host: String,
+        port: u16,
+        credential_id: Option<String>,
+        jump_route_id: Option<String>,
+    ) -> Result<HostSummary, DatabaseActorError> {
+        let record = HostSummary::new(
+            generate_host_id()?,
+            display_name,
+            host,
+            port,
+            credential_id,
+            jump_route_id,
+        )?;
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .create_host(&record)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn update_host(
+        &mut self,
+        id: String,
+        display_name: String,
+        host: String,
+        port: u16,
+        credential_id: Option<String>,
+        jump_route_id: Option<String>,
+    ) -> Result<HostSummary, DatabaseActorError> {
+        let record = HostSummary::new(id, display_name, host, port, credential_id, jump_route_id)?;
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .update_host(&record)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn list_hosts(&self) -> Result<Vec<HostSummary>, DatabaseActorError> {
+        self.unlocked
+            .as_ref()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .list_hosts()
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn delete_host(&mut self, id: &str) -> Result<bool, DatabaseActorError> {
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .delete_host(id)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn create_jump_route(
+        &mut self,
+        label: String,
+        host_ids: Vec<String>,
+    ) -> Result<JumpRouteSummary, DatabaseActorError> {
+        let route = JumpRouteSummary::new(generate_jump_route_id()?, label, host_ids)?;
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .create_jump_route(&route)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn update_jump_route(
+        &mut self,
+        id: String,
+        label: String,
+        host_ids: Vec<String>,
+    ) -> Result<JumpRouteSummary, DatabaseActorError> {
+        let route = JumpRouteSummary::new(id, label, host_ids)?;
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .update_jump_route(&route)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn list_jump_routes(&self) -> Result<Vec<JumpRouteSummary>, DatabaseActorError> {
+        self.unlocked
+            .as_ref()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .list_jump_routes()
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn delete_jump_route(&mut self, id: &str) -> Result<bool, DatabaseActorError> {
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .delete_jump_route(id)
+            .map_err(DatabaseActorError::from)
+    }
 }
 
 fn unlocked_status(vault: &LocalVault) -> VaultStatus {
@@ -471,6 +707,67 @@ fn run_database_actor(
             }
             DatabaseCommand::ResolveCredential { id, response } => {
                 let _ = response.send(state.resolve_credential(&id));
+            }
+            DatabaseCommand::CreateHost {
+                display_name,
+                host,
+                port,
+                credential_id,
+                jump_route_id,
+                response,
+            } => {
+                let _ = response.send(state.create_host(
+                    display_name,
+                    host,
+                    port,
+                    credential_id,
+                    jump_route_id,
+                ));
+            }
+            DatabaseCommand::UpdateHost {
+                id,
+                display_name,
+                host,
+                port,
+                credential_id,
+                jump_route_id,
+                response,
+            } => {
+                let _ = response.send(state.update_host(
+                    id,
+                    display_name,
+                    host,
+                    port,
+                    credential_id,
+                    jump_route_id,
+                ));
+            }
+            DatabaseCommand::ListHosts { response } => {
+                let _ = response.send(state.list_hosts());
+            }
+            DatabaseCommand::DeleteHost { id, response } => {
+                let _ = response.send(state.delete_host(&id));
+            }
+            DatabaseCommand::CreateJumpRoute {
+                label,
+                host_ids,
+                response,
+            } => {
+                let _ = response.send(state.create_jump_route(label, host_ids));
+            }
+            DatabaseCommand::UpdateJumpRoute {
+                id,
+                label,
+                host_ids,
+                response,
+            } => {
+                let _ = response.send(state.update_jump_route(id, label, host_ids));
+            }
+            DatabaseCommand::ListJumpRoutes { response } => {
+                let _ = response.send(state.list_jump_routes());
+            }
+            DatabaseCommand::DeleteJumpRoute { id, response } => {
+                let _ = response.send(state.delete_jump_route(&id));
             }
             DatabaseCommand::Shutdown { response } => {
                 state.unlocked = None;
@@ -653,6 +950,100 @@ mod tests {
             actor
                 .resolve_credential(password_summary.id().to_owned())
                 .await,
+            Err(DatabaseActorError::VaultLocked)
+        ));
+    }
+
+    #[tokio::test]
+    async fn actor_serializes_host_and_jump_route_repository_commands() {
+        let directory = tempdir().expect("tempdir");
+        let actor = DatabaseActorHandle::spawn(directory.path().join("vault"), test_config(8))
+            .expect("start actor");
+
+        assert!(matches!(
+            actor.list_hosts().await,
+            Err(DatabaseActorError::VaultLocked)
+        ));
+        assert!(matches!(
+            actor.list_jump_routes().await,
+            Err(DatabaseActorError::VaultLocked)
+        ));
+
+        actor
+            .create(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+        let credential = actor
+            .create_credential(
+                "Shared credential".to_owned(),
+                "shared-user".to_owned(),
+                CredentialSecret::Password {
+                    password: Zeroizing::new("shared-secret".to_owned()),
+                },
+            )
+            .await
+            .expect("create shared credential");
+        let jump = actor
+            .create_host(
+                "Jump".to_owned(),
+                "jump.internal".to_owned(),
+                22,
+                Some(credential.id().to_owned()),
+                None,
+            )
+            .await
+            .expect("create jump Host");
+        let target = actor
+            .create_host(
+                "Target".to_owned(),
+                "target.internal".to_owned(),
+                2222,
+                Some(credential.id().to_owned()),
+                None,
+            )
+            .await
+            .expect("create target Host");
+        let route = actor
+            .create_jump_route("Production".to_owned(), vec![jump.id().to_owned()])
+            .await
+            .expect("create Jump Route");
+        let target = actor
+            .update_host(
+                target.id().to_owned(),
+                target.display_name().to_owned(),
+                target.host().to_owned(),
+                target.port(),
+                target.credential_id().map(str::to_owned),
+                Some(route.id().to_owned()),
+            )
+            .await
+            .expect("attach Jump Route");
+
+        let hosts = actor.list_hosts().await.expect("list Hosts");
+        assert_eq!(hosts.len(), 2);
+        assert_eq!(target.jump_route_id(), Some(route.id()));
+        let routes = actor.list_jump_routes().await.expect("list Jump Routes");
+        assert_eq!(routes, vec![route.clone()]);
+        let debug = format!("{hosts:?} {routes:?}");
+        assert!(!debug.contains("shared-secret"));
+        assert!(!debug.contains("shared-user"));
+
+        assert!(matches!(
+            actor.delete_credential(credential.id().to_owned()).await,
+            Err(DatabaseActorError::Storage(StorageError::CredentialInUse))
+        ));
+        assert!(matches!(
+            actor.delete_host(jump.id().to_owned()).await,
+            Err(DatabaseActorError::Storage(StorageError::HostInUse))
+        ));
+        assert!(matches!(
+            actor.delete_jump_route(route.id().to_owned()).await,
+            Err(DatabaseActorError::Storage(StorageError::JumpRouteInUse))
+        ));
+
+        actor.lock().await.expect("lock vault");
+        assert!(matches!(
+            actor.list_hosts().await,
             Err(DatabaseActorError::VaultLocked)
         ));
     }

@@ -14,8 +14,8 @@ use thiserror::Error;
 use zeroize::Zeroizing;
 
 pub use anyssh_storage::{
-    CredentialKind, CredentialSummary, DatabaseActorConfig, DatabaseActorStartError, VaultState,
-    VaultStatus,
+    CredentialKind, CredentialSummary, DatabaseActorConfig, DatabaseActorStartError, HostSummary,
+    JumpRouteSummary, VaultState, VaultStatus,
 };
 
 #[derive(Clone)]
@@ -154,6 +154,86 @@ impl ApplicationCore {
     pub async fn delete_credential(&self, id: String) -> Result<bool, ApplicationError> {
         self.database
             .delete_credential(id)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn create_host(
+        &self,
+        display_name: String,
+        host: String,
+        port: u16,
+        credential_id: Option<String>,
+        jump_route_id: Option<String>,
+    ) -> Result<HostSummary, ApplicationError> {
+        self.database
+            .create_host(display_name, host, port, credential_id, jump_route_id)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn update_host(
+        &self,
+        id: String,
+        display_name: String,
+        host: String,
+        port: u16,
+        credential_id: Option<String>,
+        jump_route_id: Option<String>,
+    ) -> Result<HostSummary, ApplicationError> {
+        self.database
+            .update_host(id, display_name, host, port, credential_id, jump_route_id)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn list_hosts(&self) -> Result<Vec<HostSummary>, ApplicationError> {
+        self.database
+            .list_hosts()
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn delete_host(&self, id: String) -> Result<bool, ApplicationError> {
+        self.database
+            .delete_host(id)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn create_jump_route(
+        &self,
+        label: String,
+        host_ids: Vec<String>,
+    ) -> Result<JumpRouteSummary, ApplicationError> {
+        self.database
+            .create_jump_route(label, host_ids)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn update_jump_route(
+        &self,
+        id: String,
+        label: String,
+        host_ids: Vec<String>,
+    ) -> Result<JumpRouteSummary, ApplicationError> {
+        self.database
+            .update_jump_route(id, label, host_ids)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn list_jump_routes(&self) -> Result<Vec<JumpRouteSummary>, ApplicationError> {
+        self.database
+            .list_jump_routes()
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn delete_jump_route(&self, id: String) -> Result<bool, ApplicationError> {
+        self.database
+            .delete_jump_route(id)
             .await
             .map_err(ApplicationError::from)
     }
@@ -386,5 +466,58 @@ mod tests {
             passphrase.as_deref().map(String::as_str),
             Some("private-key-passphrase")
         );
+    }
+
+    #[tokio::test]
+    async fn host_and_jump_route_keep_only_credential_references() {
+        let (core, _directory) = test_core();
+        core.create_vault(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+        let credential = core
+            .create_password_credential(
+                "Shared password".to_owned(),
+                "shared-user".to_owned(),
+                Zeroizing::new("shared-password-secret".to_owned()),
+            )
+            .await
+            .expect("create credential");
+        let jump = core
+            .create_host(
+                "Jump".to_owned(),
+                "jump.internal".to_owned(),
+                22,
+                Some(credential.id().to_owned()),
+                None,
+            )
+            .await
+            .expect("create jump Host");
+        let route = core
+            .create_jump_route("Production".to_owned(), vec![jump.id().to_owned()])
+            .await
+            .expect("create Jump Route");
+        let target = core
+            .create_host(
+                "Target".to_owned(),
+                "target.internal".to_owned(),
+                2222,
+                Some(credential.id().to_owned()),
+                Some(route.id().to_owned()),
+            )
+            .await
+            .expect("create target Host");
+
+        assert_eq!(target.credential_id(), Some(credential.id()));
+        assert_eq!(target.jump_route_id(), Some(route.id()));
+        assert_eq!(
+            core.list_jump_routes().await.expect("list Jump Routes"),
+            vec![route]
+        );
+        let debug = format!(
+            "{:?}",
+            core.list_hosts().await.expect("list persisted Hosts")
+        );
+        assert!(!debug.contains("shared-user"));
+        assert!(!debug.contains("shared-password-secret"));
     }
 }

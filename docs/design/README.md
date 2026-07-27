@@ -8,6 +8,8 @@ Design 文档描述系统如何实现，包括组件、数据流、接口、安�
 - [vault-bootstrap-v1.md](vault-bootstrap-v1.md)：已实现的 Vault Bootstrap、PIN Slot 和数据库格式。
 - [credential-repository-v1.md](credential-repository-v1.md)：Credential Schema、
   Actor Commands 和 Private Key Rust-only 数据流。
+- [host-jump-route-repository-v1.md](host-jump-route-repository-v1.md)：Host/
+  Jump Route Schema、ID 引用和循环检测。
 
 ## 规则
 

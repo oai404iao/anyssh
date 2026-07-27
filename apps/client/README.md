@@ -30,6 +30,10 @@ SSH authentication requests are a tagged temporary-password or Credential-ID ref
 Raw Private Key and Passphrase fields are rejected by the IPC schema. Password Credential
 CRUD exposes metadata-only responses; native Private Key import UI is not implemented yet.
 
+Host and Jump Route CRUD is also metadata-only. Hosts persist optional Credential and Route
+IDs; ordered Jump Routes persist Host IDs only. They never copy a username, password,
+Private Key, Passphrase, or endpoint into a Route step.
+
 The typed SSH bridge accepts an optional single Jump Host and scopes every host-key prompt
 to a request ID, route hop, host, and port. The Phase 0 connection form does not expose
 Jump Host editing yet; the Rust core and Docker protocol fixture provide the current

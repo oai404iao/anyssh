@@ -10,7 +10,8 @@ use std::{
 
 use anyssh_app::{
     ApplicationCore, AuthenticationSource, CredentialKind as StorageCredentialKind,
-    CredentialSummary as StorageCredentialSummary, DatabaseActorConfig, SshHopRequest,
+    CredentialSummary as StorageCredentialSummary, DatabaseActorConfig,
+    HostSummary as StorageHostSummary, JumpRouteSummary as StorageJumpRouteSummary, SshHopRequest,
     SshSessionRequest, VaultState as StorageVaultState, VaultStatus as StorageVaultStatus,
 };
 use anyssh_domain::{SshEndpoint, TerminalSize};
@@ -122,6 +123,84 @@ struct UpdatePasswordCredentialRequest {
     label: String,
     username: String,
     password: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HostSummary {
+    id: String,
+    display_name: String,
+    host: String,
+    port: u16,
+    credential_id: Option<String>,
+    jump_route_id: Option<String>,
+}
+
+impl From<StorageHostSummary> for HostSummary {
+    fn from(summary: StorageHostSummary) -> Self {
+        Self {
+            id: summary.id().to_owned(),
+            display_name: summary.display_name().to_owned(),
+            host: summary.host().to_owned(),
+            port: summary.port(),
+            credential_id: summary.credential_id().map(str::to_owned),
+            jump_route_id: summary.jump_route_id().map(str::to_owned),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateHostRequest {
+    display_name: String,
+    host: String,
+    port: u16,
+    credential_id: Option<String>,
+    jump_route_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UpdateHostRequest {
+    host_id: String,
+    display_name: String,
+    host: String,
+    port: u16,
+    credential_id: Option<String>,
+    jump_route_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JumpRouteSummary {
+    id: String,
+    label: String,
+    host_ids: Vec<String>,
+}
+
+impl From<StorageJumpRouteSummary> for JumpRouteSummary {
+    fn from(summary: StorageJumpRouteSummary) -> Self {
+        Self {
+            id: summary.id().to_owned(),
+            label: summary.label().to_owned(),
+            host_ids: summary.host_ids().to_vec(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateJumpRouteRequest {
+    label: String,
+    host_ids: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UpdateJumpRouteRequest {
+    jump_route_id: String,
+    label: String,
+    host_ids: Vec<String>,
 }
 
 impl SessionRegistry {
@@ -403,6 +482,98 @@ async fn credential_delete(
 }
 
 #[tauri::command]
+async fn host_create(
+    request: CreateHostRequest,
+    core: State<'_, ApplicationCore>,
+) -> Result<HostSummary, String> {
+    core.create_host(
+        request.display_name,
+        request.host,
+        request.port,
+        request.credential_id,
+        request.jump_route_id,
+    )
+    .await
+    .map(HostSummary::from)
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn host_update(
+    request: UpdateHostRequest,
+    core: State<'_, ApplicationCore>,
+) -> Result<HostSummary, String> {
+    core.update_host(
+        request.host_id,
+        request.display_name,
+        request.host,
+        request.port,
+        request.credential_id,
+        request.jump_route_id,
+    )
+    .await
+    .map(HostSummary::from)
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn host_list(core: State<'_, ApplicationCore>) -> Result<Vec<HostSummary>, String> {
+    core.list_hosts()
+        .await
+        .map(|hosts| hosts.into_iter().map(HostSummary::from).collect())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn host_delete(host_id: String, core: State<'_, ApplicationCore>) -> Result<bool, String> {
+    core.delete_host(host_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn jump_route_create(
+    request: CreateJumpRouteRequest,
+    core: State<'_, ApplicationCore>,
+) -> Result<JumpRouteSummary, String> {
+    core.create_jump_route(request.label, request.host_ids)
+        .await
+        .map(JumpRouteSummary::from)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn jump_route_update(
+    request: UpdateJumpRouteRequest,
+    core: State<'_, ApplicationCore>,
+) -> Result<JumpRouteSummary, String> {
+    core.update_jump_route(request.jump_route_id, request.label, request.host_ids)
+        .await
+        .map(JumpRouteSummary::from)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn jump_route_list(
+    core: State<'_, ApplicationCore>,
+) -> Result<Vec<JumpRouteSummary>, String> {
+    core.list_jump_routes()
+        .await
+        .map(|routes| routes.into_iter().map(JumpRouteSummary::from).collect())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn jump_route_delete(
+    jump_route_id: String,
+    core: State<'_, ApplicationCore>,
+) -> Result<bool, String> {
+    core.delete_jump_route(jump_route_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn ssh_connect(
     request: ConnectRequest,
     events: Channel<ClientEvent>,
@@ -592,6 +763,14 @@ pub fn run() {
             credential_update_password,
             credential_list,
             credential_delete,
+            host_create,
+            host_update,
+            host_list,
+            host_delete,
+            jump_route_create,
+            jump_route_update,
+            jump_route_list,
+            jump_route_delete,
             ssh_connect,
             ssh_confirm_host_key,
             ssh_ack_output,
@@ -687,6 +866,57 @@ mod tests {
         assert!(value.get("password").is_none());
         assert!(value.get("privateKey").is_none());
         assert!(value.get("passphrase").is_none());
+    }
+
+    #[test]
+    fn host_and_route_ipc_contain_references_only() {
+        let host = serde_json::to_value(HostSummary {
+            id: "host-target".to_owned(),
+            display_name: "Target".to_owned(),
+            host: "target.internal".to_owned(),
+            port: 22,
+            credential_id: Some("cred-target".to_owned()),
+            jump_route_id: Some("route-production".to_owned()),
+        })
+        .expect("host summary should serialize");
+        let route = serde_json::to_value(JumpRouteSummary {
+            id: "route-production".to_owned(),
+            label: "Production".to_owned(),
+            host_ids: vec!["host-jump-one".to_owned(), "host-jump-two".to_owned()],
+        })
+        .expect("route summary should serialize");
+
+        assert_eq!(host["credentialId"], "cred-target");
+        assert_eq!(host["jumpRouteId"], "route-production");
+        assert!(host.get("username").is_none());
+        assert!(host.get("password").is_none());
+        assert!(host.get("privateKey").is_none());
+        assert_eq!(
+            route["hostIds"],
+            serde_json::json!(["host-jump-one", "host-jump-two"])
+        );
+        assert!(route.get("credentialId").is_none());
+        assert!(route.get("password").is_none());
+    }
+
+    #[test]
+    fn host_request_rejects_embedded_credentials() {
+        let request = serde_json::from_value::<CreateHostRequest>(serde_json::json!({
+            "displayName": "Target",
+            "host": "target.internal",
+            "port": 22,
+            "credentialId": "cred-target",
+            "password": "must-not-enter-host-ipc"
+        }));
+
+        assert!(request.is_err());
+
+        let route = serde_json::from_value::<CreateJumpRouteRequest>(serde_json::json!({
+            "label": "Production",
+            "hostIds": ["host-jump"],
+            "credentialId": "cred-must-not-be-copied"
+        }));
+        assert!(route.is_err());
     }
 
     #[tokio::test]

@@ -2,14 +2,20 @@
 
 mod actor;
 mod credential;
+mod entity_id;
+mod host;
+mod jump_route;
 
 pub use actor::{
     DEFAULT_DATABASE_COMMAND_QUEUE_CAPACITY, DatabaseActorConfig, DatabaseActorError,
     DatabaseActorHandle, DatabaseActorStartError, VaultState, VaultStatus,
 };
 pub use credential::{CredentialKind, CredentialSecret, CredentialSummary, ResolvedCredential};
+pub use host::HostSummary;
+pub use jump_route::{JumpRouteSummary, MAX_JUMP_ROUTE_STEPS};
 
 use std::{
+    collections::{HashMap, HashSet},
     fmt::Write as _,
     fs::{self, File},
     path::Path,
@@ -23,23 +29,24 @@ use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
     aead::{Aead, KeyInit, Payload},
 };
-use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{
+    Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
+};
 use thiserror::Error;
 use zeroize::Zeroizing;
 
-use crate::credential::{CredentialRecord, validate_credential_id};
+use crate::{
+    credential::{CredentialRecord, generate_credential_id, validate_credential_id},
+    host::validate_host_id,
+    jump_route::validate_jump_route_id,
+};
 
 pub const BOOTSTRAP_FILE_NAME: &str = "vault.bootstrap.json";
 pub const DATABASE_FILE_NAME: &str = "vault.db";
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 const KEY_BYTES: usize = 32;
 const NONCE_BYTES: usize = 24;
-const MAX_ID_BYTES: usize = 256;
-const MAX_LABEL_BYTES: usize = 4096;
-const MAX_HOST_BYTES: usize = 4096;
-const MAX_USERNAME_BYTES: usize = 4096;
-const MAX_PASSWORD_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -57,10 +64,24 @@ pub enum StorageError {
     RecordIntegrity,
     #[error("host record is invalid")]
     InvalidHost,
+    #[error("host was not found")]
+    HostNotFound,
+    #[error("host is referenced by a Jump Route")]
+    HostInUse,
+    #[error("Jump Route record is invalid")]
+    InvalidJumpRoute,
+    #[error("Jump Route was not found")]
+    JumpRouteNotFound,
+    #[error("Jump Route is referenced by a Host")]
+    JumpRouteInUse,
+    #[error("Jump Route references form a cycle")]
+    JumpRouteCycle,
     #[error("credential record is invalid")]
     InvalidCredential,
     #[error("credential was not found")]
     CredentialNotFound,
+    #[error("credential is referenced by a Host")]
+    CredentialInUse,
     #[error("vault schema migration was interrupted")]
     MigrationInterrupted,
     #[error(transparent)]
@@ -76,58 +97,6 @@ pub enum VaultPresence {
     Uninitialized,
     Locked,
     Damaged,
-}
-
-pub struct HostRecord {
-    pub id: String,
-    pub display_name: String,
-    pub host: String,
-    pub port: u16,
-    pub username: String,
-    password: Zeroizing<String>,
-}
-
-impl HostRecord {
-    pub fn new(
-        id: impl Into<String>,
-        display_name: impl Into<String>,
-        host: impl Into<String>,
-        port: u16,
-        username: impl Into<String>,
-        password: Zeroizing<String>,
-    ) -> Result<Self, StorageError> {
-        let record = Self {
-            id: id.into(),
-            display_name: display_name.into(),
-            host: host.into(),
-            port,
-            username: username.into(),
-            password,
-        };
-        record.validate()?;
-        Ok(record)
-    }
-
-    pub fn password(&self) -> &str {
-        &self.password
-    }
-
-    fn validate(&self) -> Result<(), StorageError> {
-        if self.id.is_empty()
-            || self.id.len() > MAX_ID_BYTES
-            || self.display_name.is_empty()
-            || self.display_name.len() > MAX_LABEL_BYTES
-            || self.host.is_empty()
-            || self.host.len() > MAX_HOST_BYTES
-            || self.port == 0
-            || self.username.is_empty()
-            || self.username.len() > MAX_USERNAME_BYTES
-            || self.password.len() > MAX_PASSWORD_BYTES
-        {
-            return Err(StorageError::InvalidHost);
-        }
-        Ok(())
-    }
 }
 
 /// Low-level encrypted storage primitive.
@@ -233,12 +202,42 @@ impl LocalVault {
         &self.database.cipher_version
     }
 
-    pub fn save_host(&mut self, record: &HostRecord) -> Result<(), StorageError> {
-        self.database.save_host(record)
+    fn create_host(&mut self, record: &HostSummary) -> Result<HostSummary, StorageError> {
+        self.database.create_host(record)
     }
 
-    pub fn load_host(&self, id: &str) -> Result<Option<HostRecord>, StorageError> {
-        self.database.load_host(id)
+    fn update_host(&mut self, record: &HostSummary) -> Result<HostSummary, StorageError> {
+        self.database.update_host(record)
+    }
+
+    fn list_hosts(&self) -> Result<Vec<HostSummary>, StorageError> {
+        self.database.list_hosts()
+    }
+
+    fn delete_host(&mut self, id: &str) -> Result<bool, StorageError> {
+        self.database.delete_host(id)
+    }
+
+    fn create_jump_route(
+        &mut self,
+        route: &JumpRouteSummary,
+    ) -> Result<JumpRouteSummary, StorageError> {
+        self.database.create_jump_route(route)
+    }
+
+    fn update_jump_route(
+        &mut self,
+        route: &JumpRouteSummary,
+    ) -> Result<JumpRouteSummary, StorageError> {
+        self.database.update_jump_route(route)
+    }
+
+    fn list_jump_routes(&self) -> Result<Vec<JumpRouteSummary>, StorageError> {
+        self.database.list_jump_routes()
+    }
+
+    fn delete_jump_route(&mut self, id: &str) -> Result<bool, StorageError> {
+        self.database.delete_jump_route(id)
     }
 
     fn create_credential(
@@ -288,6 +287,7 @@ impl VaultDatabase {
         let connection = Connection::open_with_flags(path, flags).map_err(StorageError::Sql)?;
         let mut database = Self::configure(connection, keys)?;
         initialize_schema(&mut database.connection)?;
+        database.migrate_to_v3(false)?;
         database.connection.execute(
             "INSERT INTO vault_meta(key, value) VALUES('vault_id', ?1)",
             [keys.vault_id()],
@@ -302,7 +302,6 @@ impl VaultDatabase {
         let connection =
             Connection::open_with_flags(path, flags).map_err(|_| StorageError::InvalidDatabase)?;
         let mut database = Self::configure(connection, keys)?;
-        migrate_existing_schema(&mut database.connection)?;
 
         let stored_vault_id: String = database
             .connection
@@ -315,6 +314,7 @@ impl VaultDatabase {
         if stored_vault_id != keys.vault_id() {
             return Err(StorageError::InvalidDatabase);
         }
+        database.migrate_existing_schema()?;
         Ok(database)
     }
 
@@ -364,114 +364,205 @@ impl VaultDatabase {
         })
     }
 
-    fn save_host(&mut self, record: &HostRecord) -> Result<(), StorageError> {
-        record.validate()?;
-        let mut nonce = [0_u8; NONCE_BYTES];
-        getrandom::fill(&mut nonce).map_err(|_| StorageError::RecordIntegrity)?;
-        let cipher = XChaCha20Poly1305::new_from_slice(&self.record_key[..])
-            .map_err(|_| StorageError::RecordIntegrity)?;
-        let aad = record_aad(&self.vault_id, &record.id);
-        let ciphertext = cipher
-            .encrypt(
-                XNonce::from_slice(&nonce),
-                Payload {
-                    msg: record.password.as_bytes(),
-                    aad: aad.as_bytes(),
-                },
-            )
-            .map_err(|_| StorageError::RecordIntegrity)?;
-
+    fn create_host(&mut self, record: &HostSummary) -> Result<HostSummary, StorageError> {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        validate_host_references(&transaction, record)?;
         transaction.execute(
             "
             INSERT INTO hosts(
-                id, display_name, host, port, username, password_nonce,
-                password_ciphertext
+                id, display_name, host, port, credential_id, jump_route_id
             )
-            VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)
-            ON CONFLICT(id) DO UPDATE SET
-                display_name = excluded.display_name,
-                host = excluded.host,
-                port = excluded.port,
-                username = excluded.username,
-                password_nonce = excluded.password_nonce,
-                password_ciphertext = excluded.password_ciphertext
+            VALUES(?1, ?2, ?3, ?4, ?5, ?6)
             ",
             params![
-                &record.id,
-                &record.display_name,
-                &record.host,
-                i64::from(record.port),
-                &record.username,
-                nonce.as_slice(),
-                ciphertext,
+                record.id(),
+                record.display_name(),
+                record.host(),
+                i64::from(record.port()),
+                record.credential_id(),
+                record.jump_route_id(),
             ],
         )?;
+        validate_jump_route_graph(&transaction)?;
         transaction.commit()?;
-        Ok(())
+        Ok(record.clone())
     }
 
-    fn load_host(&self, id: &str) -> Result<Option<HostRecord>, StorageError> {
-        if id.is_empty() || id.len() > MAX_ID_BYTES {
-            return Err(StorageError::InvalidHost);
-        }
-
-        let stored = self
+    fn update_host(&mut self, record: &HostSummary) -> Result<HostSummary, StorageError> {
+        let transaction = self
             .connection
-            .query_row(
-                "
-                SELECT display_name, host, port, username, password_nonce,
-                       password_ciphertext
-                FROM hosts
-                WHERE id = ?1
-                ",
-                [id],
-                |row| {
-                    Ok(StoredHost {
-                        display_name: row.get(0)?,
-                        host: row.get(1)?,
-                        port: row.get(2)?,
-                        username: row.get(3)?,
-                        password_nonce: row.get(4)?,
-                        password_ciphertext: row.get(5)?,
-                    })
-                },
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        validate_host_references(&transaction, record)?;
+        let changed = transaction.execute(
+            "
+            UPDATE hosts
+            SET display_name = ?2,
+                host = ?3,
+                port = ?4,
+                credential_id = ?5,
+                jump_route_id = ?6
+            WHERE id = ?1
+            ",
+            params![
+                record.id(),
+                record.display_name(),
+                record.host(),
+                i64::from(record.port()),
+                record.credential_id(),
+                record.jump_route_id(),
+            ],
+        )?;
+        if changed != 1 {
+            return Err(StorageError::HostNotFound);
+        }
+        validate_jump_route_graph(&transaction)?;
+        transaction.commit()?;
+        Ok(record.clone())
+    }
+
+    fn list_hosts(&self) -> Result<Vec<HostSummary>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT id, display_name, host, port, credential_id, jump_route_id
+            FROM hosts
+            ORDER BY display_name COLLATE NOCASE, id
+            ",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(StoredHostSummary {
+                id: row.get(0)?,
+                display_name: row.get(1)?,
+                host: row.get(2)?,
+                port: row.get(3)?,
+                credential_id: row.get(4)?,
+                jump_route_id: row.get(5)?,
+            })
+        })?;
+
+        rows.map(|row| {
+            let row = row?;
+            HostSummary::new(
+                row.id,
+                row.display_name,
+                row.host,
+                u16::try_from(row.port).map_err(|_| StorageError::RecordIntegrity)?,
+                row.credential_id,
+                row.jump_route_id,
             )
-            .optional()?;
-        let Some(stored) = stored else {
-            return Ok(None);
+        })
+        .collect()
+    }
+
+    fn delete_host(&mut self, id: &str) -> Result<bool, StorageError> {
+        validate_host_id(id)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM jump_route_steps WHERE host_id = ?1)",
+            [id],
+            |row| row.get::<_, bool>(0),
+        )? {
+            return Err(StorageError::HostInUse);
+        }
+        let changed = transaction.execute("DELETE FROM hosts WHERE id = ?1", [id])?;
+        transaction.commit()?;
+        Ok(changed == 1)
+    }
+
+    fn create_jump_route(
+        &mut self,
+        route: &JumpRouteSummary,
+    ) -> Result<JumpRouteSummary, StorageError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        validate_route_host_references(&transaction, route)?;
+        transaction.execute(
+            "INSERT INTO jump_routes(id, label) VALUES(?1, ?2)",
+            params![route.id(), route.label()],
+        )?;
+        insert_jump_route_steps(&transaction, route)?;
+        validate_jump_route_graph(&transaction)?;
+        transaction.commit()?;
+        Ok(route.clone())
+    }
+
+    fn update_jump_route(
+        &mut self,
+        route: &JumpRouteSummary,
+    ) -> Result<JumpRouteSummary, StorageError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        validate_route_host_references(&transaction, route)?;
+        let changed = transaction.execute(
+            "UPDATE jump_routes SET label = ?2 WHERE id = ?1",
+            params![route.id(), route.label()],
+        )?;
+        if changed != 1 {
+            return Err(StorageError::JumpRouteNotFound);
+        }
+        transaction.execute(
+            "DELETE FROM jump_route_steps WHERE route_id = ?1",
+            [route.id()],
+        )?;
+        insert_jump_route_steps(&transaction, route)?;
+        validate_jump_route_graph(&transaction)?;
+        transaction.commit()?;
+        Ok(route.clone())
+    }
+
+    fn list_jump_routes(&self) -> Result<Vec<JumpRouteSummary>, StorageError> {
+        let route_rows = {
+            let mut statement = self.connection.prepare(
+                "
+                SELECT id, label
+                FROM jump_routes
+                ORDER BY label COLLATE NOCASE, id
+                ",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
         };
 
-        let nonce: [u8; NONCE_BYTES] = stored
-            .password_nonce
-            .try_into()
-            .map_err(|_| StorageError::RecordIntegrity)?;
-        let cipher = XChaCha20Poly1305::new_from_slice(&self.record_key[..])
-            .map_err(|_| StorageError::RecordIntegrity)?;
-        let aad = record_aad(&self.vault_id, id);
-        let plaintext = cipher
-            .decrypt(
-                XNonce::from_slice(&nonce),
-                Payload {
-                    msg: &stored.password_ciphertext,
-                    aad: aad.as_bytes(),
-                },
-            )
-            .map_err(|_| StorageError::RecordIntegrity)?;
-        let password = String::from_utf8(plaintext).map_err(|_| StorageError::RecordIntegrity)?;
+        route_rows
+            .into_iter()
+            .map(|(id, label)| {
+                let mut statement = self.connection.prepare(
+                    "
+                    SELECT host_id
+                    FROM jump_route_steps
+                    WHERE route_id = ?1
+                    ORDER BY position
+                    ",
+                )?;
+                let rows = statement.query_map([&id], |row| row.get::<_, String>(0))?;
+                let host_ids = rows.collect::<Result<Vec<_>, _>>()?;
+                JumpRouteSummary::new(id, label, host_ids)
+            })
+            .collect()
+    }
 
-        let port = u16::try_from(stored.port).map_err(|_| StorageError::RecordIntegrity)?;
-        HostRecord::new(
-            id,
-            stored.display_name,
-            stored.host,
-            port,
-            stored.username,
-            Zeroizing::new(password),
-        )
-        .map(Some)
+    fn delete_jump_route(&mut self, id: &str) -> Result<bool, StorageError> {
+        validate_jump_route_id(id)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM hosts WHERE jump_route_id = ?1)",
+            [id],
+            |row| row.get::<_, bool>(0),
+        )? {
+            return Err(StorageError::JumpRouteInUse);
+        }
+        let changed = transaction.execute("DELETE FROM jump_routes WHERE id = ?1", [id])?;
+        transaction.commit()?;
+        Ok(changed == 1)
     }
 
     fn create_credential(
@@ -589,6 +680,13 @@ impl VaultDatabase {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM hosts WHERE credential_id = ?1)",
+            [id],
+            |row| row.get::<_, bool>(0),
+        )? {
+            return Err(StorageError::CredentialInUse);
+        }
         let changed = transaction.execute("DELETE FROM credentials WHERE id = ?1", [id])?;
         transaction.commit()?;
         Ok(changed == 1)
@@ -758,15 +856,239 @@ impl VaultDatabase {
         let value = std::str::from_utf8(&plaintext).map_err(|_| StorageError::RecordIntegrity)?;
         Ok(Zeroizing::new(value.to_owned()))
     }
+
+    fn migrate_existing_schema(&mut self) -> Result<(), StorageError> {
+        let current_version: i64 = self
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .map_err(StorageError::Sql)?;
+        match current_version {
+            SCHEMA_VERSION => Ok(()),
+            1 => {
+                migrate_to_v2(&mut self.connection, false)?;
+                self.migrate_to_v3(false)
+            }
+            2 => self.migrate_to_v3(false),
+            version => Err(StorageError::UnsupportedSchema(version)),
+        }
+    }
+
+    fn migrate_to_v3(&mut self, simulate_interruption: bool) -> Result<(), StorageError> {
+        let migrated_hosts = self.prepare_legacy_host_migration()?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute_batch(
+            "
+            ALTER TABLE hosts RENAME TO legacy_hosts_v2;
+
+            CREATE TABLE jump_routes(
+                id TEXT PRIMARY KEY NOT NULL,
+                label TEXT NOT NULL
+            ) WITHOUT ROWID;
+
+            CREATE TABLE hosts(
+                id TEXT PRIMARY KEY NOT NULL,
+                display_name TEXT NOT NULL,
+                host TEXT NOT NULL,
+                port INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),
+                credential_id TEXT,
+                jump_route_id TEXT,
+                FOREIGN KEY(credential_id)
+                    REFERENCES credentials(id) ON DELETE RESTRICT,
+                FOREIGN KEY(jump_route_id)
+                    REFERENCES jump_routes(id) ON DELETE RESTRICT
+            ) WITHOUT ROWID;
+
+            CREATE TABLE jump_route_steps(
+                route_id TEXT NOT NULL,
+                position INTEGER NOT NULL CHECK(position >= 0),
+                host_id TEXT NOT NULL,
+                PRIMARY KEY(route_id, position),
+                UNIQUE(route_id, host_id),
+                FOREIGN KEY(route_id)
+                    REFERENCES jump_routes(id) ON DELETE CASCADE,
+                FOREIGN KEY(host_id)
+                    REFERENCES hosts(id) ON DELETE RESTRICT
+            ) WITHOUT ROWID;
+
+            CREATE INDEX hosts_credential_id_idx ON hosts(credential_id);
+            CREATE INDEX hosts_jump_route_id_idx ON hosts(jump_route_id);
+            CREATE INDEX jump_route_steps_host_id_idx ON jump_route_steps(host_id);
+            ",
+        )?;
+
+        for migrated in migrated_hosts {
+            transaction.execute(
+                "
+                INSERT INTO credentials(
+                    id, label, username, kind, secret_nonce, secret_ciphertext,
+                    passphrase_nonce, passphrase_ciphertext
+                )
+                VALUES(?1, ?2, ?3, 'password', ?4, ?5, NULL, NULL)
+                ",
+                params![
+                    &migrated.credential_id,
+                    &migrated.credential_label,
+                    &migrated.credential_username,
+                    migrated.encrypted.secret.nonce.as_slice(),
+                    migrated.encrypted.secret.ciphertext,
+                ],
+            )?;
+            transaction.execute(
+                "
+                INSERT INTO hosts(
+                    id, display_name, host, port, credential_id, jump_route_id
+                )
+                VALUES(?1, ?2, ?3, ?4, ?5, NULL)
+                ",
+                params![
+                    migrated.host.id(),
+                    migrated.host.display_name(),
+                    migrated.host.host(),
+                    i64::from(migrated.host.port()),
+                    &migrated.credential_id,
+                ],
+            )?;
+        }
+
+        if simulate_interruption {
+            return Err(StorageError::MigrationInterrupted);
+        }
+
+        transaction.execute_batch("DROP TABLE legacy_hosts_v2;")?;
+        transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    fn prepare_legacy_host_migration(&self) -> Result<Vec<MigratedLegacyHost>, StorageError> {
+        let stored_hosts = {
+            let mut statement = self.connection.prepare(
+                "
+                SELECT id, display_name, host, port, username, password_nonce,
+                       password_ciphertext
+                FROM hosts
+                ORDER BY id
+                ",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok(StoredLegacyHost {
+                    id: row.get(0)?,
+                    display_name: row.get(1)?,
+                    host: row.get(2)?,
+                    port: row.get(3)?,
+                    username: row.get(4)?,
+                    password_nonce: row.get(5)?,
+                    password_ciphertext: row.get(6)?,
+                })
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+
+        let mut reserved_ids = HashSet::with_capacity(stored_hosts.len());
+        stored_hosts
+            .into_iter()
+            .map(|stored| {
+                let credential_id = self.unique_migration_credential_id(&reserved_ids)?;
+                reserved_ids.insert(credential_id.clone());
+                let password = self.decrypt_legacy_host_password(
+                    &stored.id,
+                    stored.password_nonce,
+                    stored.password_ciphertext,
+                )?;
+                let credential = CredentialRecord::new(
+                    credential_id.clone(),
+                    stored.display_name.clone(),
+                    stored.username,
+                    CredentialSecret::Password { password },
+                )?;
+                let encrypted = self.encrypt_credential(&credential)?;
+                let port = u16::try_from(stored.port).map_err(|_| StorageError::RecordIntegrity)?;
+                let host = HostSummary::new(
+                    stored.id,
+                    stored.display_name,
+                    stored.host,
+                    port,
+                    Some(credential_id.clone()),
+                    None,
+                )?;
+                Ok(MigratedLegacyHost {
+                    host,
+                    credential_id,
+                    credential_label: credential.label,
+                    credential_username: credential.username,
+                    encrypted,
+                })
+            })
+            .collect()
+    }
+
+    fn unique_migration_credential_id(
+        &self,
+        reserved_ids: &HashSet<String>,
+    ) -> Result<String, StorageError> {
+        loop {
+            let id = generate_credential_id()?;
+            if reserved_ids.contains(&id) {
+                continue;
+            }
+            let exists = self.connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM credentials WHERE id = ?1)",
+                [&id],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if !exists {
+                return Ok(id);
+            }
+        }
+    }
+
+    fn decrypt_legacy_host_password(
+        &self,
+        host_id: &str,
+        nonce: Vec<u8>,
+        ciphertext: Vec<u8>,
+    ) -> Result<Zeroizing<String>, StorageError> {
+        let nonce: [u8; NONCE_BYTES] = nonce
+            .try_into()
+            .map_err(|_| StorageError::RecordIntegrity)?;
+        let cipher = XChaCha20Poly1305::new_from_slice(&self.record_key[..])
+            .map_err(|_| StorageError::RecordIntegrity)?;
+        let aad = legacy_host_record_aad(&self.vault_id, host_id);
+        let plaintext = Zeroizing::new(
+            cipher
+                .decrypt(
+                    XNonce::from_slice(&nonce),
+                    Payload {
+                        msg: &ciphertext,
+                        aad: aad.as_bytes(),
+                    },
+                )
+                .map_err(|_| StorageError::RecordIntegrity)?,
+        );
+        let value = std::str::from_utf8(&plaintext).map_err(|_| StorageError::RecordIntegrity)?;
+        Ok(Zeroizing::new(value.to_owned()))
+    }
 }
 
-struct StoredHost {
+struct StoredLegacyHost {
+    id: String,
     display_name: String,
     host: String,
     port: i64,
     username: String,
     password_nonce: Vec<u8>,
     password_ciphertext: Vec<u8>,
+}
+
+struct StoredHostSummary {
+    id: String,
+    display_name: String,
+    host: String,
+    port: i64,
+    credential_id: Option<String>,
+    jump_route_id: Option<String>,
 }
 
 struct StoredCredentialSummary {
@@ -796,6 +1118,153 @@ struct EncryptedField {
     ciphertext: Vec<u8>,
 }
 
+struct MigratedLegacyHost {
+    host: HostSummary,
+    credential_id: String,
+    credential_label: String,
+    credential_username: String,
+    encrypted: EncryptedCredential,
+}
+
+fn validate_host_references(
+    transaction: &Transaction<'_>,
+    host: &HostSummary,
+) -> Result<(), StorageError> {
+    if let Some(credential_id) = host.credential_id()
+        && !transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM credentials WHERE id = ?1)",
+            [credential_id],
+            |row| row.get::<_, bool>(0),
+        )?
+    {
+        return Err(StorageError::CredentialNotFound);
+    }
+    if let Some(route_id) = host.jump_route_id()
+        && !transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM jump_routes WHERE id = ?1)",
+            [route_id],
+            |row| row.get::<_, bool>(0),
+        )?
+    {
+        return Err(StorageError::JumpRouteNotFound);
+    }
+    Ok(())
+}
+
+fn validate_route_host_references(
+    transaction: &Transaction<'_>,
+    route: &JumpRouteSummary,
+) -> Result<(), StorageError> {
+    for host_id in route.host_ids() {
+        if !transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM hosts WHERE id = ?1)",
+            [host_id],
+            |row| row.get::<_, bool>(0),
+        )? {
+            return Err(StorageError::HostNotFound);
+        }
+    }
+    Ok(())
+}
+
+fn insert_jump_route_steps(
+    transaction: &Transaction<'_>,
+    route: &JumpRouteSummary,
+) -> Result<(), StorageError> {
+    for (position, host_id) in route.host_ids().iter().enumerate() {
+        transaction.execute(
+            "
+            INSERT INTO jump_route_steps(route_id, position, host_id)
+            VALUES(?1, ?2, ?3)
+            ",
+            params![
+                route.id(),
+                i64::try_from(position).map_err(|_| StorageError::InvalidJumpRoute)?,
+                host_id,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_jump_route_graph(connection: &Connection) -> Result<(), StorageError> {
+    let route_steps = {
+        let mut statement = connection.prepare(
+            "
+            SELECT route_id, host_id
+            FROM jump_route_steps
+            ORDER BY route_id, position
+            ",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut route_steps: HashMap<String, Vec<String>> = HashMap::new();
+        for row in rows {
+            let (route_id, host_id) = row?;
+            route_steps.entry(route_id).or_default().push(host_id);
+        }
+        route_steps
+    };
+
+    let host_routes = {
+        let mut statement = connection.prepare(
+            "
+            SELECT id, jump_route_id
+            FROM hosts
+            WHERE jump_route_id IS NOT NULL
+            ",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+
+    let mut graph = HashMap::with_capacity(host_routes.len());
+    for (host_id, route_id) in host_routes {
+        let steps = route_steps
+            .get(&route_id)
+            .ok_or(StorageError::RecordIntegrity)?;
+        graph.insert(host_id, steps.clone());
+    }
+
+    let mut visiting = HashSet::new();
+    let mut visited = HashSet::new();
+    for host_id in graph.keys() {
+        if jump_route_graph_has_cycle(host_id, &graph, &mut visiting, &mut visited) {
+            return Err(StorageError::JumpRouteCycle);
+        }
+    }
+    Ok(())
+}
+
+fn jump_route_graph_has_cycle(
+    host_id: &str,
+    graph: &HashMap<String, Vec<String>>,
+    visiting: &mut HashSet<String>,
+    visited: &mut HashSet<String>,
+) -> bool {
+    if visited.contains(host_id) {
+        return false;
+    }
+    if !visiting.insert(host_id.to_owned()) {
+        return true;
+    }
+
+    if let Some(next_hosts) = graph.get(host_id) {
+        for next_host in next_hosts {
+            if jump_route_graph_has_cycle(next_host, graph, visiting, visited) {
+                return true;
+            }
+        }
+    }
+
+    visiting.remove(host_id);
+    visited.insert(host_id.to_owned());
+    false
+}
+
 fn apply_database_key(connection: &Connection, key: &[u8; KEY_BYTES]) -> Result<(), StorageError> {
     let mut literal = Zeroizing::new(String::with_capacity(2 + KEY_BYTES * 2 + 1));
     literal.push_str("x'");
@@ -817,17 +1286,6 @@ fn initialize_schema(connection: &mut Connection) -> Result<(), StorageError> {
     }
     migrate_to_v1(connection, false)?;
     migrate_to_v2(connection, false)
-}
-
-fn migrate_existing_schema(connection: &mut Connection) -> Result<(), StorageError> {
-    let current_version: i64 = connection
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .map_err(StorageError::Sql)?;
-    match current_version {
-        SCHEMA_VERSION => Ok(()),
-        1 => migrate_to_v2(connection, false),
-        version => Err(StorageError::UnsupportedSchema(version)),
-    }
 }
 
 fn migrate_to_v1(
@@ -898,7 +1356,7 @@ fn migrate_to_v2(
     Ok(())
 }
 
-fn record_aad(vault_id: &str, host_id: &str) -> String {
+fn legacy_host_record_aad(vault_id: &str, host_id: &str) -> String {
     format!("anyssh/record/v1|{vault_id}|host|{host_id}|password")
 }
 
@@ -963,16 +1421,31 @@ mod tests {
         PinKdfParameters::new(8 * 1024, 1, 1).expect("test parameters")
     }
 
-    fn fixture_host() -> HostRecord {
-        HostRecord::new(
-            "host-fixture",
-            "Secret production host",
-            "secret.internal.example",
+    fn fixture_host(
+        id: &str,
+        display_name: &str,
+        host: &str,
+        credential_id: Option<&str>,
+        jump_route_id: Option<&str>,
+    ) -> HostSummary {
+        HostSummary::new(
+            id,
+            display_name,
+            host,
             2222,
-            "fixture-user",
-            Zeroizing::new("fixture-password-should-never-leak".to_owned()),
+            credential_id.map(str::to_owned),
+            jump_route_id.map(str::to_owned),
         )
         .expect("host")
+    }
+
+    fn fixture_route(id: &str, label: &str, host_ids: &[&str]) -> JumpRouteSummary {
+        JumpRouteSummary::new(
+            id,
+            label,
+            host_ids.iter().map(|id| (*id).to_owned()).collect(),
+        )
+        .expect("Jump Route")
     }
 
     fn password_credential(id: &str, password: &str) -> CredentialRecord {
@@ -1032,31 +1505,79 @@ mod tests {
                 );
             }
         }
-        let host = fixture_host();
-        vault.save_host(&host).expect("save host");
+        let credential =
+            password_credential("cred-shared-password", "fixture-password-should-never-leak");
+        vault
+            .create_credential(&credential)
+            .expect("create credential");
+        let jump_one = fixture_host(
+            "host-jump-one",
+            "Secret production jump one",
+            "jump-one.internal.example",
+            Some("cred-shared-password"),
+            None,
+        );
+        let jump_two = fixture_host(
+            "host-jump-two",
+            "Secret production jump two",
+            "jump-two.internal.example",
+            Some("cred-shared-password"),
+            None,
+        );
+        vault
+            .create_host(&jump_one)
+            .expect("create first jump Host");
+        vault
+            .create_host(&jump_two)
+            .expect("create second jump Host");
+        let route = fixture_route(
+            "route-production",
+            "Secret production route",
+            &["host-jump-two", "host-jump-one"],
+        );
+        vault.create_jump_route(&route).expect("create Jump Route");
+        let target = fixture_host(
+            "host-target",
+            "Secret production target",
+            "target.internal.example",
+            Some("cred-shared-password"),
+            Some("route-production"),
+        );
+        vault.create_host(&target).expect("create target host");
 
         assert_files_do_not_contain(
             &root,
             &[
-                host.display_name.as_bytes(),
-                host.host.as_bytes(),
-                host.username.as_bytes(),
-                host.password().as_bytes(),
+                jump_one.display_name().as_bytes(),
+                jump_one.host().as_bytes(),
+                jump_two.display_name().as_bytes(),
+                jump_two.host().as_bytes(),
+                route.label().as_bytes(),
+                target.display_name().as_bytes(),
+                target.host().as_bytes(),
+                b"credential-user",
+                b"fixture-password-should-never-leak",
                 b"SQLite format 3",
             ],
         );
 
         drop(vault);
         let reopened = LocalVault::unlock(&root, "123456").expect("unlock");
-        let loaded = reopened
-            .load_host("host-fixture")
-            .expect("load")
-            .expect("host exists");
-        assert_eq!(loaded.display_name, host.display_name);
-        assert_eq!(loaded.host, host.host);
-        assert_eq!(loaded.port, host.port);
-        assert_eq!(loaded.username, host.username);
-        assert_eq!(loaded.password(), host.password());
+        let hosts = reopened.list_hosts().expect("list hosts");
+        assert_eq!(hosts, vec![jump_one, jump_two, target]);
+        assert_eq!(
+            reopened.list_jump_routes().expect("list Jump Routes"),
+            vec![route]
+        );
+        let (username, secret) = reopened
+            .resolve_credential("cred-shared-password")
+            .expect("resolve shared credential")
+            .into_parts();
+        assert_eq!(username, "credential-user");
+        let CredentialSecret::Password { password } = secret else {
+            panic!("expected password credential");
+        };
+        assert_eq!(password.as_str(), "fixture-password-should-never-leak");
     }
 
     #[test]
@@ -1183,6 +1704,126 @@ mod tests {
     }
 
     #[test]
+    fn host_and_jump_route_repositories_enforce_reference_integrity() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let mut vault =
+            LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+        vault
+            .create_credential(&password_credential("cred-shared", "shared-secret"))
+            .expect("create shared credential");
+
+        let host_a = fixture_host("host-a", "Host A", "a.internal", Some("cred-shared"), None);
+        let host_b = fixture_host("host-b", "Host B", "b.internal", Some("cred-shared"), None);
+        vault.create_host(&host_a).expect("create Host A");
+        vault.create_host(&host_b).expect("create Host B");
+
+        let route_for_b = fixture_route("route-for-b", "Route for B", &["host-a"]);
+        vault
+            .create_jump_route(&route_for_b)
+            .expect("create route for B");
+        let host_b_with_route = fixture_host(
+            "host-b",
+            "Host B",
+            "b.internal",
+            Some("cred-shared"),
+            Some("route-for-b"),
+        );
+        vault
+            .update_host(&host_b_with_route)
+            .expect("attach route to Host B");
+        let cyclic_route_update = fixture_route("route-for-b", "Route for B", &["host-b"]);
+        assert!(matches!(
+            vault.update_jump_route(&cyclic_route_update),
+            Err(StorageError::JumpRouteCycle)
+        ));
+        assert_eq!(
+            vault
+                .list_jump_routes()
+                .expect("list after rejected Route cycle")
+                .into_iter()
+                .find(|route| route.id() == "route-for-b")
+                .expect("Route for B")
+                .host_ids(),
+            ["host-a"]
+        );
+
+        let route_for_a = fixture_route("route-for-a", "Route for A", &["host-b"]);
+        vault
+            .create_jump_route(&route_for_a)
+            .expect("create route for A");
+        let host_a_with_cycle = fixture_host(
+            "host-a",
+            "Host A",
+            "a.internal",
+            Some("cred-shared"),
+            Some("route-for-a"),
+        );
+        assert!(matches!(
+            vault.update_host(&host_a_with_cycle),
+            Err(StorageError::JumpRouteCycle)
+        ));
+        assert_eq!(
+            vault
+                .list_hosts()
+                .expect("list after rejected cycle")
+                .into_iter()
+                .find(|host| host.id() == "host-a")
+                .expect("Host A")
+                .jump_route_id(),
+            None
+        );
+
+        let direct_cycle = fixture_route("route-self", "Self route", &["host-a"]);
+        vault
+            .create_jump_route(&direct_cycle)
+            .expect("create self route");
+        let self_referencing_host = fixture_host(
+            "host-a",
+            "Host A",
+            "a.internal",
+            Some("cred-shared"),
+            Some("route-self"),
+        );
+        assert!(matches!(
+            vault.update_host(&self_referencing_host),
+            Err(StorageError::JumpRouteCycle)
+        ));
+
+        assert!(matches!(
+            vault.create_host(&fixture_host(
+                "host-missing-credential",
+                "Missing credential",
+                "missing-credential.internal",
+                Some("cred-missing"),
+                None,
+            )),
+            Err(StorageError::CredentialNotFound)
+        ));
+        assert!(matches!(
+            vault.create_jump_route(&fixture_route(
+                "route-missing-host",
+                "Missing host",
+                &["host-missing"],
+            )),
+            Err(StorageError::HostNotFound)
+        ));
+
+        assert!(matches!(
+            vault.delete_credential("cred-shared"),
+            Err(StorageError::CredentialInUse)
+        ));
+        assert!(matches!(
+            vault.delete_host("host-a"),
+            Err(StorageError::HostInUse)
+        ));
+        assert!(matches!(
+            vault.delete_jump_route("route-for-b"),
+            Err(StorageError::JumpRouteInUse)
+        ));
+    }
+
+    #[test]
     fn incomplete_layout_is_not_overwritten() {
         let directory = tempfile::tempdir().expect("tempdir");
         let root = directory.path().join("vault");
@@ -1254,15 +1895,126 @@ mod tests {
     }
 
     #[test]
-    fn unlocking_a_v1_vault_migrates_it_to_v2() {
+    fn interrupted_v3_migration_preserves_complete_v2_schema() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let mut vault =
+            LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+        downgrade_to_v2_schema(&vault);
+        insert_legacy_host(
+            &vault,
+            "legacy.host:2222",
+            "Legacy host",
+            "legacy.internal",
+            22,
+            "legacy-user",
+            "legacy-password",
+        );
+
+        let error = vault
+            .database
+            .migrate_to_v3(true)
+            .expect_err("migration must fail");
+        assert!(matches!(error, StorageError::MigrationInterrupted));
+
+        let version: i64 = vault
+            .database
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("schema version");
+        let jump_routes_table: Option<String> = vault
+            .database
+            .connection
+            .query_row(
+                "SELECT name FROM sqlite_schema WHERE type='table' AND name='jump_routes'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("query Jump Route schema");
+        let migrated_credentials: i64 = vault
+            .database
+            .connection
+            .query_row("SELECT count(*) FROM credentials", [], |row| row.get(0))
+            .expect("count credentials");
+        let host_columns = table_columns(&vault.database.connection, "hosts");
+
+        assert_eq!(version, 2);
+        assert!(jump_routes_table.is_none());
+        assert_eq!(migrated_credentials, 0);
+        assert!(host_columns.contains(&"username".to_owned()));
+        assert!(host_columns.contains(&"password_ciphertext".to_owned()));
+    }
+
+    #[test]
+    fn unlocking_a_v2_vault_migrates_embedded_host_password_to_credential_reference() {
         let directory = tempfile::tempdir().expect("tempdir");
         let root = directory.path().join("vault");
         let vault = LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
-        vault
-            .database
-            .connection
-            .execute_batch("DROP TABLE credentials; PRAGMA user_version = 1;")
-            .expect("downgrade fixture to v1");
+        downgrade_to_v2_schema(&vault);
+        insert_legacy_host(
+            &vault,
+            "legacy.host:2222",
+            "Legacy host",
+            "legacy.internal",
+            2222,
+            "legacy-user",
+            "legacy-password-must-migrate",
+        );
+        drop(vault);
+
+        let migrated = LocalVault::unlock(&root, "123456").expect("unlock and migrate");
+        let hosts = migrated.list_hosts().expect("list migrated hosts");
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].id(), "legacy.host:2222");
+        assert_eq!(hosts[0].display_name(), "Legacy host");
+        assert_eq!(hosts[0].host(), "legacy.internal");
+        assert_eq!(hosts[0].port(), 2222);
+        assert_eq!(hosts[0].jump_route_id(), None);
+        let credential_id = hosts[0]
+            .credential_id()
+            .expect("migrated Credential reference");
+        assert!(credential_id.starts_with("cred-"));
+
+        let (username, secret) = migrated
+            .resolve_credential(credential_id)
+            .expect("resolve migrated Credential")
+            .into_parts();
+        assert_eq!(username, "legacy-user");
+        let CredentialSecret::Password { password } = secret else {
+            panic!("expected migrated password credential");
+        };
+        assert_eq!(password.as_str(), "legacy-password-must-migrate");
+
+        let host_columns = table_columns(&migrated.database.connection, "hosts");
+        assert_eq!(
+            host_columns,
+            vec![
+                "id",
+                "display_name",
+                "host",
+                "port",
+                "credential_id",
+                "jump_route_id",
+            ]
+        );
+        assert_files_do_not_contain(
+            &root,
+            &[
+                b"Legacy host",
+                b"legacy.internal",
+                b"legacy-user",
+                b"legacy-password-must-migrate",
+            ],
+        );
+    }
+
+    #[test]
+    fn unlocking_a_v1_vault_migrates_it_to_v3() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let vault = LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+        downgrade_to_v1_schema(&vault);
         drop(vault);
 
         let migrated = LocalVault::unlock(&root, "123456").expect("unlock and migrate");
@@ -1310,5 +2062,97 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn downgrade_to_v2_schema(vault: &LocalVault) {
+        vault
+            .database
+            .connection
+            .execute_batch(
+                "
+                DROP TABLE jump_route_steps;
+                DROP TABLE hosts;
+                DROP TABLE jump_routes;
+                CREATE TABLE hosts(
+                    id TEXT PRIMARY KEY NOT NULL,
+                    display_name TEXT NOT NULL,
+                    host TEXT NOT NULL,
+                    port INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),
+                    username TEXT NOT NULL,
+                    password_nonce BLOB NOT NULL,
+                    password_ciphertext BLOB NOT NULL
+                ) WITHOUT ROWID;
+                PRAGMA user_version = 2;
+                ",
+            )
+            .expect("downgrade fixture to v2");
+    }
+
+    fn downgrade_to_v1_schema(vault: &LocalVault) {
+        downgrade_to_v2_schema(vault);
+        vault
+            .database
+            .connection
+            .execute_batch("DROP TABLE credentials; PRAGMA user_version = 1;")
+            .expect("downgrade fixture to v1");
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_legacy_host(
+        vault: &LocalVault,
+        id: &str,
+        display_name: &str,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: &str,
+    ) {
+        let mut nonce = [0_u8; NONCE_BYTES];
+        getrandom::fill(&mut nonce).expect("legacy nonce");
+        let cipher = XChaCha20Poly1305::new_from_slice(&vault.database.record_key[..])
+            .expect("legacy cipher");
+        let aad = legacy_host_record_aad(&vault.database.vault_id, id);
+        let ciphertext = cipher
+            .encrypt(
+                XNonce::from_slice(&nonce),
+                Payload {
+                    msg: password.as_bytes(),
+                    aad: aad.as_bytes(),
+                },
+            )
+            .expect("encrypt legacy password");
+        vault
+            .database
+            .connection
+            .execute(
+                "
+                INSERT INTO hosts(
+                    id, display_name, host, port, username, password_nonce,
+                    password_ciphertext
+                )
+                VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ",
+                params![
+                    id,
+                    display_name,
+                    host,
+                    i64::from(port),
+                    username,
+                    nonce.as_slice(),
+                    ciphertext,
+                ],
+            )
+            .expect("insert legacy Host");
+    }
+
+    fn table_columns(connection: &Connection, table: &str) -> Vec<String> {
+        let mut statement = connection
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .expect("prepare table info");
+        statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("query table info")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect table columns")
     }
 }

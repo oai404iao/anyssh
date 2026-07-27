@@ -287,6 +287,11 @@ TCP/Proxy -> Jump 1 SSH
 
 Jump Route 使用有序列表存储，并在保存时检测循环引用。
 
+当前 Schema v3 已实现该持久化模型：Route Step 只保存 Host ID，Host 只保存
+可选 Credential/Route ID；Foreign Key 使用 Restrict 删除语义，保存时对完整
+Host -> Route -> Step Host 图执行循环检测。当前 SSH Runtime 仍只执行单个
+Jump Host，任意长度 Route 执行属于后续 SSH Core 工作。
+
 Phase 0 已验证单个 Jump Host：
 
 ```text
@@ -391,6 +396,9 @@ KnownHost
 ```
 
 Host 只保存对 Credential/Key/Route 的 ID 引用，不复制密码或私钥。
+
+Schema v3 已实现其中的 Credential 与 Jump Route 引用；Group、Key、Proxy 和
+其他三态继承字段仍待后续领域模型实现。
 
 ---
 
@@ -575,10 +583,13 @@ SQLCipher 查询均在 Actor Thread 中串行执行，Tauri Command 不再使用
 `spawn_blocking` 或 `Mutex<Option<LocalVault>>`。最后一个 Handle 释放时先关闭
 Queue，再 Join Actor Thread，确保数据库连接按顺序销毁。
 
-Schema v2 Credential Repository 与 Rust-only SSH 解析流程见
-[Credential Repository v1](credential-repository-v1.md)。Tauri 只调用
-`anyssh-app::ApplicationCore`；它不直接解析 Credential Secret 或构造 SSH
-Authentication。
+当前 Schema v3 Repository 设计见：
+
+- [Credential Repository v1](credential-repository-v1.md)
+- [Host 与 Jump Route Repository v1](host-jump-route-repository-v1.md)
+
+Tauri 只调用 `anyssh-app::ApplicationCore`；它不直接解析 Credential Secret、
+构造 SSH Authentication 或访问 SQLCipher Connection。
 
 除以下最小 bootstrap 信息外，不落地任何明文业务数据：
 

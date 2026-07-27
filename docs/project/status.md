@@ -35,6 +35,9 @@
   `LocalVault` 或使用 Vault `spawn_blocking`；Android ARM64 重新构建通过。
 - SQLCipher Schema v2 Credential Repository：Password/Private Key/Passphrase
   Record AEAD、CRUD、Summary-only IPC、v1 -> v2 Migration 和中断回滚。
+- SQLCipher Schema v3 Host/Jump Route Repository：CSPRNG ID、metadata-only
+  CRUD、有序 Host ID Step、Credential/Route ID 引用、Restrict 删除、循环检测，
+  以及旧 Host Password -> Credential 的原子迁移。
 - `anyssh-app` Application Service：Credential ID 经 DB Actor 解密后直接进入
   SSH Core；Docker OpenSSH 已验证加密 Private Key 在 Lock/Unlock 后成功认证。
 - 原生 Vault 创建、错误 PIN、锁定和重新解锁流程。
@@ -62,12 +65,12 @@
 
 当前仓库尚未完成：
 
-- Jump Route 持久化和产品配置 UI。
+- Host/Jump Route 产品配置 UI。
 - 原生 Private Key 文件导入 UI、Credential 管理 UI 和 SSH Agent 认证。
 - Windows 原生运行验证。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
 - iOS 构建验证；当前没有 macOS/Xcode 环境，按维护者指示暂缓。
-- Host/Group 持久化。
+- Group 持久化与继承。
 
 ## 待项目负责人确认
 

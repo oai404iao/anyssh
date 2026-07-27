@@ -89,9 +89,9 @@ HKDF-SHA-256 使用 Vault ID 的 UTF-8 表示作为 Salt，VMK 作为输入密�
 
 两个输出均为 32 bytes，必须分别持有和清零。
 
-## SQLCipher Schema v2
+## SQLCipher Schema v3
 
-数据库当前 `user_version` 为 `2`。Schema v1 创建：
+数据库当前 `user_version` 为 `3`。Schema v1 创建：
 
 ```sql
 CREATE TABLE vault_meta(
@@ -118,8 +118,11 @@ XChaCha20-Poly1305 加密；Password AAD 为：
 anyssh/record/v1|<vault_id>|host|<host_id>|password
 ```
 
-Schema v2 新增独立 `credentials` 表。完整字段、Record AAD 和 Rust-only Private
-Key 数据流见 [Credential Repository v1](credential-repository-v1.md)。
+Schema v2 新增独立 `credentials` 表。Schema v3 把旧 `hosts` Password 迁移为
+Credential，并新增规范化 Host、Jump Route 和有序 Route Step。完整定义见：
+
+- [Credential Repository v1](credential-repository-v1.md)
+- [Host 与 Jump Route Repository v1](host-jump-route-repository-v1.md)
 
 ## 创建和迁移
 
@@ -127,7 +130,9 @@ Key 数据流见 [Credential Repository v1](credential-repository-v1.md)。
 - 文件同步后，通过目录 Rename 原子发布为正式 Vault。
 - 已存在或不完整的 Vault 不得被自动覆盖。
 - Schema migration 在 `IMMEDIATE` Transaction 中执行；失败或中断必须回滚。
-- 已有 Schema v1 Vault 在解锁时迁移到 v2；中断后保持完整 v1 并可重试。
+- 已有 Schema v1 Vault 在解锁时依次迁移到 v2、v3。
+- Schema v2 -> v3 在同一 Transaction 中把旧 Host Password 重新加密为
+  Credential；中断后保持完整 v2 并可重试。
 - Schema `0` 只用于新 Vault 初始化，不在已有文件上自动创建 Schema。
 - Linux 目录权限为 `0700`，Bootstrap 和数据库权限为 `0600`。
 
@@ -141,4 +146,6 @@ Key 数据流见 [Credential Repository v1](credential-repository-v1.md)。
   oneshot Response、Shutdown 和 Thread Join 测试通过。
 - Schema v2 Credential Password、Private Key 与 Passphrase 重启恢复、明文扫描、
   v1 -> v2 迁移和中断回滚通过。
+- Schema v3 Host/Jump Route 重启恢复、旧 Host Password 无损迁移、引用占用、
+  顺序和循环检测通过。
 - Windows 与 Android 构建已经验证；iOS 仍等待 macOS/Xcode 环境。

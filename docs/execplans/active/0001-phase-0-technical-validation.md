@@ -32,6 +32,7 @@
 - SQLCipher + PIN 解锁最小 Vault。
 - 两跳 Jump Host。
 - 基础 CI、lint、format 和 test 命令。
+- 用户明确追加的 Host/Jump Route 持久化验证；Host/Route 只保存 ID 引用。
 - Phase 0 结果驱动的 ADR 状态更新。
 
 ### 不包含
@@ -110,6 +111,10 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
 - [x] 2026-07-27：实现 SQLCipher Schema v2 Credential Repository Commands，
   增加 `anyssh-app` Application Service，并验证 Private Key 只通过 Credential ID
   在 Rust 内部进入 SSH Core；远端 Run `30243415893` 的九个 CI Job 全部通过。
+- [x] 2026-07-27：实现 Schema v3 Host/Jump Route Repository、v2 数据迁移、
+  引用占用和循环检测，并开放 metadata-only Actor/Application/Tauri Commands。
+- [x] 2026-07-27：Schema v3 通过 Workspace、Clippy、OpenSSH、Playwright、
+  agent-browser、原生 X11、原生 Wayland/IBus 和 Android ARM64 本地回归。
 - [ ] Windows 运行证据仍待补充。
 - [ ] iOS Build 因当前没有 macOS/Xcode 环境暂缓。
 - [ ] 根据证据更新 ADR 状态并完成 Phase 0 报告。
@@ -251,14 +256,17 @@ PIN
   `Mutex<Option<LocalVault>>`。
 - Actor 单元测试覆盖 Queue Backpressure、Create/Lock/Wrong-PIN/Unlock 顺序、
   Shutdown 和不可用状态。原生 X11 与 Wayland QA 均通过现有 Vault 创建链路；
-  Android ARM64 Debug APK 也已重新构建。正式 Host/Jump Route 持久化和
-  Private Key 原生导入 UI 仍留在下一步骤。
+  Android ARM64 Debug APK 也已重新构建。Private Key 原生导入 UI 仍留在
+  下一步骤。
 - Schema v2 已增加独立 Credential Repository。Actor Commands 覆盖
   Create/Update/List/Delete/Resolve；Tauri 只暴露 Password CRUD 和
   Summary-only List/Delete，不暴露 Private Key Import。
 - `anyssh-app` 负责把 Credential ID 解析为 Rust-only `ResolvedCredential`，
   再直接 move 到 SSH Core。Docker OpenSSH 已验证加密 Private Key 在 Vault
   Lock/Unlock 后通过 ID 成功认证。
+- Schema v3 已增加 Host/Jump Route Repository。旧 Host Password 在单个
+  `IMMEDIATE` Transaction 中转为 Credential；新 Host 只保存 Credential/Route
+  ID，Route 只保存有序 Host ID。Actor、Application Core 和 Tauri IPC 均已接入。
 
 状态：已完成；iOS SQLCipher 构建仍等待 macOS/Xcode 环境。
 
@@ -296,7 +304,8 @@ Client -> Jump Host -> Internal Target
 - 测试路径只启动 Fixture 容器和当前 Rust 测试进程，不调用系统 `ssh` 客户端。
 - Tauri Typed IPC 已接受可选单 Jump Host；Phase 0 表单尚未暴露配置 UI。
 
-状态：已完成；任意长度 Jump Route、持久化和产品 UI 留待后续阶段。
+状态：已完成；有序 Jump Route 持久化已由 Schema v3 实现，任意长度 Route 的
+SSH Runtime 执行和产品 UI 留待后续阶段。
 
 ### Milestone 5：平台与图形验证
 
@@ -493,6 +502,16 @@ ssh-target-internal
 - 2026-07-27：Serde Tagged Enum 的 `rename_all` 不负责保护额外 Secret 字段。
   SSH Authentication IPC 使用 `deny_unknown_fields`，并对 `credentialId`
   显式 Rename；携带 `privateKey` 的 Payload 序列化回归测试确认会被拒绝。
+- 2026-07-27：旧 Host Password 使用 v1 Host AAD，而新 Credential 使用 v2
+  Credential AAD，因此 Schema v2 -> v3 不能只复制 Ciphertext。Migration 先在
+  Actor-owned Vault 中解密并重新加密，再把 Schema 切换、Credential/Host 插入和
+  `user_version = 3` 放在同一个 `IMMEDIATE` Transaction；中断测试确认完整回滚。
+- 2026-07-27：Schema v3 本地证据包括 Xvfb
+  `artifacts/native-xvfb/smoke-1785136617-620576`、Wayland
+  `artifacts/native-wayland/smoke-1785136671-622298`、agent-browser
+  `artifacts/agent-browser/smoke-1785136586` 和 Android
+  `artifacts/android-build/build-1785136726-623481`。Android APK SHA-256 为
+  `635fb9ce105dc7ff073a0a967a4b83d1a6716243c8758b278a4369da46c744ae`。
 - 2026-07-27：Commit `9f14940` 的 GitHub Actions Run `30243415893` 九个 Job
   全部通过。OpenSSH Log 明确执行
   `encrypted_private_key_flows_from_credential_id_to_ssh_core`，Windows、Android、
@@ -546,6 +565,10 @@ ssh-target-internal
   Create/Update 暂时只提供 Rust Trusted API；不增加接收 Key 文本或任意文件路径
   的 Tauri Command。`anyssh-app` 负责 Resolve ID 并直接构造 SSH
   `SessionAuthentication`。
+- 2026-07-27：根据用户明确优先级，在 Phase 0 关闭前追加 Host/Jump Route
+  持久化。Schema v3 将旧 Host 内嵌 Password 原子迁移为 Credential；新 Host
+  只保存 Credential/Route ID，Route Step 只保存 Host ID，并使用 Restrict 删除
+  与全图循环检测。
 
 ## Outcomes & Retrospective
 

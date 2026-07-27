@@ -56,6 +56,9 @@
 - 2026-07-27：Schema v2 `credentials` 表已实现 Password、Private Key 和
   Passphrase 独立 Record AEAD；Schema v1 自动迁移、中断回滚、重启恢复和明文
   扫描通过。
+- 2026-07-27：Schema v3 已把旧 Host 内嵌 Password 原子迁移为 Password
+  Credential；新 Host/Jump Route 只保存 ID 引用。v2 -> v3 中断回滚、重启恢复、
+  引用占用和循环检测通过。
 - Linux WebKitGTK 同时引入系统 SQLite；bundled SQLCipher 的符号共存需要继续
   验证，当前未因此把本 ADR 提升为 Accepted。
 - Windows 与 Android 构建已通过；iOS 及跨平台 SQLite/SQLCipher 符号共存证据
@@ -66,4 +69,5 @@
 - [总体技术设计：本地 Vault](../design/technical-architecture-2026.md#8-本地加密-vault)
 - [Vault Bootstrap v1](../design/vault-bootstrap-v1.md)
 - [Credential Repository v1](../design/credential-repository-v1.md)
+- [Host 与 Jump Route Repository v1](../design/host-jump-route-repository-v1.md)
 - [ADR-0005](0005-vmk-multiple-key-slots.md)
