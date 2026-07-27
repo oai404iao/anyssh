@@ -66,6 +66,9 @@ Passphrase，会造成更新不一致并扩大秘密暴露面。旧 Schema v1/v2
 - 2026-07-27：Tauri/TypeScript IPC 测试确认 Host/Route JSON 只含元数据与 ID，
   并拒绝 Host Password 和 Route Credential 字段。
 - 2026-07-27：原生 X11/Wayland Vault QA 与 Android ARM64 Debug Build 通过。
+- 2026-07-27：Commit `5e366fd` 的 GitHub Actions Run `30245997616` 九个 Job
+  全部通过，包括 Windows、Android/Linux Container、原生 X11/Wayland、
+  OpenSSH、浏览器和 Rust Core。
 
 ## 相关文档
 

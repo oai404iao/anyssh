@@ -114,7 +114,8 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
 - [x] 2026-07-27：实现 Schema v3 Host/Jump Route Repository、v2 数据迁移、
   引用占用和循环检测，并开放 metadata-only Actor/Application/Tauri Commands。
 - [x] 2026-07-27：Schema v3 通过 Workspace、Clippy、OpenSSH、Playwright、
-  agent-browser、原生 X11、原生 Wayland/IBus 和 Android ARM64 本地回归。
+  agent-browser、原生 X11、原生 Wayland/IBus 和 Android ARM64 本地回归；
+  远端 Run `30245997616` 的九个 CI Job 全部通过。
 - [ ] Windows 运行证据仍待补充。
 - [ ] iOS Build 因当前没有 macOS/Xcode 环境暂缓。
 - [ ] 根据证据更新 ADR 状态并完成 Phase 0 报告。
@@ -512,6 +513,10 @@ ssh-target-internal
   `artifacts/agent-browser/smoke-1785136586` 和 Android
   `artifacts/android-build/build-1785136726-623481`。Android APK SHA-256 为
   `635fb9ce105dc7ff073a0a967a4b83d1a6716243c8758b278a4369da46c744ae`。
+- 2026-07-27：Commit `5e366fd` 的 GitHub Actions Run `30245997616` 九个 Job
+  全部通过。Rust Core Log 明确执行 Schema v3 Migration、Host/Route 引用完整性
+  和 Actor Repository 测试；Windows、Android/Linux Container、原生 X11/
+  Wayland、OpenSSH 和浏览器路径同时通过。
 - 2026-07-27：Commit `9f14940` 的 GitHub Actions Run `30243415893` 九个 Job
   全部通过。OpenSSH Log 明确执行
   `encrypted_private_key_flows_from_credential_id_to_ssh_core`，Windows、Android、
