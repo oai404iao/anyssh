@@ -106,7 +106,7 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
   原生 X11、Wayland/IBus、Windows、Linux Container 和 Android Container。
 - [x] 2026-07-27：将 Tauri `VaultManager` 迁移到 `anyssh-storage` 专用
   DB Actor；使用有界 Command Queue、oneshot Response，并由 Actor 独占
-  `Option<LocalVault>`。
+  `Option<LocalVault>`；远端 Run `30238710937` 的九个 CI Job 全部通过。
 - [ ] Windows 运行证据仍待补充。
 - [ ] iOS Build 因当前没有 macOS/Xcode 环境暂缓。
 - [ ] 根据证据更新 ADR 状态并完成 Phase 0 报告。
@@ -481,6 +481,9 @@ ssh-target-internal
   Sender，再 Join 专用线程；否则 Actor 会在 `blocking_recv` 等待并造成退出
   Deadlock。实现使用单个 `Arc<Inner>` 显式保证这一销毁顺序，Vault 本身不进入
   Mutex。
+- 2026-07-27：Commit `f2fc360` 的 GitHub Actions Run `30238710937` 九个 Job
+  全部通过，包含 Windows Build、Android/Linux Container、原生 X11/Wayland
+  Vault QA、OpenSSH、浏览器和 Rust Core。
 - 其余发现待执行过程中持续补充。
 
 ## Decision Log
