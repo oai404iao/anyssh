@@ -52,7 +52,7 @@ use crate::{
 pub const BOOTSTRAP_FILE_NAME: &str = "vault.bootstrap.json";
 pub const DATABASE_FILE_NAME: &str = "vault.db";
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 const KEY_BYTES: usize = 32;
 const NONCE_BYTES: usize = 24;
 
@@ -336,6 +336,7 @@ impl VaultDatabase {
         initialize_schema(&mut database.connection)?;
         database.migrate_to_v3(false)?;
         database.migrate_to_v4(false)?;
+        database.migrate_to_v5(false)?;
         database.connection.execute(
             "INSERT INTO vault_meta(key, value) VALUES('vault_id', ?1)",
             [keys.vault_id()],
@@ -1063,6 +1064,20 @@ impl VaultDatabase {
                     passphrase,
                 }
             }
+            CredentialKind::SystemAgent => {
+                if stored.passphrase_nonce.is_some() || stored.passphrase_ciphertext.is_some() {
+                    return Err(StorageError::RecordIntegrity);
+                }
+                CredentialSecret::SystemAgent {
+                    identity_fingerprint_sha256: self.decrypt_credential_field(
+                        id,
+                        kind,
+                        "secret",
+                        stored.secret_nonce,
+                        stored.secret_ciphertext,
+                    )?,
+                }
+            }
         };
 
         CredentialRecord::new(id, stored.label, stored.username, secret)
@@ -1105,6 +1120,17 @@ impl VaultDatabase {
                         )
                     })
                     .transpose()?,
+            }),
+            CredentialSecret::SystemAgent {
+                identity_fingerprint_sha256,
+            } => Ok(EncryptedCredential {
+                secret: self.encrypt_credential_field(
+                    &record.id,
+                    kind,
+                    "secret",
+                    identity_fingerprint_sha256.as_bytes(),
+                )?,
+                passphrase: None,
             }),
         }
     }
@@ -1172,13 +1198,19 @@ impl VaultDatabase {
             1 => {
                 migrate_to_v2(&mut self.connection, false)?;
                 self.migrate_to_v3(false)?;
-                self.migrate_to_v4(false)
+                self.migrate_to_v4(false)?;
+                self.migrate_to_v5(false)
             }
             2 => {
                 self.migrate_to_v3(false)?;
-                self.migrate_to_v4(false)
+                self.migrate_to_v4(false)?;
+                self.migrate_to_v5(false)
             }
-            3 => self.migrate_to_v4(false),
+            3 => {
+                self.migrate_to_v4(false)?;
+                self.migrate_to_v5(false)
+            }
+            4 => self.migrate_to_v5(false),
             version => Err(StorageError::UnsupportedSchema(version)),
         }
     }
@@ -1394,6 +1426,168 @@ impl VaultDatabase {
             "
             DROP TABLE legacy_jump_route_steps_v3;
             DROP TABLE legacy_hosts_v3;
+            ",
+        )?;
+        transaction.pragma_update(None, "user_version", 4_i64)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    fn migrate_to_v5(&mut self, simulate_interruption: bool) -> Result<(), StorageError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute_batch(
+            "
+            DROP INDEX group_overrides_credential_id_idx;
+            DROP INDEX group_overrides_jump_route_id_idx;
+            DROP INDEX hosts_group_id_idx;
+            DROP INDEX hosts_credential_id_idx;
+            DROP INDEX hosts_jump_route_id_idx;
+            DROP INDEX jump_route_steps_host_id_idx;
+
+            ALTER TABLE jump_route_steps RENAME TO legacy_jump_route_steps_v4;
+            ALTER TABLE hosts RENAME TO legacy_hosts_v4;
+            ALTER TABLE group_overrides RENAME TO legacy_group_overrides_v4;
+            ALTER TABLE credentials RENAME TO legacy_credentials_v4;
+
+            CREATE TABLE credentials(
+                id TEXT PRIMARY KEY NOT NULL,
+                label TEXT NOT NULL,
+                username TEXT NOT NULL,
+                kind TEXT NOT NULL
+                    CHECK(kind IN ('password', 'private_key', 'system_agent')),
+                secret_nonce BLOB NOT NULL,
+                secret_ciphertext BLOB NOT NULL,
+                passphrase_nonce BLOB,
+                passphrase_ciphertext BLOB,
+                CHECK(
+                    (passphrase_nonce IS NULL AND passphrase_ciphertext IS NULL)
+                    OR
+                    (passphrase_nonce IS NOT NULL AND passphrase_ciphertext IS NOT NULL)
+                ),
+                CHECK(
+                    kind = 'private_key'
+                    OR
+                    (passphrase_nonce IS NULL AND passphrase_ciphertext IS NULL)
+                )
+            ) WITHOUT ROWID;
+
+            CREATE TABLE group_overrides(
+                group_id TEXT PRIMARY KEY NOT NULL,
+                credential_state INTEGER NOT NULL CHECK(credential_state IN (0, 1, 2)),
+                credential_id TEXT,
+                jump_route_state INTEGER NOT NULL CHECK(jump_route_state IN (0, 1, 2)),
+                jump_route_id TEXT,
+                CHECK(
+                    (credential_state = 0 AND credential_id IS NULL)
+                    OR (credential_state = 1 AND credential_id IS NOT NULL)
+                    OR (credential_state = 2 AND credential_id IS NULL)
+                ),
+                CHECK(
+                    (jump_route_state = 0 AND jump_route_id IS NULL)
+                    OR (jump_route_state = 1 AND jump_route_id IS NOT NULL)
+                    OR (jump_route_state = 2 AND jump_route_id IS NULL)
+                ),
+                FOREIGN KEY(group_id)
+                    REFERENCES host_groups(id) ON DELETE CASCADE,
+                FOREIGN KEY(credential_id)
+                    REFERENCES credentials(id) ON DELETE RESTRICT,
+                FOREIGN KEY(jump_route_id)
+                    REFERENCES jump_routes(id) ON DELETE RESTRICT
+            ) WITHOUT ROWID;
+
+            CREATE TABLE hosts(
+                id TEXT PRIMARY KEY NOT NULL,
+                display_name TEXT NOT NULL,
+                host TEXT NOT NULL,
+                port INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),
+                group_id TEXT,
+                credential_state INTEGER NOT NULL CHECK(credential_state IN (0, 1, 2)),
+                credential_id TEXT,
+                jump_route_state INTEGER NOT NULL CHECK(jump_route_state IN (0, 1, 2)),
+                jump_route_id TEXT,
+                CHECK(
+                    (credential_state = 0 AND credential_id IS NULL)
+                    OR (credential_state = 1 AND credential_id IS NOT NULL)
+                    OR (credential_state = 2 AND credential_id IS NULL)
+                ),
+                CHECK(
+                    (jump_route_state = 0 AND jump_route_id IS NULL)
+                    OR (jump_route_state = 1 AND jump_route_id IS NOT NULL)
+                    OR (jump_route_state = 2 AND jump_route_id IS NULL)
+                ),
+                FOREIGN KEY(group_id)
+                    REFERENCES host_groups(id) ON DELETE RESTRICT,
+                FOREIGN KEY(credential_id)
+                    REFERENCES credentials(id) ON DELETE RESTRICT,
+                FOREIGN KEY(jump_route_id)
+                    REFERENCES jump_routes(id) ON DELETE RESTRICT
+            ) WITHOUT ROWID;
+
+            CREATE TABLE jump_route_steps(
+                route_id TEXT NOT NULL,
+                position INTEGER NOT NULL CHECK(position >= 0),
+                host_id TEXT NOT NULL,
+                PRIMARY KEY(route_id, position),
+                UNIQUE(route_id, host_id),
+                FOREIGN KEY(route_id)
+                    REFERENCES jump_routes(id) ON DELETE CASCADE,
+                FOREIGN KEY(host_id)
+                    REFERENCES hosts(id) ON DELETE RESTRICT
+            ) WITHOUT ROWID;
+
+            INSERT INTO credentials(
+                id, label, username, kind, secret_nonce, secret_ciphertext,
+                passphrase_nonce, passphrase_ciphertext
+            )
+            SELECT id, label, username, kind, secret_nonce, secret_ciphertext,
+                   passphrase_nonce, passphrase_ciphertext
+            FROM legacy_credentials_v4;
+
+            INSERT INTO group_overrides(
+                group_id, credential_state, credential_id,
+                jump_route_state, jump_route_id
+            )
+            SELECT group_id, credential_state, credential_id,
+                   jump_route_state, jump_route_id
+            FROM legacy_group_overrides_v4;
+
+            INSERT INTO hosts(
+                id, display_name, host, port, group_id,
+                credential_state, credential_id,
+                jump_route_state, jump_route_id
+            )
+            SELECT id, display_name, host, port, group_id,
+                   credential_state, credential_id,
+                   jump_route_state, jump_route_id
+            FROM legacy_hosts_v4;
+
+            INSERT INTO jump_route_steps(route_id, position, host_id)
+            SELECT route_id, position, host_id
+            FROM legacy_jump_route_steps_v4;
+
+            CREATE INDEX group_overrides_credential_id_idx
+                ON group_overrides(credential_id);
+            CREATE INDEX group_overrides_jump_route_id_idx
+                ON group_overrides(jump_route_id);
+            CREATE INDEX hosts_group_id_idx ON hosts(group_id);
+            CREATE INDEX hosts_credential_id_idx ON hosts(credential_id);
+            CREATE INDEX hosts_jump_route_id_idx ON hosts(jump_route_id);
+            CREATE INDEX jump_route_steps_host_id_idx ON jump_route_steps(host_id);
+            ",
+        )?;
+
+        if simulate_interruption {
+            return Err(StorageError::MigrationInterrupted);
+        }
+
+        transaction.execute_batch(
+            "
+            DROP TABLE legacy_jump_route_steps_v4;
+            DROP TABLE legacy_hosts_v4;
+            DROP TABLE legacy_group_overrides_v4;
+            DROP TABLE legacy_credentials_v4;
             ",
         )?;
         transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -2214,6 +2408,18 @@ mod tests {
         .expect("private-key credential")
     }
 
+    fn system_agent_credential(id: &str, fingerprint: &str) -> CredentialRecord {
+        CredentialRecord::new(
+            id,
+            "Workstation SSH Agent",
+            "agent-user",
+            CredentialSecret::SystemAgent {
+                identity_fingerprint_sha256: Zeroizing::new(fingerprint.to_owned()),
+            },
+        )
+        .expect("system-agent credential")
+    }
+
     #[test]
     fn encrypted_vault_survives_restart_and_hides_plaintext() {
         let directory = tempfile::tempdir().expect("tempdir");
@@ -2363,6 +2569,10 @@ mod tests {
             LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
         let password = password_credential("cred-password", "credential-password-secret");
         let private_key = private_key_credential("cred-private-key");
+        let agent = system_agent_credential(
+            "cred-system-agent",
+            "SHA256:system-agent-fingerprint-selector",
+        );
 
         let password_summary = vault
             .create_credential(&password)
@@ -2370,14 +2580,19 @@ mod tests {
         let private_key_summary = vault
             .create_credential(&private_key)
             .expect("create private-key credential");
+        let agent_summary = vault
+            .create_credential(&agent)
+            .expect("create system-agent credential");
         assert_eq!(password_summary.kind(), CredentialKind::Password);
         assert_eq!(private_key_summary.kind(), CredentialKind::PrivateKey);
+        assert_eq!(agent_summary.kind(), CredentialKind::SystemAgent);
 
         let summaries = vault.list_credentials().expect("list credentials");
-        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries.len(), 3);
         let summary_debug = format!("{summaries:?}");
         assert!(!summary_debug.contains("credential-password-secret"));
         assert!(!summary_debug.contains("fixture-private-key"));
+        assert!(!summary_debug.contains("system-agent-fingerprint-selector"));
 
         assert_files_do_not_contain(
             &root,
@@ -2389,6 +2604,9 @@ mod tests {
                 b"key-user",
                 b"fixture-private-key",
                 b"fixture-private-key-passphrase",
+                b"Workstation SSH Agent",
+                b"agent-user",
+                b"system-agent-fingerprint-selector",
             ],
         );
 
@@ -2420,6 +2638,22 @@ mod tests {
         assert_eq!(
             passphrase.as_deref().map(String::as_str),
             Some("fixture-private-key-passphrase")
+        );
+
+        let resolved_agent = reopened
+            .resolve_credential("cred-system-agent")
+            .expect("resolve system agent");
+        let (username, secret) = resolved_agent.into_parts();
+        assert_eq!(username, "agent-user");
+        let CredentialSecret::SystemAgent {
+            identity_fingerprint_sha256,
+        } = secret
+        else {
+            panic!("expected system-agent credential");
+        };
+        assert_eq!(
+            identity_fingerprint_sha256.as_str(),
+            "SHA256:system-agent-fingerprint-selector"
         );
 
         let updated = password_credential("cred-password", "updated-password-secret");
@@ -3232,6 +3466,62 @@ mod tests {
     }
 
     #[test]
+    fn interrupted_v5_migration_preserves_complete_v4_schema() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let mut vault =
+            LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+        vault
+            .create_credential(&password_credential("cred-v4", "v4-secret"))
+            .expect("create v4 credential fixture");
+        downgrade_to_v4_schema(&vault);
+
+        let error = vault
+            .database
+            .migrate_to_v5(true)
+            .expect_err("migration must fail");
+        assert!(matches!(error, StorageError::MigrationInterrupted));
+
+        let version: i64 = vault
+            .database
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("schema version");
+        let credentials_sql: String = vault
+            .database
+            .connection
+            .query_row(
+                "SELECT sql FROM sqlite_schema WHERE type='table' AND name='credentials'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("credentials schema");
+        let credential_count: i64 = vault
+            .database
+            .connection
+            .query_row("SELECT count(*) FROM credentials", [], |row| row.get(0))
+            .expect("count v4 credentials");
+        let legacy_tables: i64 = vault
+            .database
+            .connection
+            .query_row(
+                "
+                SELECT count(*)
+                FROM sqlite_schema
+                WHERE type = 'table' AND name LIKE 'legacy_%_v4'
+                ",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count legacy tables");
+
+        assert_eq!(version, 4);
+        assert!(!credentials_sql.contains("system_agent"));
+        assert_eq!(credential_count, 1);
+        assert_eq!(legacy_tables, 0);
+    }
+
+    #[test]
     fn schema_v4_rejects_invalid_override_state_value_pairs() {
         let directory = tempfile::tempdir().expect("tempdir");
         let root = directory.path().join("vault");
@@ -3405,7 +3695,82 @@ mod tests {
     }
 
     #[test]
-    fn unlocking_a_v1_vault_migrates_it_to_v4() {
+    fn unlocking_a_v4_vault_adds_system_agent_credentials_without_changing_references() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let mut vault =
+            LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+        let credential = password_credential("cred-v4", "v4-secret");
+        vault
+            .create_credential(&credential)
+            .expect("create password credential");
+        let group = fixture_group(
+            "group-v4",
+            "V4 Group",
+            None,
+            Override::Set("cred-v4".to_owned()),
+            Override::Inherit,
+        );
+        vault.create_group(&group).expect("create v4 Group");
+        let host = fixture_host_with_overrides(
+            "host-v4",
+            "V4 Host",
+            "v4.internal",
+            Some("group-v4"),
+            Override::Inherit,
+            Override::Inherit,
+        );
+        vault.create_host(&host).expect("create v4 Host");
+        downgrade_to_v4_schema(&vault);
+        drop(vault);
+
+        let mut migrated = LocalVault::unlock(&root, "123456").expect("unlock and migrate");
+        let migrated_host = migrated
+            .list_hosts()
+            .expect("list Hosts")
+            .into_iter()
+            .find(|host| host.id() == "host-v4")
+            .expect("migrated Host");
+        assert_eq!(migrated_host.effective_credential_id(), Some("cred-v4"));
+        let (_, secret) = migrated
+            .resolve_credential("cred-v4")
+            .expect("resolve migrated password")
+            .into_parts();
+        let CredentialSecret::Password { password } = secret else {
+            panic!("expected password credential");
+        };
+        assert_eq!(password.as_str(), "v4-secret");
+
+        let agent =
+            system_agent_credential("cred-agent-v5", "SHA256:migrated-vault-agent-selector");
+        migrated
+            .create_credential(&agent)
+            .expect("create system agent after migration");
+        let (_, secret) = migrated
+            .resolve_credential("cred-agent-v5")
+            .expect("resolve system agent after migration")
+            .into_parts();
+        let CredentialSecret::SystemAgent {
+            identity_fingerprint_sha256,
+        } = secret
+        else {
+            panic!("expected system-agent credential");
+        };
+        assert_eq!(
+            identity_fingerprint_sha256.as_str(),
+            "SHA256:migrated-vault-agent-selector"
+        );
+
+        let version: i64 = migrated
+            .database
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("schema version");
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn unlocking_a_v1_vault_migrates_it_to_v5() {
         let directory = tempfile::tempdir().expect("tempdir");
         let root = directory.path().join("vault");
         let vault = LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
@@ -3528,6 +3893,158 @@ mod tests {
                 ",
             )
             .expect("downgrade fixture to v3");
+    }
+
+    fn downgrade_to_v4_schema(vault: &LocalVault) {
+        vault
+            .database
+            .connection
+            .execute_batch(
+                "
+                DROP INDEX group_overrides_credential_id_idx;
+                DROP INDEX group_overrides_jump_route_id_idx;
+                DROP INDEX hosts_group_id_idx;
+                DROP INDEX hosts_credential_id_idx;
+                DROP INDEX hosts_jump_route_id_idx;
+                DROP INDEX jump_route_steps_host_id_idx;
+
+                ALTER TABLE jump_route_steps RENAME TO downgrade_jump_route_steps_v5;
+                ALTER TABLE hosts RENAME TO downgrade_hosts_v5;
+                ALTER TABLE group_overrides RENAME TO downgrade_group_overrides_v5;
+                ALTER TABLE credentials RENAME TO downgrade_credentials_v5;
+
+                CREATE TABLE credentials(
+                    id TEXT PRIMARY KEY NOT NULL,
+                    label TEXT NOT NULL,
+                    username TEXT NOT NULL,
+                    kind TEXT NOT NULL CHECK(kind IN ('password', 'private_key')),
+                    secret_nonce BLOB NOT NULL,
+                    secret_ciphertext BLOB NOT NULL,
+                    passphrase_nonce BLOB,
+                    passphrase_ciphertext BLOB,
+                    CHECK(
+                        (passphrase_nonce IS NULL AND passphrase_ciphertext IS NULL)
+                        OR
+                        (passphrase_nonce IS NOT NULL AND passphrase_ciphertext IS NOT NULL)
+                    ),
+                    CHECK(
+                        kind = 'private_key'
+                        OR
+                        (passphrase_nonce IS NULL AND passphrase_ciphertext IS NULL)
+                    )
+                ) WITHOUT ROWID;
+
+                CREATE TABLE group_overrides(
+                    group_id TEXT PRIMARY KEY NOT NULL,
+                    credential_state INTEGER NOT NULL CHECK(credential_state IN (0, 1, 2)),
+                    credential_id TEXT,
+                    jump_route_state INTEGER NOT NULL CHECK(jump_route_state IN (0, 1, 2)),
+                    jump_route_id TEXT,
+                    CHECK(
+                        (credential_state = 0 AND credential_id IS NULL)
+                        OR (credential_state = 1 AND credential_id IS NOT NULL)
+                        OR (credential_state = 2 AND credential_id IS NULL)
+                    ),
+                    CHECK(
+                        (jump_route_state = 0 AND jump_route_id IS NULL)
+                        OR (jump_route_state = 1 AND jump_route_id IS NOT NULL)
+                        OR (jump_route_state = 2 AND jump_route_id IS NULL)
+                    ),
+                    FOREIGN KEY(group_id)
+                        REFERENCES host_groups(id) ON DELETE CASCADE,
+                    FOREIGN KEY(credential_id)
+                        REFERENCES credentials(id) ON DELETE RESTRICT,
+                    FOREIGN KEY(jump_route_id)
+                        REFERENCES jump_routes(id) ON DELETE RESTRICT
+                ) WITHOUT ROWID;
+
+                CREATE TABLE hosts(
+                    id TEXT PRIMARY KEY NOT NULL,
+                    display_name TEXT NOT NULL,
+                    host TEXT NOT NULL,
+                    port INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),
+                    group_id TEXT,
+                    credential_state INTEGER NOT NULL CHECK(credential_state IN (0, 1, 2)),
+                    credential_id TEXT,
+                    jump_route_state INTEGER NOT NULL CHECK(jump_route_state IN (0, 1, 2)),
+                    jump_route_id TEXT,
+                    CHECK(
+                        (credential_state = 0 AND credential_id IS NULL)
+                        OR (credential_state = 1 AND credential_id IS NOT NULL)
+                        OR (credential_state = 2 AND credential_id IS NULL)
+                    ),
+                    CHECK(
+                        (jump_route_state = 0 AND jump_route_id IS NULL)
+                        OR (jump_route_state = 1 AND jump_route_id IS NOT NULL)
+                        OR (jump_route_state = 2 AND jump_route_id IS NULL)
+                    ),
+                    FOREIGN KEY(group_id)
+                        REFERENCES host_groups(id) ON DELETE RESTRICT,
+                    FOREIGN KEY(credential_id)
+                        REFERENCES credentials(id) ON DELETE RESTRICT,
+                    FOREIGN KEY(jump_route_id)
+                        REFERENCES jump_routes(id) ON DELETE RESTRICT
+                ) WITHOUT ROWID;
+
+                CREATE TABLE jump_route_steps(
+                    route_id TEXT NOT NULL,
+                    position INTEGER NOT NULL CHECK(position >= 0),
+                    host_id TEXT NOT NULL,
+                    PRIMARY KEY(route_id, position),
+                    UNIQUE(route_id, host_id),
+                    FOREIGN KEY(route_id)
+                        REFERENCES jump_routes(id) ON DELETE CASCADE,
+                    FOREIGN KEY(host_id)
+                        REFERENCES hosts(id) ON DELETE RESTRICT
+                ) WITHOUT ROWID;
+
+                INSERT INTO credentials(
+                    id, label, username, kind, secret_nonce, secret_ciphertext,
+                    passphrase_nonce, passphrase_ciphertext
+                )
+                SELECT id, label, username, kind, secret_nonce, secret_ciphertext,
+                       passphrase_nonce, passphrase_ciphertext
+                FROM downgrade_credentials_v5;
+
+                INSERT INTO group_overrides(
+                    group_id, credential_state, credential_id,
+                    jump_route_state, jump_route_id
+                )
+                SELECT group_id, credential_state, credential_id,
+                       jump_route_state, jump_route_id
+                FROM downgrade_group_overrides_v5;
+
+                INSERT INTO hosts(
+                    id, display_name, host, port, group_id,
+                    credential_state, credential_id,
+                    jump_route_state, jump_route_id
+                )
+                SELECT id, display_name, host, port, group_id,
+                       credential_state, credential_id,
+                       jump_route_state, jump_route_id
+                FROM downgrade_hosts_v5;
+
+                INSERT INTO jump_route_steps(route_id, position, host_id)
+                SELECT route_id, position, host_id
+                FROM downgrade_jump_route_steps_v5;
+
+                CREATE INDEX group_overrides_credential_id_idx
+                    ON group_overrides(credential_id);
+                CREATE INDEX group_overrides_jump_route_id_idx
+                    ON group_overrides(jump_route_id);
+                CREATE INDEX hosts_group_id_idx ON hosts(group_id);
+                CREATE INDEX hosts_credential_id_idx ON hosts(credential_id);
+                CREATE INDEX hosts_jump_route_id_idx ON hosts(jump_route_id);
+                CREATE INDEX jump_route_steps_host_id_idx ON jump_route_steps(host_id);
+
+                DROP TABLE downgrade_jump_route_steps_v5;
+                DROP TABLE downgrade_hosts_v5;
+                DROP TABLE downgrade_group_overrides_v5;
+                DROP TABLE downgrade_credentials_v5;
+                PRAGMA user_version = 4;
+                ",
+            )
+            .expect("downgrade fixture to v4");
     }
 
     fn downgrade_to_v1_schema(vault: &LocalVault) {

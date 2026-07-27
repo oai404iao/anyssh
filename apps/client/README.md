@@ -34,6 +34,13 @@ label and username; Rust opens the native picker, validates the selected file, a
 the Key without returning its Path or contents to the WebView. The first implementation
 accepts unencrypted OpenSSH Keys only.
 
+System Agent Credential creation first asks Rust to enumerate the current desktop Agent.
+The WebView receives only Algorithm, SHA-256 Fingerprint, and sanitized Comment, then stores
+the selected Fingerprint behind an opaque Credential ID. Linux uses `SSH_AUTH_SOCK`;
+Windows uses the OpenSSH Agent Named Pipe. Agent Socket/Pipe paths, Private Keys, Public Key
+blobs, and signature payloads do not enter IPC. Android/iOS return an explicit unsupported
+error for this desktop-only v1 capability.
+
 Group, Host, and Jump Route CRUD is also metadata-only. Groups form a bounded parent tree.
 Groups and Hosts persist explicit `Inherit`, `Set`, or `Clear` Credential/Route reference
 state; ordered Jump Routes persist Host IDs only. They never copy a username, password,
@@ -64,6 +71,8 @@ The canonical reproducible build paths use the independent Linux and Android ima
 `infra/build`. Direct host Android builds remain available for debugging.
 
 On Windows, `pnpm qa:native:windows` builds and launches the actual Debug EXE, then attaches
-Playwright to its existing WebView2 instance through a QA-only loopback CDP port. The
-separate `tauri.windows-qa.conf.json` overlay enables that port only for the smoke build;
-the canonical Tauri configuration and release builds do not expose it.
+Playwright to its existing WebView2 instance through a QA-only loopback CDP port. The QA
+also loads an ephemeral Key into Windows OpenSSH Agent, deletes the source Key before
+AnySSH starts, and connects the real EXE to a standalone local OpenSSH Server. The separate
+`tauri.windows-qa.conf.json` overlay enables CDP only for the smoke build; the canonical
+Tauri configuration and release builds do not expose it.

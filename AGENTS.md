@@ -43,7 +43,7 @@ any_ssh/
 |   |-- anyssh-domain/                # Endpoint、TerminalSize 等领域值对象
 |   |-- anyssh-ssh/                   # russh Session、Host Key、PTY、背压
 |   |-- anyssh-vault/                 # VMK、PIN Key Slot、HKDF、Bootstrap
-|   `-- anyssh-storage/               # DB Actor、Schema v4、Repository、Record AEAD
+|   `-- anyssh-storage/               # DB Actor、Schema v5、Repository、Record AEAD
 |-- scripts/
 |   |-- build-in-container.sh          # 独立 Linux/Android Build Image 入口
 |   |-- check-android-build.sh         # Android ARM64 APK 与 bundled SQLCipher 构建
@@ -213,6 +213,8 @@ Evidence 复制回仓库。
   第一跳断开。
 - 验证 Saved Host ID -> Password Jump 1 -> Password Jump 2 -> Private Key
   Target，并确认 Jump 2 认证失败按 Hop 归属。
+- 验证真实 `ssh-agent` Direct、Password Jump -> Agent Target、Agent Jump ->
+  Private Key Target，以及错误 Fingerprint 不回退。
 - Fixture 凭据只能用于测试，不得替换为真实主机或真实密钥。
 
 ### Vault 检查
@@ -222,8 +224,8 @@ Evidence 复制回仓库。
 - PIN Slot 创建、正确/错误 PIN、损坏 Slot。
 - DB Actor 有界 Queue、oneshot Response、串行生命周期和 Shutdown。
 - Schema v1 -> v2 Credential、Schema v2 -> v3 旧 Host Password 转
-  Credential，以及 Schema v3 -> v4 Group/三态 Override Migration 的成功、
-  重启和中断回滚。
+  Credential、Schema v3 -> v4 Group/三态 Override、Schema v4 -> v5 System
+  Agent Credential Migration 的成功、重启和中断回滚。
 - Host/Jump Route 引用占用、顺序恢复、直接/间接循环和 Locked Repository 拒绝。
 - SQLCipher 重启解锁和 Credential 字段 AEAD。
 - 数据库、WAL、Sidecar 与 Bootstrap 明文扫描。
@@ -233,6 +235,8 @@ Evidence 复制回仓库。
 同时必须验证 Tauri/xterm Ack 背压能排空 4 MiB 输出并继续执行后续远端命令。
 该检查还必须通过真实 Native File Picker 导入测试 Private Key，确认 UI 只返回
 metadata、Key Header 不出现在 Vault 文件，且临时源文件在 SSH 流程前删除。
+Linux X11 检查还必须启动真实 `ssh-agent`，由原生 Tauri UI 枚举 Identity 并
+创建 Fingerprint-selected Credential，且 Agent Key/Fingerprint 不得明文落盘。
 
 `pnpm qa:native:windows` 只在 Windows 执行。它必须启动实际构建的 EXE、确认
 标题为 `AnySSH` 的非零窗口句柄，并通过
@@ -240,7 +244,9 @@ metadata、Key Header 不出现在 Vault 文件，且临时源文件在 SSH 流�
 Loopback WebView2 CDP Port。Canonical Tauri Config、Capability 和 Release
 Build 不得暴露 CDP。测试必须覆盖 Vault Create/Lock/Wrong-PIN/Unlock、
 Repository CRUD、进程重启恢复、SQLCipher 明文扫描和截图；不得上传 WebView2
-Profile 或 Vault 文件。
+Profile 或 Vault 文件。System Agent 变更还必须通过 Windows OpenSSH Agent
+Named Pipe 和临时 standalone OpenSSH Server 完成真实 EXE SSH 交互；Agent
+Private Key 文件必须在 AnySSH 启动前删除。
 
 `pnpm qa:native:wayland` 必须在 AnySSH 进程没有 `DISPLAY` 的条件下：
 

@@ -17,7 +17,10 @@ use anyssh_app::{
     SshSessionRequest, VaultState as StorageVaultState, VaultStatus as StorageVaultStatus,
 };
 use anyssh_domain::{SshEndpoint, TerminalSize};
-use anyssh_ssh::{SessionControl, SessionEvent, SessionHop, SpawnedSession};
+use anyssh_ssh::{
+    SessionControl, SessionEvent, SessionHop, SpawnedSession,
+    SystemAgentIdentitySummary as SshSystemAgentIdentitySummary,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{
     AppHandle, Manager, State,
@@ -95,6 +98,7 @@ struct CredentialSummary {
 enum CredentialKind {
     Password,
     PrivateKey,
+    SystemAgent,
 }
 
 impl From<StorageCredentialSummary> for CredentialSummary {
@@ -102,6 +106,7 @@ impl From<StorageCredentialSummary> for CredentialSummary {
         let kind = match summary.kind() {
             StorageCredentialKind::Password => CredentialKind::Password,
             StorageCredentialKind::PrivateKey => CredentialKind::PrivateKey,
+            StorageCredentialKind::SystemAgent => CredentialKind::SystemAgent,
         };
         Self {
             id: summary.id().to_owned(),
@@ -134,6 +139,32 @@ struct UpdatePasswordCredentialRequest {
 struct ImportPrivateKeyCredentialRequest {
     label: String,
     username: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateSystemAgentCredentialRequest {
+    label: String,
+    username: String,
+    identity_fingerprint_sha256: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemAgentIdentitySummary {
+    algorithm: String,
+    fingerprint_sha256: String,
+    comment: String,
+}
+
+impl From<SshSystemAgentIdentitySummary> for SystemAgentIdentitySummary {
+    fn from(identity: SshSystemAgentIdentitySummary) -> Self {
+        Self {
+            algorithm: identity.algorithm().to_owned(),
+            fingerprint_sha256: identity.fingerprint_sha256().to_owned(),
+            comment: identity.comment().to_owned(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -585,6 +616,36 @@ async fn credential_import_private_key(
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+async fn credential_list_system_agent_identities(
+    core: State<'_, ApplicationCore>,
+) -> Result<Vec<SystemAgentIdentitySummary>, String> {
+    core.list_system_agent_identities()
+        .await
+        .map(|identities| {
+            identities
+                .into_iter()
+                .map(SystemAgentIdentitySummary::from)
+                .collect()
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn credential_create_system_agent(
+    request: CreateSystemAgentCredentialRequest,
+    core: State<'_, ApplicationCore>,
+) -> Result<CredentialSummary, String> {
+    core.create_system_agent_credential(
+        request.label,
+        request.username,
+        request.identity_fingerprint_sha256,
+    )
+    .await
+    .map(CredentialSummary::from)
+    .map_err(|error| error.to_string())
+}
+
 fn selected_private_key_path(
     selected: Option<FilePath>,
 ) -> Result<Option<std::path::PathBuf>, String> {
@@ -998,6 +1059,8 @@ pub fn run() {
             credential_create_password,
             credential_update_password,
             credential_import_private_key,
+            credential_list_system_agent_identities,
+            credential_create_system_agent,
             credential_list,
             credential_delete,
             group_create,
@@ -1108,6 +1171,56 @@ mod tests {
         assert!(value.get("password").is_none());
         assert!(value.get("privateKey").is_none());
         assert!(value.get("passphrase").is_none());
+    }
+
+    #[test]
+    fn system_agent_ipc_contains_public_metadata_and_rejects_agent_endpoints() {
+        let identity = serde_json::to_value(SystemAgentIdentitySummary {
+            algorithm: "ssh-ed25519".to_owned(),
+            fingerprint_sha256: "SHA256:agent-selector".to_owned(),
+            comment: "workstation key".to_owned(),
+        })
+        .expect("agent identity should serialize");
+        assert_eq!(identity["algorithm"], "ssh-ed25519");
+        assert_eq!(identity["fingerprintSha256"], "SHA256:agent-selector");
+        assert_eq!(identity["comment"], "workstation key");
+        assert!(identity.get("publicKey").is_none());
+        assert!(identity.get("signature").is_none());
+        assert!(identity.get("socketPath").is_none());
+
+        let request: CreateSystemAgentCredentialRequest =
+            serde_json::from_value(serde_json::json!({
+                "label": "Workstation agent",
+                "username": "alice",
+                "identityFingerprintSha256": "SHA256:agent-selector"
+            }))
+            .expect("metadata-only agent request should deserialize");
+        assert_eq!(request.label, "Workstation agent");
+        assert_eq!(request.username, "alice");
+        assert_eq!(request.identity_fingerprint_sha256, "SHA256:agent-selector");
+
+        for extra in [
+            serde_json::json!({
+                "label": "Workstation agent",
+                "username": "alice",
+                "identityFingerprintSha256": "SHA256:agent-selector",
+                "socketPath": "/tmp/ssh-agent.sock"
+            }),
+            serde_json::json!({
+                "label": "Workstation agent",
+                "username": "alice",
+                "identityFingerprintSha256": "SHA256:agent-selector",
+                "namedPipe": "\\\\.\\pipe\\openssh-ssh-agent"
+            }),
+            serde_json::json!({
+                "label": "Workstation agent",
+                "username": "alice",
+                "identityFingerprintSha256": "SHA256:agent-selector",
+                "publicKey": "must-not-enter-ipc"
+            }),
+        ] {
+            assert!(serde_json::from_value::<CreateSystemAgentCredentialRequest>(extra).is_err());
+        }
     }
 
     #[test]

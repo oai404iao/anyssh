@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   createPasswordCredential,
+  createSystemAgentCredential,
   deleteCredential,
   importPrivateKeyCredential,
   listCredentials,
+  listSystemAgentIdentities,
   resetBrowserCredentialsForTests,
   updatePasswordCredential,
 } from "./credential-bridge";
@@ -60,5 +62,38 @@ describe("browser preview credential bridge", () => {
     });
     expect(JSON.stringify(imported)).not.toContain("privateKeyMaterial");
     expect(JSON.stringify(imported)).not.toContain("passphrase");
+  });
+
+  it("selects a metadata-only System Agent identity by fingerprint", async () => {
+    const identities = await listSystemAgentIdentities();
+    expect(identities).toHaveLength(2);
+    expect(identities[0]).toMatchObject({
+      algorithm: "ssh-ed25519",
+      fingerprintSha256: "SHA256:browser-agent-ed25519",
+    });
+    expect(JSON.stringify(identities)).not.toContain("privateKey");
+    expect(JSON.stringify(identities)).not.toContain("signature");
+    expect(JSON.stringify(identities)).not.toContain("socketPath");
+
+    const created = await createSystemAgentCredential({
+      label: "Workstation agent",
+      username: "agent-user",
+      identityFingerprintSha256: identities[0]!.fingerprintSha256,
+    });
+    expect(created).toMatchObject({
+      label: "Workstation agent",
+      username: "agent-user",
+      kind: "systemAgent",
+    });
+    expect(JSON.stringify(created)).not.toContain(
+      identities[0]!.fingerprintSha256,
+    );
+    await expect(
+      createSystemAgentCredential({
+        label: "Missing agent",
+        username: "agent-user",
+        identityFingerprintSha256: "SHA256:missing",
+      }),
+    ).rejects.toThrow("no longer available");
   });
 });

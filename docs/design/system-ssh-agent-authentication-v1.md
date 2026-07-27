@@ -1,6 +1,6 @@
 # System SSH Agent Authentication v1
 
-> 状态：设计中
+> 状态：已实现，Windows CI 验证中
 > 日期：2026-07-27
 > 外部基线核验日期：2026-07-27
 
@@ -42,15 +42,20 @@ credential_list_system_agent_identities()
 约束：
 
 - 最多读取 64 个 Identity。
+- v1 只返回普通 Public Key Identity；OpenSSH Certificate Identity 暂时跳过，
+  等 Certificate 产品能力单独实现。
 - Fingerprint 使用 Public Key 的 SHA-256 Fingerprint。
 - Comment 去除首尾空白、拒绝控制字符并设置长度上限。
 - Comment 只用于展示，不参与引用或认证。
 - 不返回 Public Key Blob、Private Key、签名或 Agent Socket Path。
 - 空 Agent 返回空列表；Agent 不可用返回稳定分类错误。
+- russh Agent Client 的依赖级 Debug Frame/Sign Payload 日志通过统一 `log`
+  `max_level_info`/`release_max_level_info` 编译上限关闭；AnySSH 自身继续使用
+  脱敏后的 `tracing`。
 
 ## Credential 模型
 
-Schema v5 扩展 Credential Kind：
+当前 Schema v5 扩展 Credential Kind：
 
 ```text
 password
@@ -127,6 +132,29 @@ Agent Frame。
   WebView2 连接 Fixture。
 - Frontend/Playwright/agent-browser 覆盖 Identity 选择和 metadata-only UI。
 - Android/Linux Container 和 Windows Build 回归。
+
+本地证据：
+
+- `pnpm test:ssh:smoke` 已通过真实 `ssh-agent` 验证 Direct、Password Jump ->
+  Agent Target 和 Agent Jump -> Private Key Target。
+- X11：
+  `artifacts/native-xvfb/smoke-1785168783-1314017`；真实 Tauri UI 枚举
+  `SSH_AUTH_SOCK` Identity、创建 System Agent Credential，并完成原有 Vault、
+  Native Picker、SSH 与 4 MiB 回归。
+- agent-browser：
+  `artifacts/agent-browser/smoke-1785169032`；Desktop/Mobile Credential UI 和空
+  Browser Error Log 已人工检查。
+- Wayland：
+  `artifacts/native-wayland/smoke-1785169077-1339570`；IME/SSH 回归通过。
+- Android Host APK SHA-256：
+  `124bc46dc0963bec4a972c4583b1159527b4be18cf2d6a2d4eddc086435ff5b0`。
+- Linux Container ELF SHA-256：
+  `1d94cd2fde8ba2e7b148b727ca3e4a990a18560dc080f5655f4241f8cfa6fb7e`。
+- Android Container APK SHA-256：
+  `28950dde0621e49976a9ddee949c2fb253b574e8c1d73eee10ca00356914802f`。
+
+Windows Named Pipe、standalone OpenSSH Server 和真实 EXE/WebView2 Smoke 等待
+同一 Feature Commit 的 Windows Runner。
 
 ## 外部参考
 

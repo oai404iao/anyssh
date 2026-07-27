@@ -9,6 +9,9 @@ DRIVER="$RUN_DIR/anyssh-x11-driver"
 PRIVATE_KEY_FIXTURE="/tmp/000-anyssh-native-import-key"
 APP_GROUP=""
 XVFB_PID=""
+AGENT_PID=""
+AGENT_SOCKET=""
+AGENT_FINGERPRINT=""
 
 cleanup() {
   if [[ -n "$APP_GROUP" ]]; then
@@ -20,8 +23,15 @@ cleanup() {
     kill -TERM "$XVFB_PID" >/dev/null 2>&1 || true
     wait "$XVFB_PID" >/dev/null 2>&1 || true
   fi
+  if [[ -n "$AGENT_PID" ]]; then
+    kill "$AGENT_PID" >/dev/null 2>&1 || true
+    wait "$AGENT_PID" >/dev/null 2>&1 || true
+  fi
   docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
   rm -f "$PRIVATE_KEY_FIXTURE" "$PRIVATE_KEY_FIXTURE.pub"
+  if [[ -n "$AGENT_SOCKET" ]]; then
+    rm -f "$AGENT_SOCKET"
+  fi
 }
 trap cleanup EXIT
 
@@ -34,6 +44,8 @@ for command in \
   pnpm \
   setsid \
   ss \
+  ssh-add \
+  ssh-agent \
   ssh-keygen \
   ssh-keyscan \
   Xvfb; do
@@ -62,7 +74,31 @@ ssh-keygen \
   -N "" \
   -C anyssh-native-import \
   -f "$PRIVATE_KEY_FIXTURE"
-rm -f "$PRIVATE_KEY_FIXTURE.pub"
+AGENT_SOCKET="/tmp/anyssh-agent-$RANDOM-$$"
+ssh-agent -a "$AGENT_SOCKET" -D \
+  >"$RUN_DIR/ssh-agent.stdout.log" \
+  2>"$RUN_DIR/ssh-agent.stderr.log" &
+AGENT_PID=$!
+for _ in $(seq 1 100); do
+  if [[ -S "$AGENT_SOCKET" ]]; then
+    break
+  fi
+  if ! kill -0 "$AGENT_PID" >/dev/null 2>&1; then
+    echo "ssh-agent exited before creating its socket." >&2
+    cat "$RUN_DIR/ssh-agent.stderr.log" >&2 || true
+    exit 1
+  fi
+  sleep 0.05
+done
+if [[ ! -S "$AGENT_SOCKET" ]]; then
+  echo "ssh-agent did not create its socket." >&2
+  exit 1
+fi
+SSH_AUTH_SOCK="$AGENT_SOCKET" ssh-add "$PRIVATE_KEY_FIXTURE" >/dev/null
+AGENT_FINGERPRINT="$(
+  ssh-keygen -lf "$PRIVATE_KEY_FIXTURE.pub" -E sha256 |
+    awk 'NR == 1 { print $2 }'
+)"
 cc \
   -O2 \
   -Wall \
@@ -82,6 +118,15 @@ docker run \
   --name "$CONTAINER_NAME" \
   --publish 127.0.0.1:2222:22 \
   "$IMAGE_NAME" >/dev/null
+
+docker exec "$CONTAINER_NAME" \
+  sh -c 'mkdir -p /home/anyssh/.ssh && chmod 700 /home/anyssh/.ssh'
+docker cp \
+  "$PRIVATE_KEY_FIXTURE.pub" \
+  "$CONTAINER_NAME:/home/anyssh/.ssh/authorized_keys" >/dev/null
+docker exec "$CONTAINER_NAME" \
+  sh -c 'chown -R anyssh:anyssh /home/anyssh/.ssh && chmod 600 /home/anyssh/.ssh/authorized_keys'
+rm -f "$PRIVATE_KEY_FIXTURE.pub"
 
 for _ in $(seq 1 50); do
   if ssh-keyscan -p 2222 127.0.0.1 >/dev/null 2>&1; then
@@ -133,6 +178,7 @@ setsid dbus-run-session -- \
     export XDG_CACHE_HOME='$RUN_DIR/xdg-cache'
     export XDG_CONFIG_HOME='$RUN_DIR/xdg-config'
     export XDG_DATA_HOME='$RUN_DIR/xdg-data'
+    export SSH_AUTH_SOCK='$AGENT_SOCKET'
     cd '$ROOT_DIR'
     pnpm dev:native
   " \
@@ -247,16 +293,33 @@ if grep -R -a -F "BEGIN OPENSSH PRIVATE KEY" "$VAULT_ROOT" >/dev/null 2>&1; then
 fi
 rm -f "$PRIVATE_KEY_FIXTURE"
 
+"$DRIVER" click 900 145
+sleep 2
+"$DRIVER" type "Native system agent"
+"$DRIVER" tab
+"$DRIVER" type "anyssh"
+"$DRIVER" tab
+"$DRIVER" tab
+"$DRIVER" enter
+sleep 4
+"$DRIVER" probe "$RUN_DIR/09-system-agent-created.bmp" >/dev/null
+for marker in "Native system agent" "$AGENT_FINGERPRINT"; do
+  if grep -R -a -F "$marker" "$VAULT_ROOT" >/dev/null 2>&1; then
+    echo "System Agent Credential metadata leaked into a Vault file." >&2
+    exit 1
+  fi
+done
+
 "$DRIVER" click 100 106
 sleep 1
 "$DRIVER" click 1100 440
 sleep 0.25
 "$DRIVER" type "anyssh-test"
 sleep 0.5
-"$DRIVER" probe "$RUN_DIR/09-password-entered.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/10-password-entered.bmp" >/dev/null
 "$DRIVER" click 1100 495
 sleep 1
-"$DRIVER" probe "$RUN_DIR/10-host-key-dialog.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/11-host-key-dialog.bmp" >/dev/null
 
 COMMAND_SUCCEEDED=0
 for _ in $(seq 1 20); do
@@ -303,13 +366,13 @@ if [[ "$LARGE_OUTPUT_SUCCEEDED" -ne 1 ]]; then
   exit 1
 fi
 
-"$DRIVER" probe "$RUN_DIR/11-command-succeeded.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/12-command-succeeded.bmp" >/dev/null
 "$DRIVER" click 1117 44
 sleep 1
-"$DRIVER" probe "$RUN_DIR/12-disconnected.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/13-disconnected.bmp" >/dev/null
 "$DRIVER" click 1208 44
 sleep 1
-"$DRIVER" probe "$RUN_DIR/13-vault-locked-after-session.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/14-vault-locked-after-session.bmp" >/dev/null
 
 if ! kill -0 "$APP_GROUP" >/dev/null 2>&1; then
   echo "The native process exited unexpectedly." >&2
@@ -337,6 +400,9 @@ cat >"$RUN_DIR/report.md" <<EOF
   Ed25519 Private Key without sending its Path or contents through WebView IPC.
 - The imported Key remained absent from Vault file plaintext scans and the
   temporary source file was deleted before SSH testing continued.
+- The same native UI enumerated one \`SSH_AUTH_SOCK\` Identity and created a
+  Fingerprint-selected System Agent Credential without persisting the Agent Key
+  or Fingerprint in plaintext.
 - Password input reached the native WebView.
 - Host-key confirmation displayed the scoped endpoint and SHA-256 fingerprint and was accepted.
 - The Rust SSH core authenticated against the Docker OpenSSH fixture.
@@ -356,11 +422,12 @@ cat >"$RUN_DIR/report.md" <<EOF
 - \`06-vault-unlock-pin-entered.bmp\`
 - \`07-vault-reunlocked.bmp\`
 - \`08-private-key-imported.bmp\`
-- \`09-password-entered.bmp\`
-- \`10-host-key-dialog.bmp\`
-- \`11-command-succeeded.bmp\`
-- \`12-disconnected.bmp\`
-- \`13-vault-locked-after-session.bmp\`
+- \`09-system-agent-created.bmp\`
+- \`10-password-entered.bmp\`
+- \`11-host-key-dialog.bmp\`
+- \`12-command-succeeded.bmp\`
+- \`13-disconnected.bmp\`
+- \`14-vault-locked-after-session.bmp\`
 - \`windows.txt\`
 - \`native.log\`
 EOF

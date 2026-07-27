@@ -19,13 +19,23 @@ $WebViewDataRoot = Join-Path `
   ([Environment]::GetFolderPath("LocalApplicationData")) `
   "main\anyssh-qa-webview2"
 $CdpPort = 9222
+$SshFixtureRoot = Join-Path $env:TEMP "anyssh-windows-ssh-$Timestamp-$PID"
+$SshMarkerPath = Join-Path $env:TEMP "anyssh-windows-agent-ok-$Timestamp-$PID.txt"
 $script:NativeProcess = $null
 $script:NativeWindowHandle = [IntPtr]::Zero
 $script:StageRecords = @()
+$script:SshdProcess = $null
+$script:SshAgentWasRunning = $false
+$script:AgentPublicKeyPath = ""
+$script:SshPort = 0
+$script:SshUsername = ""
+$script:AgentFingerprint = ""
 
 New-Item -ItemType Directory -Force -Path $RunDirectory | Out-Null
 Remove-Item -LiteralPath $VaultRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $WebViewDataRoot -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $SshFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $SshMarkerPath -Force -ErrorAction SilentlyContinue
 
 Add-Type -TypeDefinition @"
 using System;
@@ -108,6 +118,184 @@ function Wait-CdpPortAvailable {
     }
   }
   throw "The Windows QA WebView2 CDP port $CdpPort is unavailable."
+}
+
+function Get-FreeTcpPort {
+  $Listener = [System.Net.Sockets.TcpListener]::new(
+    [System.Net.IPAddress]::Loopback,
+    0
+  )
+  try {
+    $Listener.Start()
+    return ([System.Net.IPEndPoint]$Listener.LocalEndpoint).Port
+  }
+  finally {
+    $Listener.Stop()
+  }
+}
+
+function ConvertTo-OpenSshPath {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path
+  )
+  return $Path.Replace("\", "/")
+}
+
+function Stop-SshFixture {
+  if ($null -ne $script:SshdProcess) {
+    try {
+      if (-not $script:SshdProcess.HasExited) {
+        Stop-Process -Id $script:SshdProcess.Id -Force
+        $script:SshdProcess.WaitForExit(10000) | Out-Null
+      }
+    }
+    catch {
+      # The standalone sshd may already have exited during cleanup.
+    }
+    finally {
+      $script:SshdProcess = $null
+    }
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($script:AgentPublicKeyPath)) {
+    try {
+      & ssh-add.exe -d $script:AgentPublicKeyPath *> $null
+    }
+    catch {
+      # The ephemeral key may already be absent.
+    }
+  }
+
+  if (-not $script:SshAgentWasRunning) {
+    Stop-Service -Name ssh-agent -Force -ErrorAction SilentlyContinue
+  }
+
+  Remove-Item -LiteralPath $SshFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $SshMarkerPath -Force -ErrorAction SilentlyContinue
+}
+
+function Start-SshFixture {
+  $SshKeygen = (Get-Command ssh-keygen.exe -ErrorAction Stop).Source
+  $Sshd = (Get-Command sshd.exe -ErrorAction Stop).Source
+  Get-Command ssh-add.exe -ErrorAction Stop | Out-Null
+
+  New-Item -ItemType Directory -Force -Path $SshFixtureRoot | Out-Null
+  $AgentKeyPath = Join-Path $SshFixtureRoot "id_ed25519_agent"
+  $AgentPublicKeyPath = "$AgentKeyPath.pub"
+  $HostKeyPath = Join-Path $SshFixtureRoot "ssh_host_ed25519_key"
+  $AuthorizedKeysPath = Join-Path $SshFixtureRoot "authorized_keys"
+  $SshConfigPath = Join-Path $SshFixtureRoot "sshd_config"
+  $SshPidPath = Join-Path $SshFixtureRoot "sshd.pid"
+  $SshStdout = Join-Path $RunDirectory "sshd.stdout.log"
+  $SshStderr = Join-Path $RunDirectory "sshd.stderr.log"
+
+  & $SshKeygen -q -t ed25519 -N '""' -C "anyssh-windows-agent" -f $AgentKeyPath
+  if ($LASTEXITCODE -ne 0) {
+    throw "Unable to generate the Windows SSH Agent fixture key."
+  }
+  & $SshKeygen -q -t ed25519 -N '""' -f $HostKeyPath
+  if ($LASTEXITCODE -ne 0) {
+    throw "Unable to generate the Windows OpenSSH host key."
+  }
+
+  $AgentService = Get-Service -Name ssh-agent -ErrorAction Stop
+  $script:SshAgentWasRunning = $AgentService.Status -eq "Running"
+  if (-not $script:SshAgentWasRunning) {
+    Set-Service -Name ssh-agent -StartupType Manual
+    Start-Service -Name ssh-agent
+    (Get-Service -Name ssh-agent).WaitForStatus(
+      [System.ServiceProcess.ServiceControllerStatus]::Running,
+      [TimeSpan]::FromSeconds(20)
+    )
+  }
+
+  & ssh-add.exe $AgentKeyPath *> $null
+  if ($LASTEXITCODE -ne 0) {
+    throw "Unable to load the Windows SSH Agent fixture key."
+  }
+
+  $FingerprintLine = (& $SshKeygen -lf $AgentPublicKeyPath -E sha256 | Select-Object -First 1)
+  $FingerprintParts = @($FingerprintLine -split "\s+" | Where-Object { $_ })
+  if ($FingerprintParts.Count -lt 2 -or -not $FingerprintParts[1].StartsWith("SHA256:")) {
+    throw "Unable to resolve the Windows SSH Agent fixture fingerprint."
+  }
+  $script:AgentFingerprint = $FingerprintParts[1]
+  $script:AgentPublicKeyPath = $AgentPublicKeyPath
+
+  Get-Content -LiteralPath $AgentPublicKeyPath |
+    Set-Content -Encoding ASCII -Path $AuthorizedKeysPath
+  Remove-Item -LiteralPath $AgentKeyPath -Force
+
+  $script:SshPort = Get-FreeTcpPort
+  $script:SshUsername = $env:USERNAME.ToLowerInvariant()
+  $OpenSshHostKeyPath = ConvertTo-OpenSshPath $HostKeyPath
+  $OpenSshAuthorizedKeysPath = ConvertTo-OpenSshPath $AuthorizedKeysPath
+  $OpenSshPidPath = ConvertTo-OpenSshPath $SshPidPath
+  @"
+Port $($script:SshPort)
+ListenAddress 127.0.0.1
+HostKey $OpenSshHostKeyPath
+PidFile $OpenSshPidPath
+AuthorizedKeysFile $OpenSshAuthorizedKeysPath
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+StrictModes no
+AllowUsers $($script:SshUsername)
+AllowTcpForwarding no
+AllowAgentForwarding no
+X11Forwarding no
+PrintMotd no
+LogLevel VERBOSE
+"@ | Set-Content -Encoding ASCII -Path $SshConfigPath
+
+  $script:SshdProcess = Start-Process `
+    -FilePath $Sshd `
+    -ArgumentList @("-D", "-e", "-f", "`"$SshConfigPath`"") `
+    -RedirectStandardOutput $SshStdout `
+    -RedirectStandardError $SshStderr `
+    -PassThru
+
+  $SshReady = $false
+  for ($Attempt = 0; $Attempt -lt 80; $Attempt++) {
+    if ($script:SshdProcess.HasExited) {
+      $Details = Get-Content -LiteralPath $SshStderr -Raw -ErrorAction SilentlyContinue
+      throw "The Windows OpenSSH fixture exited before listening. $Details"
+    }
+    $Client = [System.Net.Sockets.TcpClient]::new()
+    try {
+      $Connect = $Client.ConnectAsync("127.0.0.1", $script:SshPort)
+      if ($Connect.Wait(250) -and $Client.Connected) {
+        $SshReady = $true
+        break
+      }
+    }
+    catch {
+      # Retry until the standalone server is listening.
+    }
+    finally {
+      $Client.Dispose()
+    }
+    Start-Sleep -Milliseconds 250
+  }
+  if (-not $SshReady) {
+    throw "The Windows OpenSSH fixture did not become ready."
+  }
+
+  $env:ANYSSH_WINDOWS_SSH_HOST = "127.0.0.1"
+  $env:ANYSSH_WINDOWS_SSH_PORT = [string]$script:SshPort
+  $env:ANYSSH_WINDOWS_SSH_USERNAME = $script:SshUsername
+  $env:ANYSSH_WINDOWS_AGENT_FINGERPRINT = $script:AgentFingerprint
+  $env:ANYSSH_WINDOWS_AGENT_MARKER_PATH = $SshMarkerPath
+
+  @"
+host=127.0.0.1
+port=$($script:SshPort)
+username=$($script:SshUsername)
+agent_fingerprint=$($script:AgentFingerprint)
+"@ | Set-Content -Encoding UTF8 -Path (Join-Path $RunDirectory "ssh-fixture.txt")
 }
 
 function Stop-NativeProcess {
@@ -278,12 +466,16 @@ function Assert-VaultFilesAreEncrypted {
     "000000",
     "windows-fixture-password",
     "Windows QA password",
+    "Windows QA system agent",
+    "Windows QA agent host",
     "Windows QA jump",
     "Windows QA target",
     "Windows QA group",
     "Windows QA route",
     "target.internal",
-    "windows-user"
+    "windows-user",
+    $script:SshUsername,
+    $script:AgentFingerprint
   )
   foreach ($File in Get-ChildItem -LiteralPath $VaultRoot -Recurse -File) {
     $Text = [System.Text.Encoding]::UTF8.GetString(
@@ -309,8 +501,16 @@ function Assert-VaultFilesAreEncrypted {
 }
 
 try {
+  Start-SshFixture
   Start-NativeStage -Stage "create"
   Stop-NativeProcess
+  if (-not (Test-Path -LiteralPath $SshMarkerPath -PathType Leaf)) {
+    throw "The Windows System Agent session did not create its remote marker."
+  }
+  $SshMarker = Get-Content -LiteralPath $SshMarkerPath -Raw
+  if (-not $SshMarker.Contains("ANYSSH_WINDOWS_AGENT_OK")) {
+    throw "The Windows System Agent remote marker was invalid."
+  }
   Assert-VaultFilesAreEncrypted
 
   Start-NativeStage -Stage "restart"
@@ -344,9 +544,14 @@ try {
   Debug build; the canonical Tauri config and Release builds do not expose it.
 - Native Tauri IPC created a PIN Slot and SQLCipher Vault.
 - Wrong PIN, Lock, Unlock, process termination, relaunch, and restart recovery passed.
-- Password Credential, Group, inherited Host, and Jump Route metadata persisted
-  across process restart.
-- PIN, Password, Group, Host, Username, and Route markers were absent from Vault files.
+- Windows OpenSSH Authentication Agent enumerated the selected SHA-256 Identity
+  through Rust; the temporary Private Key file was deleted before AnySSH launched.
+- The real EXE used the Agent Named Pipe to authenticate to a standalone Windows
+  OpenSSH Server and created the remote marker ``$SshMarkerPath``.
+- Password/System Agent Credentials, Group, inherited/direct Hosts, and Jump Route
+  metadata persisted across process restart.
+- PIN, Password, Agent Fingerprint, Group, Host, Username, and Route markers were
+  absent from Vault files.
 - The SQLCipher database did not expose the plaintext SQLite header.
 - Browser error logs were empty.
 
@@ -354,6 +559,7 @@ try {
 
 - ``01-vault-create.png``
 - ``02-native-ready.png``
+- ``02b-system-agent-connected.png``
 - ``03-repository-created.png``
 - ``04-vault-wrong-pin.png``
 - ``05-vault-reunlocked.png``
@@ -373,6 +579,9 @@ try {
 - ``app-create.stderr.log``
 - ``app-restart.stdout.log``
 - ``app-restart.stderr.log``
+- ``ssh-fixture.txt``
+- ``sshd.stdout.log``
+- ``sshd.stderr.log``
 "@ | Set-Content -Encoding UTF8 -Path (Join-Path $RunDirectory "report.md")
 
   Write-Host "Native Windows WebView2 smoke passed: $RunDirectory"
@@ -384,10 +593,16 @@ catch {
 }
 finally {
   Stop-NativeProcess
+  Stop-SshFixture
   Remove-Item Env:ANYSSH_QA_VAULT_ROOT -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_CDP_URL -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_RUN_DIR -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_STAGE -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_SSH_HOST -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_SSH_PORT -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_SSH_USERNAME -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_AGENT_FINGERPRINT -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_AGENT_MARKER_PATH -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $VaultRoot -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $WebViewDataRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

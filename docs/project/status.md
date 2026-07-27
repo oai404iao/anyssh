@@ -81,21 +81,31 @@
   Lock/Unlock 和进程重启恢复，截图及 Browser Error Log 已人工检查。
 - Phase 0 Threat Model、Outcomes 和 ADR 状态评审已完成。
 - Phase 1 首个计划已确定为 Group Schema v4 与 `Inherit / Set / Clear` 三态继承。
-- SQLCipher Schema v4、Group Repository、32 层 Parent 限制、三态 Override、
-  Rust-only Effective Connection Plan 和 Group/Host 配置 UI 已完成本地实现。
+- SQLCipher Schema v4 已引入 Group Repository、32 层 Parent 限制、三态
+  Override、Rust-only Effective Connection Plan 和 Group/Host 配置 UI；当前
+  Schema v5 继续保留该模型。
 - Group 继承的 Credential/Jump Route 已通过两跳 OpenSSH Saved Host Smoke；
   Browser、X11、Wayland/IBus 和 Workspace 回归通过。
 - Group Feature Commit `ece4fe7` 的 GitHub Actions Run `30279500562` 全部
   九个 Job 通过；Windows Group/Inherited Host/Route 重启恢复、Android ARM64、
   Linux Container、X11、Wayland 和 agent-browser Evidence 已人工检查。
 - ADR-0012 已接受，Group ExecPlan 已完成。
+- SQLCipher Schema v5、`system_agent` Credential、Linux `SSH_AUTH_SOCK`、
+  Windows OpenSSH Named Pipe Connector、64 Identity 上限和精确 Fingerprint
+  选择已实现。
+- Docker OpenSSH 已验证 Direct Agent、Password Jump -> Agent Target 和 Agent
+  Jump -> Private Key Target；Agent Key/签名不进入 Vault 或 WebView。
+- X11 原生 Tauri UI 已从真实 `SSH_AUTH_SOCK` 枚举 Identity 并创建 Credential；
+  agent-browser Desktop/Mobile、Wayland、Android Host、Linux/Android Container
+  本地回归通过。
 - CI 工作流。
 
 当前仓库尚未完成：
 
 - 加密 Private Key 的原生 Passphrase Prompt。
-- 系统 SSH Agent 认证正在执行 Active ExecPlan。
-- Windows Native Picker 与真实 SSH Runtime 交互。
+- 系统 SSH Agent 的 Windows Named Pipe/真实 EXE/OpenSSH Evidence 与同 Commit
+  全平台 CI 正在执行 Active ExecPlan。
+- Windows Native Picker。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
 - iOS 构建验证；当前没有 macOS/Xcode 环境，按维护者指示暂缓。
 

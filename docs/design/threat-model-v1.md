@@ -26,6 +26,7 @@ AnySSH 当前必须保持以下不变量：
 | --- | --- |
 | VMK、KEK、数据库 Key、Record Key | 机密性、完整性、最短可用生命周期 |
 | Password、Private Key、Passphrase | 不持久进入 WebView、日志或明文文件 |
+| System SSH Agent Signing Capability | 只允许用户选择的 Fingerprint、无 Key 导出、无隐式 Forward |
 | Host Key Fingerprint | 防止 MITM 和静默信任变化 |
 | Group/Host/Route/Credential 图 | 引用完整性、确定顺序、无循环 |
 | Vault Bootstrap 和 Schema | 版本完整性、可恢复迁移、拒绝静默覆盖 |
@@ -49,6 +50,11 @@ Native Picker
   -> Rust-only selected Path/URI
     -> bounded validation
       -> Credential Repository
+
+System SSH Agent Socket / Named Pipe
+  -> Rust-only identity enumeration
+    -> exact SHA-256 fingerprint selection
+      -> external signing
 ```
 
 - React/WebView 只属于展示与交互边界，不能成为 Secret Repository。
@@ -96,14 +102,17 @@ Native Picker
 | T-14 | QA CDP 成为 Release 调试后门 | 独立 `tauri.windows-qa.conf.json`、仅 Debug Smoke 使用、Loopback Port、Canonical Config 无 CDP | QA Debug EXE 不得作为发布 Artifact 分发 |
 | T-15 | 恶意 WebDAV 删除、回滚或分叉数据 | 计划使用加密不可变 Operation、Snapshot、ETag CAS | Sync 尚未实现；ADR-0004 保持 Proposed |
 | T-16 | 任意本地脚本获得文件/网络/Secret | MVP 禁止任意 Shell、`eval` 和第三方插件 | Runbook Engine 尚未实现，需要 Phase 1/后续测试 |
+| T-17 | WebView、日志或恶意配置滥用系统 Agent | IPC 不接受 Socket/Pipe/Key/签名；最多 64 Identity；Credential 精确 Fingerprint；不自动回退；Agent Forwarding 关闭；依赖 `log` 静态上限为 Info | Agent 本身和已解锁用户 Session 仍是外部信任边界；Flatpak/确认策略待验证 |
 
 ## 6. 平台结论
 
-- Linux X11：真实 Tauri/WebKitGTK、Vault、Native Picker、SSH 和 4 MiB 输出已验证。
+- Linux X11：真实 Tauri/WebKitGTK、Vault、Native Picker、`SSH_AUTH_SOCK`
+  Identity UI、SSH 和 4 MiB 输出已验证。
 - Linux Wayland：无 `DISPLAY`、Weston、IBus/libpinyin、xterm 和 SSH 已验证。
 - Windows：真实 EXE/WebView2、非零窗口句柄、Vault/Repository 和重启恢复已
-  验证；Group/Inherited Host/Route 的 Schema v4 重启恢复也已验证。Native
-  Picker 与真实 SSH 交互仍需真实 Windows 环境补充。
+  验证；Group/Inherited Host/Route 的 Schema v4 重启恢复也已验证。System
+  Agent Named Pipe/standalone OpenSSH QA 已实现，等待同 Commit Windows
+  Evidence；Native Picker 仍未覆盖。
 - Android：ARM64 Debug APK、Rust Core 和 bundled SQLCipher 构建已验证；Runtime
   与 Content URI 尚未验证。
 - iOS：因无 macOS/Xcode 环境而明确延期。
@@ -130,6 +139,8 @@ pnpm check:container:android
 
 - Vault PIN/损坏 Slot/重启/明文扫描和 Migration 回滚。
 - Credential/Group/Host/Route Summary 脱敏、三态解析、引用完整性和循环检测。
+- System Agent Identity 上限、Fingerprint 选择、错误 Identity、Direct/Jump
+  外部签名和 IPC 脱敏。
 - Private Key Import 文件类型、大小、编码、Symlink 和加密 Key 拒绝。
 - Host Key 变化、两 Jump Route、取消、超时和 4 MiB 背压。
 - Browser、X11、Wayland/IME、Windows WebView2 和 Android Build Evidence。

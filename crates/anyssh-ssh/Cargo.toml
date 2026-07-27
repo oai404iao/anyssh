@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 anyssh-domain.workspace = true
 bytes.workspace = true
+log.workspace = true
 russh.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
@@ -15,4 +16,5 @@ tracing.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+rand.workspace = true
 tokio = { workspace = true, features = ["process"] }

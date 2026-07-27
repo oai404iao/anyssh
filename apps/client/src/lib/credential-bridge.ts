@@ -1,7 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { browserCredentialIsReferenced } from "./host-bridge";
 
-export type CredentialKind = "password" | "privateKey";
+export type CredentialKind = "password" | "privateKey" | "systemAgent";
 
 export interface CredentialSummary {
   id: string;
@@ -24,6 +24,31 @@ export interface PrivateKeyCredentialImport {
   label: string;
   username: string;
 }
+
+export interface SystemAgentIdentitySummary {
+  algorithm: string;
+  fingerprintSha256: string;
+  comment: string;
+}
+
+export interface SystemAgentCredentialInput {
+  label: string;
+  username: string;
+  identityFingerprintSha256: string;
+}
+
+const BROWSER_SYSTEM_AGENT_IDENTITIES: SystemAgentIdentitySummary[] = [
+  {
+    algorithm: "ssh-ed25519",
+    fingerprintSha256: "SHA256:browser-agent-ed25519",
+    comment: "Browser QA workstation key",
+  },
+  {
+    algorithm: "rsa-sha2-512",
+    fingerprintSha256: "SHA256:browser-agent-rsa",
+    comment: "Browser QA hardware-backed key",
+  },
+];
 
 const BROWSER_CREDENTIAL_FIXTURES: CredentialSummary[] = [
   {
@@ -110,6 +135,45 @@ export async function importPrivateKeyCredential(
     return { ...summary };
   }
   return invoke<CredentialSummary | null>("credential_import_private_key", {
+    request: input,
+  });
+}
+
+export async function listSystemAgentIdentities(): Promise<
+  SystemAgentIdentitySummary[]
+> {
+  if (!isTauri()) {
+    return BROWSER_SYSTEM_AGENT_IDENTITIES.map((identity) => ({
+      ...identity,
+    }));
+  }
+  return invoke<SystemAgentIdentitySummary[]>(
+    "credential_list_system_agent_identities",
+  );
+}
+
+export async function createSystemAgentCredential(
+  input: SystemAgentCredentialInput,
+): Promise<CredentialSummary> {
+  if (!isTauri()) {
+    if (
+      !BROWSER_SYSTEM_AGENT_IDENTITIES.some(
+        (identity) =>
+          identity.fingerprintSha256 === input.identityFingerprintSha256,
+      )
+    ) {
+      throw new Error("Selected SSH Agent identity is no longer available");
+    }
+    const summary = {
+      id: `browser-credential-${nextBrowserCredentialId++}`,
+      label: input.label,
+      username: input.username,
+      kind: "systemAgent" as const,
+    };
+    browserCredentials.push(summary);
+    return { ...summary };
+  }
+  return invoke<CredentialSummary>("credential_create_system_agent", {
     request: input,
   });
 }

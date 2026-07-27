@@ -1129,6 +1129,11 @@ select:focus-visible {
   background: rgba(156, 140, 255, 0.11);
 }
 
+.resource-icon.systemAgent {
+  color: #ffd38b;
+  background: rgba(255, 198, 109, 0.11);
+}
+
 .route-resource-icon {
   color: #ffd38b;
   background: rgba(255, 198, 109, 0.11);
@@ -1553,7 +1558,7 @@ select:focus-visible {
 
   .manager-actions {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
   }
 
   .group-tree {

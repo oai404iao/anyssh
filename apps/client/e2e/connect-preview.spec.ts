@@ -72,6 +72,27 @@ test("manages Groups, Credentials, Hosts, and ordered Jump Routes", async ({
   await keyDialog.getByRole("button", { name: "Choose private key" }).click();
   await expect(page.getByText("QA imported key")).toBeVisible();
 
+  await page.getByRole("button", { name: "New system agent" }).click();
+  const agentDialog = page.getByRole("dialog", {
+    name: "New System Agent Credential",
+  });
+  await agentDialog.getByLabel("Credential label").fill("QA workstation agent");
+  await agentDialog.getByLabel("Username").fill("qa-agent-user");
+  const agentIdentity = agentDialog.getByLabel("SSH Agent identity");
+  await expect(agentIdentity).toContainText("ssh-ed25519");
+  await expect(agentIdentity).toContainText("SHA256:");
+  await expect(agentDialog.locator('input[type="file"]')).toHaveCount(0);
+  await expect(agentDialog.getByText(/Private Key/)).toHaveCount(1);
+  await agentDialog
+    .getByRole("button", { name: "Save Agent Credential" })
+    .click();
+  const agentCredential = page
+    .locator(".resource-card")
+    .filter({ hasText: "QA workstation agent" });
+  await expect(agentCredential).toContainText("System Agent");
+  await expect(agentCredential).toContainText("External signer");
+  await expect(agentCredential).not.toContainText("SHA256:");
+
   await page.getByRole("button", { name: /^Groups \d+$/ }).click();
   await page.getByRole("button", { name: "New group" }).click();
   const rootGroupDialog = page.getByRole("dialog", { name: "New Group" });

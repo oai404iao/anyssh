@@ -63,9 +63,11 @@ ADR-0006 要求 Private Key 和 Passphrase 不进入 WebView。Proposed ADR-0013
 
 - [x] 2026-07-27：完成 Group Plan 收尾并接受 ADR-0012。
 - [x] 2026-07-27：创建 ADR-0013、System Agent Design 和本 ExecPlan。
-- [ ] 实现 Agent Connector、Identity Enumeration 和 Core Authentication。
-- [ ] 实现 Schema v5、Credential Repository、Actor/Application/Tauri Commands。
-- [ ] 实现 Credential UI 与 Browser QA。
+- [x] 2026-07-27：实现 Agent Connector、Identity Enumeration 和 Core
+  Authentication。
+- [x] 2026-07-27：实现 Schema v5、Credential Repository、
+  Actor/Application/Tauri Commands。
+- [x] 2026-07-27：实现 Credential UI 与 Browser QA。
 - [ ] 完成 OpenSSH、Windows、Android/Linux Build 与全量回归。
 - [ ] 评审 ADR-0013 并收尾本计划。
 
@@ -140,6 +142,16 @@ pnpm format:check
 - 2026-07-27：russh 0.62.4 已提供 Unix `connect_env`、Windows Named Pipe、
   Pageant、Identity Enumeration 和 `authenticate_publickey_with`；v1 只启用
   Linux Environment Socket 与 Windows OpenSSH Named Pipe。
+- 2026-07-27：russh 的 Identity List 也可以包含 OpenSSH Certificate。v1 为避免
+  Fingerprint/认证语义混淆只展示普通 Public Key，Certificate 留到后续专门能力。
+- 2026-07-27：SQLite 不能直接修改 Credential Kind CHECK。Schema v5 在一个
+  Transaction 内重建 Credentials 及其 Group/Host/Route Step 引用表，才能保持
+  Foreign Key 和中断回滚。
+- 2026-07-27：Windows 2025 Runner 可用系统 OpenSSH；QA 使用临时 Key、系统
+  Agent Named Pipe 和高端口 standalone `sshd.exe`，不依赖 Docker。
+- 2026-07-27：russh Agent Client 在 Debug Level 会记录 Identity Frame 和待签名
+  Payload。Workspace 对 `log` 启用静态 `max_level_info`，编译期关闭这些依赖级
+  Debug 记录，并用单元测试固定上限。
 
 ## Decision Log
 
@@ -147,6 +159,37 @@ pnpm format:check
   Agent Identity。
 - 2026-07-27：Agent Comment 只用于展示，不能作为稳定引用。
 - 2026-07-27：v1 不启用 Agent Forwarding、Pageant 或应用内 Agent。
+- 2026-07-27：System Agent Fingerprint 作为认证选择器进入现有 Record AEAD
+  Payload；Credential Summary 不返回 Fingerprint。
+- 2026-07-27：Agent Key 文件只用于 `ssh-add`/测试 Server 授权，AnySSH 启动前
+  即删除；Runtime 只能请求 Agent 签名。
+- 2026-07-27：不为诊断打开 russh `log::debug!`；Agent Frame 和签名 Payload
+  不属于允许的日志内容。
+
+## 本地验证证据
+
+- Workspace Tests、Clippy、Frontend Lint/Typecheck/Vitest/Build 和 Playwright
+  已通过。
+- `pnpm test:ssh:smoke` 已验证真实 `ssh-agent` Direct、Password Jump -> Agent
+  Target、Agent Jump -> Private Key Target，以及错误 Fingerprint Fail Closed。
+- agent-browser：
+  `artifacts/agent-browser/smoke-1785169032`；Desktop/Mobile Agent Credential
+  截图已人工检查，Browser Error 为空。
+- X11：`artifacts/native-xvfb/smoke-1785168783-1314017`；真实 Tauri UI 已从
+  `SSH_AUTH_SOCK` 枚举 Identity、创建 Credential，并完成 Native Picker/SSH/
+  4 MiB 回归。
+- Wayland：`artifacts/native-wayland/smoke-1785169077-1339570`；无 `DISPLAY`
+  的 WebKitGTK/IBus/SSH 回归通过，Marker 为 `/tmp/anyssh-ime-中文`。
+- Host Android Build：
+  `artifacts/android-build/build-1785169153-1344552`，APK SHA-256 为
+  `124bc46dc0963bec4a972c4583b1159527b4be18cf2d6a2d4eddc086435ff5b0`。
+- Linux Container：
+  `artifacts/linux-build/build-1785169203-1`，ELF SHA-256 为
+  `1d94cd2fde8ba2e7b148b727ca3e4a990a18560dc080f5655f4241f8cfa6fb7e`。
+- Android Container：
+  `artifacts/android-build/build-1785169283-1`，APK SHA-256 为
+  `28950dde0621e49976a9ddee949c2fb253b574e8c1d73eee10ca00356914802f`。
+- Windows PowerShell/Node QA 流程已更新；本机无 Windows，等待远端 Runner。
 
 ## Outcomes & Retrospective
 

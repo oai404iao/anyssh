@@ -148,10 +148,25 @@ agent-browser --session "$SESSION" find label "Username" fill "browser-key"
 agent-browser --session "$SESSION" find role button click \
   --name "Choose private key"
 agent-browser --session "$SESSION" wait --text "Browser QA imported key"
+
+agent-browser --session "$SESSION" find role button click \
+  --name "New system agent"
+agent-browser --session "$SESSION" find label "Credential label" fill \
+  "Browser QA system agent"
+agent-browser --session "$SESSION" find label "Username" fill "browser-agent"
+agent-browser --session "$SESSION" find role button click \
+  --name "Save Agent Credential"
+agent-browser --session "$SESSION" wait --text "Browser QA system agent"
 agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/06-credentials.png"
 agent-browser --session "$SESSION" snapshot -i \
   >"$OUTPUT_DIR/06-credentials-snapshot.txt"
+agent-browser --session "$SESSION" set viewport 390 844
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/06b-credentials-mobile.png"
+agent-browser --session "$SESSION" snapshot -i \
+  >"$OUTPUT_DIR/06b-credentials-mobile-snapshot.txt"
+agent-browser --session "$SESSION" set viewport 1440 900
 
 agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(2)"
 agent-browser --session "$SESSION" find role button click --name "New group"
@@ -264,6 +279,8 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
   password after the editor closed.
 - Private Key import UI used a metadata-only browser simulation and exposed no
   file input, Path, Key text, or Passphrase field.
+- System Agent creation selected a metadata-only SHA-256 Identity; no Agent
+  Socket, Public Key Blob, Private Key, or signature entered Browser state.
 - Parent/child Group creation exercised Credential Set, Credential Inherit,
   Jump Route Inherit, and Jump Route Clear without exposing the submitted
   password.
@@ -282,6 +299,7 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
 - \`screenshots/04-mobile-connected.png\`
 - \`screenshots/05-disconnected.png\`
 - \`screenshots/06-credentials.png\`
+- \`screenshots/06b-credentials-mobile.png\`
 - \`screenshots/07-groups.png\`
 - \`screenshots/07b-groups-mobile.png\`
 - \`screenshots/08-route-desktop.png\`

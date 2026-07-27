@@ -12,14 +12,17 @@ const MAX_CREDENTIAL_USERNAME_BYTES: usize = 4096;
 const MAX_PASSWORD_BYTES: usize = 64 * 1024;
 const MAX_PRIVATE_KEY_BYTES: usize = 1024 * 1024;
 const MAX_PRIVATE_KEY_PASSPHRASE_BYTES: usize = 64 * 1024;
+const MAX_SYSTEM_AGENT_FINGERPRINT_BYTES: usize = 256;
 
 const PASSWORD_KIND: &str = "password";
 const PRIVATE_KEY_KIND: &str = "private_key";
+const SYSTEM_AGENT_KIND: &str = "system_agent";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CredentialKind {
     Password,
     PrivateKey,
+    SystemAgent,
 }
 
 impl CredentialKind {
@@ -27,6 +30,7 @@ impl CredentialKind {
         match self {
             Self::Password => PASSWORD_KIND,
             Self::PrivateKey => PRIVATE_KEY_KIND,
+            Self::SystemAgent => SYSTEM_AGENT_KIND,
         }
     }
 
@@ -34,6 +38,7 @@ impl CredentialKind {
         match value {
             PASSWORD_KIND => Ok(Self::Password),
             PRIVATE_KEY_KIND => Ok(Self::PrivateKey),
+            SYSTEM_AGENT_KIND => Ok(Self::SystemAgent),
             _ => Err(StorageError::RecordIntegrity),
         }
     }
@@ -47,6 +52,9 @@ pub enum CredentialSecret {
         private_key: Zeroizing<String>,
         passphrase: Option<Zeroizing<String>>,
     },
+    SystemAgent {
+        identity_fingerprint_sha256: Zeroizing<String>,
+    },
 }
 
 impl CredentialSecret {
@@ -54,6 +62,7 @@ impl CredentialSecret {
         match self {
             Self::Password { .. } => CredentialKind::Password,
             Self::PrivateKey { .. } => CredentialKind::PrivateKey,
+            Self::SystemAgent { .. } => CredentialKind::SystemAgent,
         }
     }
 
@@ -71,7 +80,12 @@ impl CredentialSecret {
             {
                 Ok(())
             }
-            Self::Password { .. } | Self::PrivateKey { .. } => Err(StorageError::InvalidCredential),
+            Self::SystemAgent {
+                identity_fingerprint_sha256,
+            } if valid_system_agent_fingerprint(identity_fingerprint_sha256) => Ok(()),
+            Self::Password { .. } | Self::PrivateKey { .. } | Self::SystemAgent { .. } => {
+                Err(StorageError::InvalidCredential)
+            }
         }
     }
 }
@@ -87,6 +101,10 @@ impl fmt::Debug for CredentialSecret {
                 .debug_struct("PrivateKey")
                 .field("private_key", &"<redacted>")
                 .field("passphrase", &passphrase.as_ref().map(|_| "<redacted>"))
+                .finish(),
+            Self::SystemAgent { .. } => formatter
+                .debug_struct("SystemAgent")
+                .field("identity_fingerprint_sha256", &"<selected>")
                 .finish(),
         }
     }
@@ -232,6 +250,17 @@ fn normalize_required_text(value: String, max_bytes: usize) -> Result<String, St
     Ok(value.to_owned())
 }
 
+fn valid_system_agent_fingerprint(value: &str) -> bool {
+    let Some(encoded) = value.strip_prefix("SHA256:") else {
+        return false;
+    };
+    !encoded.is_empty()
+        && value.len() <= MAX_SYSTEM_AGENT_FINGERPRINT_BYTES
+        && encoded.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'=' | b'-' | b'_')
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,12 +274,39 @@ mod tests {
             private_key: Zeroizing::new("private-key-do-not-log".to_owned()),
             passphrase: Some(Zeroizing::new("passphrase-do-not-log".to_owned())),
         };
+        let agent = CredentialSecret::SystemAgent {
+            identity_fingerprint_sha256: Zeroizing::new(
+                "SHA256:agent-fingerprint-do-not-log".to_owned(),
+            ),
+        };
 
-        let debug = format!("{password:?} {key:?}");
+        let debug = format!("{password:?} {key:?} {agent:?}");
         assert!(debug.contains("<redacted>"));
+        assert!(debug.contains("<selected>"));
         assert!(!debug.contains("password-do-not-log"));
         assert!(!debug.contains("private-key-do-not-log"));
         assert!(!debug.contains("passphrase-do-not-log"));
+        assert!(!debug.contains("agent-fingerprint-do-not-log"));
+    }
+
+    #[test]
+    fn system_agent_fingerprint_must_use_sha256_format() {
+        assert!(
+            CredentialSecret::SystemAgent {
+                identity_fingerprint_sha256: Zeroizing::new("SHA256:abcdefghijklmnop".to_owned()),
+            }
+            .validate()
+            .is_ok()
+        );
+        for invalid in ["", "MD5:abcdef", "SHA256:", "SHA256:contains space"] {
+            assert!(matches!(
+                CredentialSecret::SystemAgent {
+                    identity_fingerprint_sha256: Zeroizing::new(invalid.to_owned()),
+                }
+                .validate(),
+                Err(StorageError::InvalidCredential)
+            ));
+        }
     }
 
     #[test]

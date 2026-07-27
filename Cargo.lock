@@ -142,6 +142,8 @@ version = "0.1.0"
 dependencies = [
  "anyssh-domain",
  "bytes",
+ "log",
+ "rand",
  "russh",
  "thiserror 2.0.19",
  "tokio",

@@ -89,9 +89,9 @@ HKDF-SHA-256 使用 Vault ID 的 UTF-8 表示作为 Salt，VMK 作为输入密�
 
 两个输出均为 32 bytes，必须分别持有和清零。
 
-## SQLCipher Schema v4
+## SQLCipher Schema v5
 
-数据库当前 `user_version` 为 `4`。Schema v1 创建：
+数据库当前 `user_version` 为 `5`。Schema v1 创建：
 
 ```sql
 CREATE TABLE vault_meta(
@@ -129,17 +129,26 @@ Schema v4 新增 `host_groups`、`group_overrides`，并把 Host Credential/Rout
 
 - [Group Persistence and Three-State Inheritance v1](group-inheritance-v1.md)
 
+Schema v5 扩展 Credential Kind CHECK，增加 `system_agent`。System Agent 只保存
+所选 Public Key 的 SHA-256 Fingerprint 作为认证选择器，并继续使用 Credential
+Record AEAD；Private Key 和签名仍留在外部 Agent。完整定义见：
+
+- [System SSH Agent Authentication v1](system-ssh-agent-authentication-v1.md)
+
 ## 创建和迁移
 
 - 新 Vault 先在同文件系统的私有临时目录中完整创建 Bootstrap 和数据库。
 - 文件同步后，通过目录 Rename 原子发布为正式 Vault。
 - 已存在或不完整的 Vault 不得被自动覆盖。
 - Schema migration 在 `IMMEDIATE` Transaction 中执行；失败或中断必须回滚。
-- 已有 Schema v1 Vault 在解锁时依次迁移到 v2、v3、v4。
+- 已有 Schema v1 Vault 在解锁时依次迁移到 v2、v3、v4、v5。
 - Schema v2 -> v3 在同一 Transaction 中把旧 Host Password 重新加密为
   Credential；中断后保持完整 v2 并可重试。
 - Schema v3 -> v4 重建 Host/Route Step 表，把非空引用迁移为 `Set`、空引用
   迁移为 `Inherit`，并保持现有 Effective Value；中断后保持完整 v3。
+- Schema v4 -> v5 重建 Credential 及引用它的 Group/Host/Route Step 表，扩展
+  Kind CHECK 且保持 ID、Ciphertext、Override 和 Foreign Key；中断后保持完整
+  v4。
 - 每个 Migration 显式写入自己的版本号，不能用最新 Schema 常量代替中间版本。
 - Schema `0` 只用于新 Vault 初始化，不在已有文件上自动创建 Schema。
 - Linux 目录权限为 `0700`，Bootstrap 和数据库权限为 `0600`。
@@ -158,4 +167,6 @@ Schema v4 新增 `host_groups`、`group_overrides`，并把 Host Credential/Rout
   顺序和循环检测通过。
 - Schema v4 Group/三态 Override 重启恢复、v3 语义保持、State/Value CHECK、
   Parent/Route 循环、32 层限制、引用占用和中断回滚通过。
+- Schema v5 System Agent Credential 重启恢复、Record AEAD、v4 引用保持和中断
+  回滚通过。
 - Windows 与 Android 构建已经验证；iOS 仍等待 macOS/Xcode 环境。

@@ -1,10 +1,13 @@
 import { FormEvent, useMemo, useState } from "react";
 import {
   createPasswordCredential,
+  createSystemAgentCredential,
   deleteCredential,
   importPrivateKeyCredential,
+  listSystemAgentIdentities,
   updatePasswordCredential,
   type CredentialSummary,
+  type SystemAgentIdentitySummary,
 } from "../lib/credential-bridge";
 import {
   createGroup,
@@ -756,6 +759,12 @@ type CredentialDraft =
       kind: "privateKey";
       label: string;
       username: string;
+    }
+  | {
+      kind: "systemAgent";
+      label: string;
+      username: string;
+      identityFingerprintSha256: string;
     };
 
 function CredentialManager({
@@ -768,6 +777,10 @@ function CredentialManager({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [agentIdentities, setAgentIdentities] = useState<
+    SystemAgentIdentitySummary[]
+  >([]);
+  const [agentLoading, setAgentLoading] = useState(false);
 
   function closeEditor() {
     setDraft(null);
@@ -786,6 +799,40 @@ function CredentialManager({
     });
   }
 
+  async function openSystemAgentEditor() {
+    setError(null);
+    setNotice(null);
+    setAgentIdentities([]);
+    setAgentLoading(true);
+    setDraft({
+      kind: "systemAgent",
+      label: "",
+      username: "",
+      identityFingerprintSha256: "",
+    });
+    try {
+      const identities = await listSystemAgentIdentities();
+      setAgentIdentities(identities);
+      if (identities.length === 0) {
+        setNotice("The System SSH Agent has no public-key identities.");
+      } else {
+        setDraft((current) =>
+          current?.kind === "systemAgent"
+            ? {
+                ...current,
+                identityFingerprintSha256:
+                  identities[0]?.fingerprintSha256 ?? "",
+              }
+            : current,
+        );
+      }
+    } catch (operationError) {
+      setError(String(operationError));
+    } finally {
+      setAgentLoading(false);
+    }
+  }
+
   async function saveCredential(event: FormEvent) {
     event.preventDefault();
     if (!draft) return;
@@ -795,6 +842,10 @@ function CredentialManager({
     }
     if (draft.kind === "password" && !draft.password) {
       setError("Password is required and is never returned by the repository.");
+      return;
+    }
+    if (draft.kind === "systemAgent" && !draft.identityFingerprintSha256) {
+      setError("Select an SSH Agent identity.");
       return;
     }
 
@@ -811,6 +862,12 @@ function CredentialManager({
           setNotice("Private Key selection was cancelled.");
           return;
         }
+      } else if (draft.kind === "systemAgent") {
+        await createSystemAgentCredential({
+          label: draft.label,
+          username: draft.username,
+          identityFingerprintSha256: draft.identityFingerprintSha256,
+        });
       } else if (draft.credentialId) {
         await updatePasswordCredential({
           credentialId: draft.credentialId,
@@ -864,6 +921,13 @@ function CredentialManager({
         <div className="manager-actions">
           <button
             className="secondary-button compact-button"
+            onClick={() => void openSystemAgentEditor()}
+            type="button"
+          >
+            New system agent
+          </button>
+          <button
+            className="secondary-button compact-button"
             onClick={() => {
               setError(null);
               setNotice(null);
@@ -911,14 +975,22 @@ function CredentialManager({
           {credentials.map((credential) => (
             <article className="resource-card" key={credential.id}>
               <div className={`resource-icon ${credential.kind}`}>
-                {credential.kind === "privateKey" ? "PK" : "PW"}
+                {credential.kind === "privateKey"
+                  ? "PK"
+                  : credential.kind === "systemAgent"
+                    ? "AG"
+                    : "PW"}
               </div>
               <div className="resource-main">
                 <strong>{credential.label}</strong>
                 <span>{credential.username}</span>
                 <div className="resource-tags">
                   <span>{kindLabel(credential.kind)}</span>
-                  <span>Secret hidden</span>
+                  <span>
+                    {credential.kind === "systemAgent"
+                      ? "External signer"
+                      : "Secret hidden"}
+                  </span>
                 </div>
               </div>
               <div className="resource-actions">
@@ -954,9 +1026,11 @@ function CredentialManager({
           title={
             draft.kind === "privateKey"
               ? "Import Private Key"
-              : draft.credentialId
-                ? "Replace Password"
-                : "New Password Credential"
+              : draft.kind === "systemAgent"
+                ? "New System Agent Credential"
+                : draft.credentialId
+                  ? "Replace Password"
+                  : "New Password Credential"
           }
         >
           <form className="editor-form" onSubmit={saveCredential}>
@@ -1005,7 +1079,7 @@ function CredentialManager({
                   value={draft.password}
                 />
               </label>
-            ) : (
+            ) : draft.kind === "privateKey" ? (
               <div className="security-note">
                 <strong>Rust-owned file import</strong>
                 <p>
@@ -1014,6 +1088,50 @@ function CredentialManager({
                   until a native Passphrase prompt is available.
                 </p>
               </div>
+            ) : (
+              <>
+                <label>
+                  SSH Agent identity
+                  <select
+                    disabled={agentLoading || agentIdentities.length === 0}
+                    onChange={(event) =>
+                      setDraft((current) =>
+                        current?.kind === "systemAgent"
+                          ? {
+                              ...current,
+                              identityFingerprintSha256: event.target.value,
+                            }
+                          : current,
+                      )
+                    }
+                    value={draft.identityFingerprintSha256}
+                  >
+                    {agentLoading && (
+                      <option value="">Loading identities…</option>
+                    )}
+                    {!agentLoading && agentIdentities.length === 0 && (
+                      <option value="">No identities available</option>
+                    )}
+                    {agentIdentities.map((identity) => (
+                      <option
+                        key={identity.fingerprintSha256}
+                        value={identity.fingerprintSha256}
+                      >
+                        {identity.algorithm} · {identity.fingerprintSha256}
+                        {identity.comment ? ` · ${identity.comment}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="security-note">
+                  <strong>External signing only</strong>
+                  <p>
+                    AnySSH stores the selected SHA-256 fingerprint and username.
+                    The system Agent keeps the Private Key and performs each
+                    signature.
+                  </p>
+                </div>
+              </>
             )}
             {error && <ManagerError message={error} />}
             <EditorActions
@@ -1021,7 +1139,9 @@ function CredentialManager({
               submitLabel={
                 draft.kind === "privateKey"
                   ? "Choose private key"
-                  : "Save Credential"
+                  : draft.kind === "systemAgent"
+                    ? "Save Agent Credential"
+                    : "Save Credential"
               }
             />
           </form>
@@ -1576,5 +1696,12 @@ function EditorActions({
 }
 
 function kindLabel(kind: CredentialSummary["kind"]) {
-  return kind === "privateKey" ? "Private Key" : "Password";
+  switch (kind) {
+    case "privateKey":
+      return "Private Key";
+    case "systemAgent":
+      return "System Agent";
+    case "password":
+      return "Password";
+  }
 }

@@ -10,6 +10,13 @@ const stage = requiredEnvironment("ANYSSH_WINDOWS_STAGE");
 const pin = "246810";
 const wrongPin = "000000";
 const password = "windows-fixture-password";
+const sshHost = requiredEnvironment("ANYSSH_WINDOWS_SSH_HOST");
+const sshPort = requiredEnvironment("ANYSSH_WINDOWS_SSH_PORT");
+const sshUsername = requiredEnvironment("ANYSSH_WINDOWS_SSH_USERNAME");
+const agentFingerprint = requiredEnvironment(
+  "ANYSSH_WINDOWS_AGENT_FINGERPRINT",
+);
+const agentMarkerPath = requiredEnvironment("ANYSSH_WINDOWS_AGENT_MARKER_PATH");
 const consoleEntries = [];
 const browserErrors = [];
 let browser;
@@ -93,6 +100,80 @@ async function createVaultAndRepository(targetPage) {
     targetPage
       .locator(".resource-card")
       .filter({ hasText: "Windows QA password" }),
+  ).toBeVisible();
+
+  await targetPage.getByRole("button", { name: "New system agent" }).click();
+  const agentDialog = targetPage.getByRole("dialog", {
+    name: "New System Agent Credential",
+  });
+  await agentDialog
+    .getByLabel("Credential label")
+    .fill("Windows QA system agent");
+  await agentDialog.getByLabel("Username").fill(sshUsername);
+  const identitySelect = agentDialog.getByLabel("SSH Agent identity");
+  await assert(identitySelect).toContainText(agentFingerprint);
+  await identitySelect.selectOption(agentFingerprint);
+  await agentDialog
+    .getByRole("button", { name: "Save Agent Credential" })
+    .click();
+  const agentCredential = targetPage
+    .locator(".resource-card")
+    .filter({ hasText: "Windows QA system agent" });
+  await assert(agentCredential).toContainText("System Agent");
+  await assert(agentCredential).not.toContainText(agentFingerprint);
+
+  await targetPage.locator(".primary-nav .nav-item").nth(2).click();
+  await targetPage.getByRole("button", { name: "New host" }).click();
+  const agentHostDialog = targetPage.getByRole("dialog", { name: "New Host" });
+  await agentHostDialog
+    .getByLabel("Display name")
+    .fill("Windows QA agent host");
+  await agentHostDialog.getByLabel("Host", { exact: true }).fill(sshHost);
+  await agentHostDialog.getByRole("spinbutton", { name: "Port" }).fill(sshPort);
+  await agentHostDialog.getByLabel("Credential behavior").selectOption("set");
+  await agentHostDialog.getByLabel("Credential reference").selectOption({
+    label: `Windows QA system agent · ${sshUsername}`,
+  });
+  await agentHostDialog.getByRole("button", { name: "Save Host" }).click();
+  const agentHost = targetPage
+    .locator(".resource-card")
+    .filter({ hasText: "Windows QA agent host" });
+  await assert(agentHost).toContainText("System Agent");
+  await agentHost.getByRole("button", { name: "Open" }).click();
+  await assert(
+    targetPage.getByRole("heading", {
+      level: 1,
+      name: "Windows QA agent host",
+    }),
+  ).toBeVisible();
+  await targetPage.getByRole("button", { name: "Connect saved Host" }).click();
+  const hostKeyDialog = targetPage.getByRole("dialog", {
+    name: "Verify server identity",
+  });
+  await assert(hostKeyDialog).toContainText(sshHost);
+  await hostKeyDialog
+    .getByRole("button", { name: "Trust for this session" })
+    .click();
+  await assert(
+    targetPage.getByText("Interactive shell is active."),
+  ).toBeVisible();
+  const terminalInput = targetPage.getByRole("textbox", {
+    name: "Terminal input",
+  });
+  await terminalInput.focus();
+  await terminalInput.pressSequentially(
+    `echo ANYSSH_WINDOWS_AGENT_OK > "${agentMarkerPath}"`,
+  );
+  await terminalInput.press("Enter");
+  await targetPage.waitForTimeout(1500);
+  await capture(
+    targetPage,
+    "02b-system-agent-connected.png",
+    "02b-system-agent-connected.txt",
+  );
+  await targetPage.getByRole("button", { name: "Disconnect" }).click();
+  await assert(
+    targetPage.getByText("The SSH session has ended."),
   ).toBeVisible();
 
   await targetPage.locator(".primary-nav .nav-item").nth(2).click();
@@ -207,6 +288,11 @@ async function unlockRestartedVault(targetPage) {
       .locator(".resource-card")
       .filter({ hasText: "Windows QA password" }),
   ).toBeVisible();
+  await assert(
+    targetPage
+      .locator(".resource-card")
+      .filter({ hasText: "Windows QA system agent" }),
+  ).toContainText("System Agent");
 
   await targetPage.locator(".primary-nav .nav-item").nth(1).click();
   await assert(
@@ -219,6 +305,11 @@ async function unlockRestartedVault(targetPage) {
   await assert(
     targetPage.locator(".resource-card").filter({ hasText: "Windows QA jump" }),
   ).toBeVisible();
+  await assert(
+    targetPage
+      .locator(".resource-card")
+      .filter({ hasText: "Windows QA agent host" }),
+  ).toContainText("System Agent");
   await assert(
     targetPage
       .locator(".resource-card")

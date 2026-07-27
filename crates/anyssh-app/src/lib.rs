@@ -10,7 +10,8 @@ use std::{
 use anyssh_domain::{SshEndpoint, TerminalSize};
 use anyssh_ssh::{
     DEFAULT_CONNECTION_TIMEOUT, HostKeyPolicy, MAX_PRIVATE_KEY_BYTES, SessionAuthentication,
-    SpawnedSession, SshConnectionConfig, SshSessionConfig, spawn_session,
+    SpawnedSession, SshConnectionConfig, SshSessionConfig, SystemAgentError,
+    SystemAgentIdentitySummary, list_system_agent_identities, spawn_session,
     validate_private_key_text,
 };
 use anyssh_storage::{
@@ -160,6 +161,32 @@ impl ApplicationCore {
                 CredentialSecret::PrivateKey {
                     private_key,
                     passphrase,
+                },
+            )
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn list_system_agent_identities(
+        &self,
+    ) -> Result<Vec<SystemAgentIdentitySummary>, ApplicationError> {
+        list_system_agent_identities()
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn create_system_agent_credential(
+        &self,
+        label: String,
+        username: String,
+        identity_fingerprint_sha256: String,
+    ) -> Result<CredentialSummary, ApplicationError> {
+        self.database
+            .create_credential(
+                label,
+                username,
+                CredentialSecret::SystemAgent {
+                    identity_fingerprint_sha256: Zeroizing::new(identity_fingerprint_sha256),
                 },
             )
             .await
@@ -511,6 +538,8 @@ pub enum ApplicationError {
     #[error(transparent)]
     PrivateKeyImport(#[from] PrivateKeyImportError),
     #[error(transparent)]
+    SystemAgent(#[from] SystemAgentError),
+    #[error(transparent)]
     Database(#[from] DatabaseActorError),
 }
 
@@ -592,6 +621,11 @@ fn resolved_authentication(resolved: ResolvedCredential) -> (String, SessionAuth
         } => SessionAuthentication::PrivateKey {
             private_key,
             passphrase,
+        },
+        CredentialSecret::SystemAgent {
+            identity_fingerprint_sha256,
+        } => SessionAuthentication::SystemAgent {
+            identity_fingerprint_sha256: identity_fingerprint_sha256.to_string(),
         },
     };
     (username, authentication)
@@ -716,6 +750,46 @@ mod tests {
         assert_eq!(
             passphrase.as_deref().map(String::as_str),
             Some("private-key-passphrase")
+        );
+    }
+
+    #[tokio::test]
+    async fn stored_system_agent_selector_moves_into_ssh_authentication_without_key_material() {
+        let (core, _directory) = test_core();
+        core.create_vault(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+        let summary = core
+            .create_system_agent_credential(
+                "Workstation agent".to_owned(),
+                "agent-user".to_owned(),
+                "SHA256:application-agent-selector".to_owned(),
+            )
+            .await
+            .expect("store system agent");
+
+        let resolved = core
+            .resolve_connection(
+                SshEndpoint::new("example.com", 22).expect("endpoint"),
+                AuthenticationSource::Credential {
+                    credential_id: summary.id().to_owned(),
+                },
+            )
+            .await
+            .expect("resolve stored credential");
+        let debug = format!("{resolved:?}");
+        assert!(debug.contains("<selected>"));
+        assert!(!debug.contains("application-agent-selector"));
+        assert_eq!(resolved.username, "agent-user");
+        let SessionAuthentication::SystemAgent {
+            identity_fingerprint_sha256,
+        } = resolved.authentication
+        else {
+            panic!("expected system-agent authentication");
+        };
+        assert_eq!(
+            identity_fingerprint_sha256,
+            "SHA256:application-agent-selector"
         );
     }
 

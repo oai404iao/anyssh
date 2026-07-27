@@ -61,6 +61,9 @@
   引用占用和循环检测通过。
 - 2026-07-27：Schema v4 已新增 Group 与三态 Override。v3 -> v4 语义保持、
   State/Value CHECK、中断回滚、重启和 Group 元数据明文扫描通过。
+- 2026-07-27：Schema v5 已新增 `system_agent` Credential Kind。所选 Public
+  Key Fingerprint 使用现有 Record AEAD；v4 -> v5 重建引用表时保持 ID、
+  Ciphertext、Foreign Key 和 Override，中断回滚与明文扫描通过。
 - Linux WebKitGTK 同时引入系统 SQLite；当前 X11/Wayland 长流程已在同一进程
   持续执行 Vault 与 SSH，未观察到 bundled SQLCipher 符号冲突。
 - Windows Run `30270414706` 已通过真实 SQLCipher Vault 创建、错误 PIN、

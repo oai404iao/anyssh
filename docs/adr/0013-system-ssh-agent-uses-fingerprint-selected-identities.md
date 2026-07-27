@@ -21,8 +21,9 @@ Server `MaxAuthTries`、泄露不必要的 Public Key 列表，并使认证结�
 - Windows v1 使用 OpenSSH Authentication Agent Named Pipe
   `\\.\pipe\openssh-ssh-agent`。
 - Pageant、Agent Forwarding 和应用内 Agent 不属于 v1。
-- Rust 可以枚举最多 64 个 Agent Identity，并向 WebView 返回 Algorithm、
-  SHA-256 Fingerprint 和经过长度/控制字符约束的 Comment。
+- Rust 可以枚举最多 64 个 Agent Identity。v1 只返回普通 Public Key Identity，
+  并向 WebView 返回 Algorithm、SHA-256 Fingerprint 和经过长度/控制字符约束的
+  Comment；Certificate Identity 等待后续 OpenSSH Certificate 能力。
 - Comment 只用于展示；Credential 使用 SHA-256 Fingerprint 选择唯一 Identity。
 - System Agent Credential 保存 Label、Username 和所选 Fingerprint；它不保存
   Private Key、Passphrase 或签名结果。
@@ -63,6 +64,19 @@ Server `MaxAuthTries`、泄露不必要的 Public Key 列表，并使认证结�
 - Windows OpenSSH Agent Named Pipe 完成真实 EXE/WebView2 认证 Smoke。
 - IPC、Debug、日志、Vault 和 QA Evidence 不包含 Private Key 或签名 Payload。
 - Android/iOS 编译通过并返回明确 Unsupported。
+
+## 当前证据
+
+- 2026-07-27：russh Core 已实现 Linux `SSH_AUTH_SOCK`、Windows OpenSSH Named
+  Pipe、64 Identity 上限、Public Key Fingerprint 选择、RSA SHA-2 协商和
+  Fail-Closed 错误。
+- 2026-07-27：Schema v5 `system_agent` Credential、v4 -> v5 原子 Migration、
+  中断回滚、Record AEAD、Actor/Application/Tauri metadata-only Command 已通过。
+- 2026-07-27：Docker OpenSSH 已验证 Direct Agent、Password Jump -> Agent
+  Target 和 Agent Jump -> Private Key Target；错误 Fingerprint 不回退。
+- 2026-07-27：Playwright、agent-browser Desktop/Mobile、X11 真实
+  `SSH_AUTH_SOCK` UI、Wayland、Android Host 和 Linux/Android Container 本地
+  回归通过。Windows Named Pipe/EXE/OpenSSH Evidence 等待同一 Feature Commit。
 
 ## 相关文档
 

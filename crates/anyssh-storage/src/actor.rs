@@ -1148,13 +1148,26 @@ mod tests {
             )
             .await
             .expect("create private-key credential");
+        let system_agent_summary = actor
+            .create_credential(
+                "System Agent credential".to_owned(),
+                "agent-user".to_owned(),
+                CredentialSecret::SystemAgent {
+                    identity_fingerprint_sha256: Zeroizing::new(
+                        "SHA256:actor-agent-selector".to_owned(),
+                    ),
+                },
+            )
+            .await
+            .expect("create system-agent credential");
 
         let summaries = actor.list_credentials().await.expect("list credentials");
-        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries.len(), 3);
         let debug = format!("{summaries:?}");
         assert!(!debug.contains("password-secret"));
         assert!(!debug.contains("private-key-secret"));
         assert!(!debug.contains("key-passphrase"));
+        assert!(!debug.contains("actor-agent-selector"));
 
         let resolved = actor
             .resolve_credential(private_key_summary.id().to_owned())
@@ -1164,6 +1177,14 @@ mod tests {
         assert!(debug.contains("<redacted>"));
         assert!(!debug.contains("private-key-secret"));
         assert!(!debug.contains("key-passphrase"));
+
+        let resolved = actor
+            .resolve_credential(system_agent_summary.id().to_owned())
+            .await
+            .expect("resolve system-agent credential");
+        let debug = format!("{resolved:?}");
+        assert!(debug.contains("<selected>"));
+        assert!(!debug.contains("actor-agent-selector"));
 
         actor
             .update_credential(

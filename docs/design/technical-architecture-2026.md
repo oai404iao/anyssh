@@ -267,6 +267,13 @@ Rust 内打开 Native File Picker，`ApplicationCore` 有界读取并使用 russ
 Passphrase 即可解析的 OpenSSH Private Key；加密 Key 等待原生安全 Passphrase
 Prompt。
 
+当前 System Agent v1 已实现 Linux `SSH_AUTH_SOCK` 和 Windows OpenSSH Agent
+Named Pipe。Rust 最多枚举 64 个普通 Public Key Identity，WebView 只选择
+Algorithm、SHA-256 Fingerprint 和受限 Comment；Credential 保存加密后的
+Fingerprint Selector。连接时 russh `authenticate_publickey_with` 委托 Agent
+签名，不读取 Private Key，也不自动尝试其他 Identity。Pageant、Certificate
+Identity、Agent Forwarding 和应用内 Agent 仍属于后续能力。
+
 后续支持：
 
 - OpenSSH 用户证书。
@@ -294,7 +301,7 @@ TCP/Proxy -> Jump 1 SSH
 
 Jump Route 使用有序列表存储，并在保存时检测循环引用。
 
-当前 Schema v4 已实现该持久化模型：Route Step 只保存 Host ID，Host 保存可选
+当前 Schema v5 已实现该持久化模型：Route Step 只保存 Host ID，Host 保存可选
 Group ID 和 Credential/Route 三态引用；Foreign Key 使用 Restrict 删除语义，
 保存时对 Effective Host -> Route -> Step Host 图执行循环检测。Saved Host IPC
 只提交 Target Host ID；DB Actor 先解析最多 32 层 Group，再递归展开 Route 和
@@ -359,6 +366,11 @@ MVP 转发能力：
 - Linux：`SSH_AUTH_SOCK`
 - Windows：OpenSSH Agent Named Pipe
 - Pageant：作为后续兼容适配器
+
+System Agent v1 已完成上述 Linux/Windows Connector、Fingerprint-selected
+Credential 和 Direct/Jump OpenSSH Smoke。Agent Private Key 和签名 Payload
+不进入 Vault/WebView；OpenSSH Certificate Identity 当前跳过，避免与后续证书
+产品模型混淆。
 
 移动端通常没有通用系统 SSH Agent，因此提供应用内 Agent：
 
@@ -604,11 +616,12 @@ SQLCipher 查询均在 Actor Thread 中串行执行，Tauri Command 不再使用
 `spawn_blocking` 或 `Mutex<Option<LocalVault>>`。最后一个 Handle 释放时先关闭
 Queue，再 Join Actor Thread，确保数据库连接按顺序销毁。
 
-当前 Schema v4 Repository 设计见：
+当前 Schema v5 Repository 设计见：
 
 - [Credential Repository v1](credential-repository-v1.md)
 - [Host 与 Jump Route Repository v1](host-jump-route-repository-v1.md)
 - [Group Inheritance v1](group-inheritance-v1.md)
+- [System SSH Agent Authentication v1](system-ssh-agent-authentication-v1.md)
 
 Tauri 只调用 `anyssh-app::ApplicationCore`；它不直接解析 Credential Secret、
 构造 SSH Authentication 或访问 SQLCipher Connection。

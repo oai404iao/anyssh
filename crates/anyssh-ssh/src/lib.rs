@@ -16,7 +16,12 @@ use russh::{
     ChannelMsg, Disconnect,
     client::{self, Config, Handle, Handler},
     keys::{
-        PrivateKeyWithHashAlg, decode_secret_key,
+        PrivateKeyWithHashAlg,
+        agent::{
+            AgentIdentity,
+            client::{AgentClient, AgentStream},
+        },
+        decode_secret_key,
         ssh_key::{self, HashAlg},
     },
 };
@@ -35,9 +40,14 @@ const HOST_KEY_DECISION_BUFFER: usize = 4;
 const HOST_KEY_DECISION_TIMEOUT: Duration = Duration::from_secs(60);
 pub const DEFAULT_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
 pub const MAX_JUMP_HOSTS: usize = 32;
+pub const MAX_SYSTEM_AGENT_IDENTITIES: usize = 64;
 const CHANNEL_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
+const SYSTEM_AGENT_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 pub const MAX_PRIVATE_KEY_BYTES: usize = 1024 * 1024;
 const MAX_PRIVATE_KEY_PASSPHRASE_BYTES: usize = 64 * 1024;
+const MAX_SYSTEM_AGENT_COMMENT_BYTES: usize = 512;
+#[cfg(windows)]
+const WINDOWS_OPENSSH_AGENT_PIPE: &str = r"\\.\pipe\openssh-ssh-agent";
 
 pub struct PasswordSessionConfig {
     pub endpoint: SshEndpoint,
@@ -124,6 +134,9 @@ pub enum SessionAuthentication {
         private_key: Zeroizing<String>,
         passphrase: Option<Zeroizing<String>>,
     },
+    SystemAgent {
+        identity_fingerprint_sha256: String,
+    },
 }
 
 impl fmt::Debug for SessionAuthentication {
@@ -138,8 +151,43 @@ impl fmt::Debug for SessionAuthentication {
                 .field("private_key", &"<redacted>")
                 .field("passphrase", &passphrase.as_ref().map(|_| "<redacted>"))
                 .finish(),
+            Self::SystemAgent { .. } => formatter
+                .debug_struct("SystemAgent")
+                .field("identity_fingerprint_sha256", &"<selected>")
+                .finish(),
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SystemAgentIdentitySummary {
+    algorithm: String,
+    fingerprint_sha256: String,
+    comment: String,
+}
+
+impl SystemAgentIdentitySummary {
+    pub fn algorithm(&self) -> &str {
+        &self.algorithm
+    }
+
+    pub fn fingerprint_sha256(&self) -> &str {
+        &self.fingerprint_sha256
+    }
+
+    pub fn comment(&self) -> &str {
+        &self.comment
+    }
+}
+
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum SystemAgentError {
+    #[error("System SSH Agent is unavailable")]
+    Unavailable,
+    #[error("System SSH Agent returned too many identities")]
+    TooManyIdentities,
+    #[error("System SSH Agent is unsupported on this platform")]
+    Unsupported,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,6 +220,19 @@ pub struct SshSessionConfig {
     pub jump_hosts: Vec<SshConnectionConfig>,
     pub terminal_size: TerminalSize,
     pub connection_timeout: Duration,
+}
+
+pub async fn list_system_agent_identities()
+-> Result<Vec<SystemAgentIdentitySummary>, SystemAgentError> {
+    let mut agent = tokio::time::timeout(SYSTEM_AGENT_OPERATION_TIMEOUT, connect_system_agent())
+        .await
+        .map_err(|_| SystemAgentError::Unavailable)??;
+    let identities =
+        tokio::time::timeout(SYSTEM_AGENT_OPERATION_TIMEOUT, agent.request_identities())
+            .await
+            .map_err(|_| SystemAgentError::Unavailable)?
+            .map_err(|_| SystemAgentError::Unavailable)?;
+    summarize_system_agent_identities(identities)
 }
 
 impl fmt::Debug for SshSessionConfig {
@@ -952,6 +1013,19 @@ async fn authenticate(
             )
             .await
         }
+        SessionAuthentication::SystemAgent {
+            identity_fingerprint_sha256,
+        } => {
+            authenticate_system_agent(
+                session,
+                hop,
+                username,
+                identity_fingerprint_sha256,
+                cancellation,
+                connection_timeout,
+            )
+            .await
+        }
     }
 }
 
@@ -1048,6 +1122,166 @@ async fn authenticate_private_key(
     } else {
         Err(SessionError::AuthenticationFailed { hop: hop.clone() })
     }
+}
+
+async fn authenticate_system_agent(
+    session: &mut Handle<ClientHandler>,
+    hop: &SessionHop,
+    username: &str,
+    identity_fingerprint_sha256: String,
+    cancellation: &SessionCancellation,
+    connection_timeout: Duration,
+) -> Result<(), SessionError> {
+    if identity_fingerprint_sha256.trim().is_empty() {
+        return Err(SessionError::SystemAgentIdentityUnavailable { hop: hop.clone() });
+    }
+
+    let mut agent = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(SessionError::Cancelled),
+        result = tokio::time::timeout(connection_timeout, connect_system_agent()) => {
+            result
+                .map_err(|_| SessionError::OperationTimedOut {
+                    hop: hop.clone(),
+                    operation: "system SSH Agent connection",
+                })?
+                .map_err(|error| match error {
+                    SystemAgentError::Unsupported => SessionError::SystemAgentUnsupported {
+                        hop: hop.clone(),
+                    },
+                    SystemAgentError::Unavailable | SystemAgentError::TooManyIdentities => {
+                        SessionError::SystemAgentUnavailable { hop: hop.clone() }
+                    }
+                })?
+        }
+    };
+
+    let identities = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(SessionError::Cancelled),
+        result = tokio::time::timeout(connection_timeout, agent.request_identities()) => {
+            result
+                .map_err(|_| SessionError::OperationTimedOut {
+                    hop: hop.clone(),
+                    operation: "system SSH Agent identity request",
+                })?
+                .map_err(|_| SessionError::SystemAgentUnavailable { hop: hop.clone() })?
+        }
+    };
+    if identities.len() > MAX_SYSTEM_AGENT_IDENTITIES {
+        return Err(SessionError::SystemAgentTooManyIdentities { hop: hop.clone() });
+    }
+
+    let selected_key = identities.into_iter().find_map(|identity| match identity {
+        AgentIdentity::PublicKey { key, .. }
+            if key.fingerprint(HashAlg::Sha256).to_string() == identity_fingerprint_sha256 =>
+        {
+            Some(key)
+        }
+        AgentIdentity::PublicKey { .. } | AgentIdentity::Certificate { .. } => None,
+    });
+    let selected_key = selected_key
+        .ok_or_else(|| SessionError::SystemAgentIdentityUnavailable { hop: hop.clone() })?;
+
+    let hash_alg = if selected_key.algorithm().is_rsa() {
+        await_ssh_operation(
+            session.best_supported_rsa_hash(),
+            cancellation,
+            connection_timeout,
+            hop.clone(),
+            "RSA signature negotiation",
+        )
+        .await?
+        .flatten()
+    } else {
+        None
+    };
+
+    let authentication = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(SessionError::Cancelled),
+        result = tokio::time::timeout(
+            connection_timeout,
+            session.authenticate_publickey_with(
+                username,
+                selected_key,
+                hash_alg,
+                &mut agent,
+            ),
+        ) => {
+            result
+                .map_err(|_| SessionError::OperationTimedOut {
+                    hop: hop.clone(),
+                    operation: "system SSH Agent authentication",
+                })?
+                .map_err(|_| SessionError::SystemAgentSigningFailed { hop: hop.clone() })?
+        }
+    };
+
+    if authentication.success() {
+        Ok(())
+    } else {
+        Err(SessionError::AuthenticationFailed { hop: hop.clone() })
+    }
+}
+
+type DynamicSystemAgent = AgentClient<Box<dyn AgentStream + Send + Unpin>>;
+
+#[cfg(all(unix, not(any(target_os = "android", target_os = "ios"))))]
+async fn connect_system_agent() -> Result<DynamicSystemAgent, SystemAgentError> {
+    AgentClient::connect_env()
+        .await
+        .map(AgentClient::dynamic)
+        .map_err(|_| SystemAgentError::Unavailable)
+}
+
+#[cfg(windows)]
+async fn connect_system_agent() -> Result<DynamicSystemAgent, SystemAgentError> {
+    AgentClient::connect_named_pipe(WINDOWS_OPENSSH_AGENT_PIPE)
+        .await
+        .map(AgentClient::dynamic)
+        .map_err(|_| SystemAgentError::Unavailable)
+}
+
+#[cfg(not(any(windows, all(unix, not(any(target_os = "android", target_os = "ios"))))))]
+async fn connect_system_agent() -> Result<DynamicSystemAgent, SystemAgentError> {
+    Err(SystemAgentError::Unsupported)
+}
+
+fn summarize_system_agent_identities(
+    identities: Vec<AgentIdentity>,
+) -> Result<Vec<SystemAgentIdentitySummary>, SystemAgentError> {
+    if identities.len() > MAX_SYSTEM_AGENT_IDENTITIES {
+        return Err(SystemAgentError::TooManyIdentities);
+    }
+
+    Ok(identities
+        .into_iter()
+        .filter_map(|identity| match identity {
+            AgentIdentity::PublicKey { key, comment } => Some(SystemAgentIdentitySummary {
+                algorithm: key.algorithm().to_string(),
+                fingerprint_sha256: key.fingerprint(HashAlg::Sha256).to_string(),
+                comment: sanitize_system_agent_comment(&comment),
+            }),
+            AgentIdentity::Certificate { .. } => None,
+        })
+        .collect())
+}
+
+fn sanitize_system_agent_comment(comment: &str) -> String {
+    let comment = comment.trim();
+    if comment.chars().any(char::is_control) {
+        return String::new();
+    }
+    if comment.len() <= MAX_SYSTEM_AGENT_COMMENT_BYTES {
+        return comment.to_owned();
+    }
+
+    let mut end = MAX_SYSTEM_AGENT_COMMENT_BYTES;
+    while !comment.is_char_boundary(end) {
+        end -= 1;
+    }
+    comment[..end].to_owned()
 }
 
 async fn run_shell_loop(
@@ -1346,6 +1580,16 @@ enum SessionError {
     },
     #[error("{hop} private-key decoding task failed")]
     PrivateKeyTaskFailed { hop: SessionHop },
+    #[error("{hop} system SSH Agent is unavailable")]
+    SystemAgentUnavailable { hop: SessionHop },
+    #[error("{hop} system SSH Agent is unsupported on this platform")]
+    SystemAgentUnsupported { hop: SessionHop },
+    #[error("{hop} system SSH Agent returned too many identities")]
+    SystemAgentTooManyIdentities { hop: SessionHop },
+    #[error("{hop} selected SSH Agent identity is no longer available")]
+    SystemAgentIdentityUnavailable { hop: SessionHop },
+    #[error("{hop} system SSH Agent refused the signing request")]
+    SystemAgentSigningFailed { hop: SessionHop },
     #[error("SSH connection timeout must be greater than zero")]
     InvalidConnectionTimeout,
     #[error("SSH Jump Route contains {count} hosts; maximum is {maximum}")]
@@ -1394,6 +1638,62 @@ mod tests {
         assert!(debug.contains("<redacted>"));
         assert!(!debug.contains("private-key-material"));
         assert!(!debug.contains("private-key-passphrase"));
+    }
+
+    #[test]
+    fn system_agent_debug_output_does_not_expose_the_selected_fingerprint() {
+        let authentication = SessionAuthentication::SystemAgent {
+            identity_fingerprint_sha256: "SHA256:selected-agent-key".to_owned(),
+        };
+
+        let debug = format!("{authentication:?}");
+        assert!(debug.contains("<selected>"));
+        assert!(!debug.contains("selected-agent-key"));
+    }
+
+    #[test]
+    fn agent_identity_summaries_skip_certificates_and_sanitize_comments() {
+        let key = ssh_key::PrivateKey::random(&mut rand::rng(), ssh_key::Algorithm::Ed25519)
+            .expect("fixture key");
+        let identities = vec![
+            AgentIdentity::PublicKey {
+                key: key.public_key().clone(),
+                comment: "  workstation key  ".to_owned(),
+            },
+            AgentIdentity::PublicKey {
+                key: key.public_key().clone(),
+                comment: "line\nbreak".to_owned(),
+            },
+        ];
+
+        let summaries = summarize_system_agent_identities(identities).expect("identity summaries");
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0].algorithm(), "ssh-ed25519");
+        assert!(summaries[0].fingerprint_sha256().starts_with("SHA256:"));
+        assert_eq!(summaries[0].comment(), "workstation key");
+        assert_eq!(summaries[1].comment(), "");
+    }
+
+    #[test]
+    fn agent_identity_summary_limit_fails_closed() {
+        let key = ssh_key::PrivateKey::random(&mut rand::rng(), ssh_key::Algorithm::Ed25519)
+            .expect("fixture key");
+        let identities = (0..=MAX_SYSTEM_AGENT_IDENTITIES)
+            .map(|index| AgentIdentity::PublicKey {
+                key: key.public_key().clone(),
+                comment: format!("identity-{index}"),
+            })
+            .collect();
+
+        assert_eq!(
+            summarize_system_agent_identities(identities),
+            Err(SystemAgentError::TooManyIdentities)
+        );
+    }
+
+    #[test]
+    fn dependency_log_facade_is_capped_below_agent_debug_payloads() {
+        assert_eq!(log::STATIC_MAX_LEVEL, log::LevelFilter::Info);
     }
 
     #[tokio::test]

@@ -18,8 +18,15 @@ DEEP_TARGET_ALIAS="ssh-target-deep"
 BLACKHOLE_ALIAS="ssh-blackhole"
 KEY_PASSPHRASE="anyssh-key-passphrase"
 KEY_DIR=""
+AGENT_PID=""
+AGENT_SOCKET=""
+AGENT_FINGERPRINT=""
 
 cleanup() {
+  if [[ -n "$AGENT_PID" ]]; then
+    kill "$AGENT_PID" >/dev/null 2>&1 || true
+    wait "$AGENT_PID" >/dev/null 2>&1 || true
+  fi
   docker rm -f \
     "$JUMP_CONTAINER" \
     "$JUMP_TWO_CONTAINER" \
@@ -38,10 +45,12 @@ trap cleanup EXIT
 
 cd "$ROOT_DIR"
 
-if ! command -v ssh-keygen >/dev/null 2>&1; then
-  echo "ssh-keygen is required for the private-key authentication fixture." >&2
-  exit 1
-fi
+for command_name in ssh-keygen ssh-agent ssh-add; do
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "$command_name is required for the SSH authentication fixture." >&2
+    exit 1
+  fi
+done
 
 KEY_DIR="$(mktemp -d)"
 ssh-keygen \
@@ -66,6 +75,36 @@ cat \
   "$KEY_DIR/id_ed25519_unencrypted.pub" \
   "$KEY_DIR/id_ed25519_encrypted.pub" \
   >"$KEY_DIR/authorized_keys"
+
+AGENT_SOCKET="$KEY_DIR/agent.sock"
+ssh-agent -a "$AGENT_SOCKET" -D \
+  >"$KEY_DIR/ssh-agent.stdout.log" \
+  2>"$KEY_DIR/ssh-agent.stderr.log" &
+AGENT_PID=$!
+for _ in $(seq 1 100); do
+  if [[ -S "$AGENT_SOCKET" ]]; then
+    break
+  fi
+  if ! kill -0 "$AGENT_PID" >/dev/null 2>&1; then
+    echo "ssh-agent exited before creating its socket." >&2
+    cat "$KEY_DIR/ssh-agent.stderr.log" >&2 || true
+    exit 1
+  fi
+  sleep 0.05
+done
+if [[ ! -S "$AGENT_SOCKET" ]]; then
+  echo "ssh-agent did not create its socket." >&2
+  exit 1
+fi
+SSH_AUTH_SOCK="$AGENT_SOCKET" ssh-add "$KEY_DIR/id_ed25519_unencrypted" >/dev/null
+AGENT_FINGERPRINT="$(
+  ssh-keygen -lf "$KEY_DIR/id_ed25519_unencrypted.pub" -E sha256 |
+    awk 'NR == 1 { print $2 }'
+)"
+if [[ "$AGENT_FINGERPRINT" != SHA256:* ]]; then
+  echo "Unable to resolve the ssh-agent fixture fingerprint." >&2
+  exit 1
+fi
 
 docker build \
   --quiet \
@@ -241,6 +280,33 @@ ANYSSH_TEST_KEY_PASSPHRASE="$KEY_PASSPHRASE" \
     --nocapture \
     --test-threads=1
 
+SSH_AUTH_SOCK="$AGENT_SOCKET" \
+ANYSSH_TEST_SSH_HOST=127.0.0.1 \
+ANYSSH_TEST_SSH_PORT="$JUMP_PORT" \
+ANYSSH_TEST_AGENT_FINGERPRINT="$AGENT_FINGERPRINT" \
+  cargo test \
+    --package anyssh-ssh \
+    --test system_agent_smoke \
+    -- \
+    --ignored \
+    --nocapture \
+    --test-threads=1
+
+SSH_AUTH_SOCK="$AGENT_SOCKET" \
+ANYSSH_TEST_JUMP_HOST=127.0.0.1 \
+ANYSSH_TEST_JUMP_PORT="$JUMP_PORT" \
+ANYSSH_TEST_TARGET_HOST="$TARGET_ALIAS" \
+ANYSSH_TEST_AGENT_FINGERPRINT="$AGENT_FINGERPRINT" \
+ANYSSH_TEST_ENCRYPTED_KEY="$KEY_DIR/id_ed25519_encrypted" \
+ANYSSH_TEST_KEY_PASSPHRASE="$KEY_PASSPHRASE" \
+  cargo test \
+    --package anyssh-app \
+    --test system_agent_saved_host_smoke \
+    -- \
+    --ignored \
+    --nocapture \
+    --test-threads=1
+
 ANYSSH_TEST_JUMP_HOST=127.0.0.1 \
 ANYSSH_TEST_JUMP_PORT="$JUMP_PORT" \
 ANYSSH_TEST_ENCRYPTED_KEY="$KEY_DIR/id_ed25519_encrypted" \
@@ -294,4 +360,4 @@ ANYSSH_TEST_JUMP_CONTAINER="$JUMP_CONTAINER" \
     --nocapture \
     --test-threads=1
 
-echo "OpenSSH auth, Vault Credential ID, saved Host Route, host-key, backpressure, and Jump Host smoke tests passed."
+echo "OpenSSH password, Private Key, System Agent, Vault Credential ID, saved Host Route, host-key, backpressure, and Jump Host smoke tests passed."
