@@ -539,6 +539,11 @@ ssh-target-internal
   `artifacts/native-wayland/smoke-1785140269-683942` 和 Android
   `artifacts/android-build/build-1785140209-679737`。Android APK SHA-256 为
   `ea6f1d68bb6251827d32251465027f633c6cf1cdc487e0be5bc97a2d2e571ad8`。
+- 2026-07-27：Commit `98182b3` 的 Run `30249598725` 中，OpenSSH 多跳、
+  Rust Core、Frontend、E2E 和 agent-browser 通过，但原生 X11 在 Vault 创建时
+  失败。Artifact 截图显示 Ubuntu WebKitGTK 布局把 Confirm PIN 输入框上移，
+  硬编码 `y=522` 点击落在输入框下方，确认 PIN 为空。QA 改为在共同有效的第一
+  输入框坐标聚焦，再使用 Tab/Enter 完成表单；本地完整 Xvfb 回归重新通过。
 - 2026-07-27：Commit `9f14940` 的 GitHub Actions Run `30243415893` 九个 Job
   全部通过。OpenSSH Log 明确执行
   `encrypted_private_key_flows_from_credential_id_to_ssh_core`，Windows、Android、

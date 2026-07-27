@@ -150,15 +150,15 @@ fi
 
 sleep 3
 "$DRIVER" probe "$RUN_DIR/01-vault-create.bmp" >"$RUN_DIR/windows.txt"
-"$DRIVER" click 640 445
+"$DRIVER" click 640 430
 sleep 0.25
 "$DRIVER" type "246810"
-"$DRIVER" click 640 522
-sleep 0.25
+"$DRIVER" tab
 "$DRIVER" type "246810"
 sleep 0.5
 "$DRIVER" probe "$RUN_DIR/02-vault-pin-entered.bmp" >/dev/null
-"$DRIVER" click 640 577
+"$DRIVER" tab
+"$DRIVER" enter
 
 VAULT_ROOT="$RUN_DIR/xdg-data/com.spiredive.anyssh/vault"
 VAULT_READY=0
@@ -192,18 +192,20 @@ sleep 1
 "$DRIVER" click 1208 44
 sleep 1
 "$DRIVER" probe "$RUN_DIR/04-vault-locked.bmp" >/dev/null
-"$DRIVER" click 640 475
+"$DRIVER" click 640 460
 sleep 0.25
 "$DRIVER" type "000000"
-"$DRIVER" click 640 530
+"$DRIVER" tab
+"$DRIVER" enter
 sleep 3
 "$DRIVER" probe "$RUN_DIR/05-vault-wrong-pin.bmp" >/dev/null
-"$DRIVER" click 640 450
+"$DRIVER" click 640 460
 sleep 0.25
 "$DRIVER" type "246810"
 sleep 0.5
 "$DRIVER" probe "$RUN_DIR/06-vault-unlock-pin-entered.bmp" >/dev/null
-"$DRIVER" click 640 530
+"$DRIVER" tab
+"$DRIVER" enter
 sleep 3
 "$DRIVER" probe "$RUN_DIR/07-vault-reunlocked.bmp" >/dev/null
 
