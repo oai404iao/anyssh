@@ -107,6 +107,9 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
 - [x] 2026-07-27：将 Tauri `VaultManager` 迁移到 `anyssh-storage` 专用
   DB Actor；使用有界 Command Queue、oneshot Response，并由 Actor 独占
   `Option<LocalVault>`；远端 Run `30238710937` 的九个 CI Job 全部通过。
+- [x] 2026-07-27：实现 SQLCipher Schema v2 Credential Repository Commands，
+  增加 `anyssh-app` Application Service，并验证 Private Key 只通过 Credential ID
+  在 Rust 内部进入 SSH Core。
 - [ ] Windows 运行证据仍待补充。
 - [ ] iOS Build 因当前没有 macOS/Xcode 环境暂缓。
 - [ ] 根据证据更新 ADR 状态并完成 Phase 0 报告。
@@ -248,10 +251,16 @@ PIN
   `Mutex<Option<LocalVault>>`。
 - Actor 单元测试覆盖 Queue Backpressure、Create/Lock/Wrong-PIN/Unlock 顺序、
   Shutdown 和不可用状态。原生 X11 与 Wayland QA 均通过现有 Vault 创建链路；
-  Android ARM64 Debug APK 也已重新构建。正式 Host/Credential Repository IPC
-  仍留在下一步骤。
+  Android ARM64 Debug APK 也已重新构建。正式 Host/Jump Route 持久化和
+  Private Key 原生导入 UI 仍留在下一步骤。
+- Schema v2 已增加独立 Credential Repository。Actor Commands 覆盖
+  Create/Update/List/Delete/Resolve；Tauri 只暴露 Password CRUD 和
+  Summary-only List/Delete，不暴露 Private Key Import。
+- `anyssh-app` 负责把 Credential ID 解析为 Rust-only `ResolvedCredential`，
+  再直接 move 到 SSH Core。Docker OpenSSH 已验证加密 Private Key 在 Vault
+  Lock/Unlock 后通过 ID 成功认证。
 
-状态：已完成；跨平台 SQLCipher 构建证据将在 Milestone 5 补充。
+状态：已完成；iOS SQLCipher 构建仍等待 macOS/Xcode 环境。
 
 ### Milestone 4：两跳 Jump Host
 
@@ -481,6 +490,9 @@ ssh-target-internal
   Sender，再 Join 专用线程；否则 Actor 会在 `blocking_recv` 等待并造成退出
   Deadlock。实现使用单个 `Arc<Inner>` 显式保证这一销毁顺序，Vault 本身不进入
   Mutex。
+- 2026-07-27：Serde Tagged Enum 的 `rename_all` 不负责保护额外 Secret 字段。
+  SSH Authentication IPC 使用 `deny_unknown_fields`，并对 `credentialId`
+  显式 Rename；携带 `privateKey` 的 Payload 序列化回归测试确认会被拒绝。
 - 2026-07-27：Commit `f2fc360` 的 GitHub Actions Run `30238710937` 九个 Job
   全部通过，包含 Windows Build、Android/Linux Container、原生 X11/Wayland
   Vault QA、OpenSSH、浏览器和 Rust Core。
@@ -525,6 +537,11 @@ ssh-target-internal
   SQLCipher、Argon2id 和文件系统操作。Tauri 只持有 Cloneable Handle；Handle
   使用有界 Tokio `mpsc` 施加背压，每条 Command 使用 `oneshot` 返回结果。
   `Option<LocalVault>` 不跨线程或 IPC，只由 Actor State 持有。
+- 2026-07-27：Credential Repository 使用 Schema v2 独立 `credentials` 表。
+  WebView 只能获取非敏感 Summary，并以 Credential ID 发起连接。Private Key
+  Create/Update 暂时只提供 Rust Trusted API；不增加接收 Key 文本或任意文件路径
+  的 Tauri Command。`anyssh-app` 负责 Resolve ID 并直接构造 SSH
+  `SessionAuthentication`。
 
 ## Outcomes & Retrospective
 

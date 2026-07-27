@@ -10,7 +10,11 @@ use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
 use zeroize::Zeroizing;
 
-use crate::{LocalVault, StorageError, VaultPresence};
+use crate::{
+    CredentialSecret, CredentialSummary, LocalVault, ResolvedCredential, StorageError,
+    VaultPresence,
+    credential::{CredentialRecord, generate_credential_id},
+};
 
 pub const DEFAULT_DATABASE_COMMAND_QUEUE_CAPACITY: usize = 16;
 
@@ -47,6 +51,8 @@ pub enum DatabaseActorStartError {
 pub enum DatabaseActorError {
     #[error("vault is already unlocked")]
     AlreadyUnlocked,
+    #[error("vault is locked")]
+    VaultLocked,
     #[error("database actor is unavailable")]
     Unavailable,
     #[error(transparent)]
@@ -143,6 +149,56 @@ impl DatabaseActorHandle {
             .await
     }
 
+    pub async fn create_credential(
+        &self,
+        label: String,
+        username: String,
+        secret: CredentialSecret,
+    ) -> Result<CredentialSummary, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::CreateCredential {
+            label,
+            username,
+            secret,
+            response,
+        })
+        .await
+    }
+
+    pub async fn update_credential(
+        &self,
+        id: String,
+        label: String,
+        username: String,
+        secret: CredentialSecret,
+    ) -> Result<CredentialSummary, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::UpdateCredential {
+            id,
+            label,
+            username,
+            secret,
+            response,
+        })
+        .await
+    }
+
+    pub async fn list_credentials(&self) -> Result<Vec<CredentialSummary>, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::ListCredentials { response })
+            .await
+    }
+
+    pub async fn delete_credential(&self, id: String) -> Result<bool, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::DeleteCredential { id, response })
+            .await
+    }
+
+    pub async fn resolve_credential(
+        &self,
+        id: String,
+    ) -> Result<ResolvedCredential, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::ResolveCredential { id, response })
+            .await
+    }
+
     pub async fn shutdown(&self) -> Result<(), DatabaseActorError> {
         self.request(|response| DatabaseCommand::Shutdown { response })
             .await
@@ -197,6 +253,10 @@ impl Drop for DatabaseActorInner {
 }
 
 type VaultStatusResponse = oneshot::Sender<Result<VaultStatus, DatabaseActorError>>;
+type CredentialSummaryResponse = oneshot::Sender<Result<CredentialSummary, DatabaseActorError>>;
+type CredentialListResponse = oneshot::Sender<Result<Vec<CredentialSummary>, DatabaseActorError>>;
+type CredentialDeleteResponse = oneshot::Sender<Result<bool, DatabaseActorError>>;
+type ResolvedCredentialResponse = oneshot::Sender<Result<ResolvedCredential, DatabaseActorError>>;
 type EmptyResponse = oneshot::Sender<Result<(), DatabaseActorError>>;
 
 enum DatabaseCommand {
@@ -213,6 +273,30 @@ enum DatabaseCommand {
     },
     Lock {
         response: VaultStatusResponse,
+    },
+    CreateCredential {
+        label: String,
+        username: String,
+        secret: CredentialSecret,
+        response: CredentialSummaryResponse,
+    },
+    UpdateCredential {
+        id: String,
+        label: String,
+        username: String,
+        secret: CredentialSecret,
+        response: CredentialSummaryResponse,
+    },
+    ListCredentials {
+        response: CredentialListResponse,
+    },
+    DeleteCredential {
+        id: String,
+        response: CredentialDeleteResponse,
+    },
+    ResolveCredential {
+        id: String,
+        response: ResolvedCredentialResponse,
     },
     Shutdown {
         response: EmptyResponse,
@@ -273,6 +357,60 @@ impl DatabaseActorState {
         self.unlocked = None;
         self.status()
     }
+
+    fn create_credential(
+        &mut self,
+        label: String,
+        username: String,
+        secret: CredentialSecret,
+    ) -> Result<CredentialSummary, DatabaseActorError> {
+        let id = generate_credential_id()?;
+        let record = CredentialRecord::new(id, label, username, secret)?;
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .create_credential(&record)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn update_credential(
+        &mut self,
+        id: String,
+        label: String,
+        username: String,
+        secret: CredentialSecret,
+    ) -> Result<CredentialSummary, DatabaseActorError> {
+        let record = CredentialRecord::new(id, label, username, secret)?;
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .update_credential(&record)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn list_credentials(&self) -> Result<Vec<CredentialSummary>, DatabaseActorError> {
+        self.unlocked
+            .as_ref()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .list_credentials()
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn delete_credential(&mut self, id: &str) -> Result<bool, DatabaseActorError> {
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .delete_credential(id)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn resolve_credential(&self, id: &str) -> Result<ResolvedCredential, DatabaseActorError> {
+        self.unlocked
+            .as_ref()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .resolve_credential(id)
+            .map_err(DatabaseActorError::from)
+    }
 }
 
 fn unlocked_status(vault: &LocalVault) -> VaultStatus {
@@ -307,6 +445,32 @@ fn run_database_actor(
             }
             DatabaseCommand::Lock { response } => {
                 let _ = response.send(Ok(state.lock()));
+            }
+            DatabaseCommand::CreateCredential {
+                label,
+                username,
+                secret,
+                response,
+            } => {
+                let _ = response.send(state.create_credential(label, username, secret));
+            }
+            DatabaseCommand::UpdateCredential {
+                id,
+                label,
+                username,
+                secret,
+                response,
+            } => {
+                let _ = response.send(state.update_credential(id, label, username, secret));
+            }
+            DatabaseCommand::ListCredentials { response } => {
+                let _ = response.send(state.list_credentials());
+            }
+            DatabaseCommand::DeleteCredential { id, response } => {
+                let _ = response.send(state.delete_credential(&id));
+            }
+            DatabaseCommand::ResolveCredential { id, response } => {
+                let _ = response.send(state.resolve_credential(&id));
             }
             DatabaseCommand::Shutdown { response } => {
                 state.unlocked = None;
@@ -392,6 +556,105 @@ mod tests {
             Err(DatabaseActorError::Unavailable)
         ));
         assert_eq!(LocalVault::presence(&root), VaultPresence::Locked);
+    }
+
+    #[tokio::test]
+    async fn actor_serializes_credential_repository_commands() {
+        let directory = tempdir().expect("tempdir");
+        let actor = DatabaseActorHandle::spawn(directory.path().join("vault"), test_config(8))
+            .expect("start actor");
+
+        assert!(matches!(
+            actor.list_credentials().await,
+            Err(DatabaseActorError::VaultLocked)
+        ));
+
+        actor
+            .create(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+        let password_summary = actor
+            .create_credential(
+                "Password credential".to_owned(),
+                "password-user".to_owned(),
+                CredentialSecret::Password {
+                    password: Zeroizing::new("password-secret".to_owned()),
+                },
+            )
+            .await
+            .expect("create password credential");
+        let private_key_summary = actor
+            .create_credential(
+                "Private-key credential".to_owned(),
+                "key-user".to_owned(),
+                CredentialSecret::PrivateKey {
+                    private_key: Zeroizing::new("private-key-secret".to_owned()),
+                    passphrase: Some(Zeroizing::new("key-passphrase".to_owned())),
+                },
+            )
+            .await
+            .expect("create private-key credential");
+
+        let summaries = actor.list_credentials().await.expect("list credentials");
+        assert_eq!(summaries.len(), 2);
+        let debug = format!("{summaries:?}");
+        assert!(!debug.contains("password-secret"));
+        assert!(!debug.contains("private-key-secret"));
+        assert!(!debug.contains("key-passphrase"));
+
+        let resolved = actor
+            .resolve_credential(private_key_summary.id().to_owned())
+            .await
+            .expect("resolve private-key credential");
+        let debug = format!("{resolved:?}");
+        assert!(debug.contains("<redacted>"));
+        assert!(!debug.contains("private-key-secret"));
+        assert!(!debug.contains("key-passphrase"));
+
+        actor
+            .update_credential(
+                password_summary.id().to_owned(),
+                "Updated password credential".to_owned(),
+                "updated-user".to_owned(),
+                CredentialSecret::Password {
+                    password: Zeroizing::new("updated-password-secret".to_owned()),
+                },
+            )
+            .await
+            .expect("update password credential");
+        let (username, secret) = actor
+            .resolve_credential(password_summary.id().to_owned())
+            .await
+            .expect("resolve updated credential")
+            .into_parts();
+        assert_eq!(username, "updated-user");
+        let CredentialSecret::Password { password } = secret else {
+            panic!("expected password credential");
+        };
+        assert_eq!(password.as_str(), "updated-password-secret");
+
+        assert!(
+            actor
+                .delete_credential(private_key_summary.id().to_owned())
+                .await
+                .expect("delete private-key credential")
+        );
+        assert!(matches!(
+            actor
+                .resolve_credential(private_key_summary.id().to_owned())
+                .await,
+            Err(DatabaseActorError::Storage(
+                StorageError::CredentialNotFound
+            ))
+        ));
+
+        actor.lock().await.expect("lock vault");
+        assert!(matches!(
+            actor
+                .resolve_credential(password_summary.id().to_owned())
+                .await,
+            Err(DatabaseActorError::VaultLocked)
+        ));
     }
 
     #[tokio::test]

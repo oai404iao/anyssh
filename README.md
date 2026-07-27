@@ -28,6 +28,8 @@ AnySSH 是一个处于 Phase 0 技术验证阶段的开源跨平台 SSH 客户�
 - 随机 VMK、Argon2id PIN Slot、HKDF 子密钥和版本化 Bootstrap。
 - SQLCipher 4.10 整库加密与 XChaCha20-Poly1305 Credential 字段加密。
 - 专用 DB Actor Thread、16 项有界 Command Queue 和 oneshot Response。
+- Schema v2 Credential Repository，以及 Credential ID -> Vault -> SSH Core
+  的 Rust-only Private Key 路径。
 - 原生 Vault 创建、锁定和解锁界面。
 - Docker OpenSSH 真实协议测试。
 - Vitest、Playwright 和 agent-browser 测试路径。
@@ -35,7 +37,8 @@ AnySSH 是一个处于 Phase 0 技术验证阶段的开源跨平台 SSH 客户�
 - Android ARM64 Debug APK 构建，包含 Rust SSH、Vault 与 bundled SQLCipher。
 - GitHub Actions Windows Runner 已成功产出 x86-64 Debug EXE。
 
-Jump Host/私钥的产品配置与 Vault 集成、SSH Agent 和 Windows 运行验证尚未完成。
+Jump Host/私钥的产品配置 UI、原生 Private Key 导入、SSH Agent 和 Windows
+运行验证尚未完成。
 iOS 因当前没有 macOS/Xcode 环境暂缓。
 
 当前活动计划：

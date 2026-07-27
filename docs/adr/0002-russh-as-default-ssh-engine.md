@@ -45,11 +45,13 @@ SSH Engine 需要跨桌面和移动平台，支持现代算法、密码、公钥
 - Local/Remote/Dynamic Forward。
 - 大输出背压和取消。
 
-截至 2026-07-26：
+截至 2026-07-27：
 
 - 密码认证、PTY、Resize、Disconnect 和二进制输出已通过 OpenSSH Fixture。
 - 未加密和口令保护 Ed25519 OpenSSH 私钥已通过真实认证；错误口令与未授权
   Private Key 均被拒绝。
+- 加密 Private Key 已写入 Vault，并在 Lock/Unlock 后只通过 Credential ID
+  进入 `anyssh-app`，由 Rust 直接构造 russh Authentication 后成功登录。
 - 已保存 SHA-256 Fingerprint 匹配时无需重复提示；Fixture 轮换 Host Key 后
   连接被硬阻断且不允许再次 TOFU。
 - 4 MiB 连续输出使 64 项 Core Queue 达到容量上限；原生 Tauri 另限制最多

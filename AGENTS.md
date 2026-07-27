@@ -37,6 +37,7 @@ any_ssh/
 |   |-- e2e/                          # Playwright 浏览器 E2E
 |   `-- src-tauri/                    # Tauri 壳、命令与 Session Registry
 |-- crates/
+|   |-- anyssh-app/                   # Application Service、Credential ID -> SSH
 |   |-- anyssh-domain/                # Endpoint、TerminalSize 等领域值对象
 |   |-- anyssh-ssh/                   # russh Session、Host Key、PTY、背压
 |   |-- anyssh-vault/                 # VMK、PIN Key Slot、HKDF、Bootstrap
@@ -62,7 +63,7 @@ any_ssh/
     `-- reference/                    # 外部技术基线、术语等参考资料
 ```
 
-后续计划中的 App、Platform、Sync 等目录见
+后续计划中的 Platform、Sync 等目录见
 [`docs/design/technical-architecture-2026.md`](docs/design/technical-architecture-2026.md)。
 不要创建没有真实代码的空 crate。
 
@@ -98,8 +99,11 @@ Proposed ADR 是待验证方案，不是不可变事实。若 Phase 0 验证结�
 - Tauri 原生检查使用 `cargo check --package anyssh-client`。
 - Rust Core 不依赖 React/Tauri；Tauri 可以依赖 Core。
 - 不把业务逻辑放进 Tauri command；command 只校验、转换和调用 Core。
-- 应用运行时只通过 `DatabaseActorHandle` 访问 Vault/SQLCipher；不得在 Tauri
-  Command 或其他 Runtime State 中直接持有 `LocalVault`/`rusqlite::Connection`。
+- Tauri 业务调用只进入 `ApplicationCore`；`ApplicationCore` 通过
+  `DatabaseActorHandle` 访问 Vault/SQLCipher。不得在 Tauri Command 或其他
+  Runtime State 中直接持有 `LocalVault`/`rusqlite::Connection`。
+- SSH Private Key/Passphrase 不得出现在 Tauri IPC。Connect IPC 只传 Credential
+  ID，`anyssh-app` 在 Rust 内解析并直接构造 SSH Authentication。
 - VMK、KEK、数据库 Key 和解密后的 Credential 不得序列化到前端。
 - Vault Bootstrap 只能包含版本、随机 ID、KDF 参数和加密 Key Slot。
 - 新增依赖时检查其 AGPLv3 兼容性，并更新 lockfile。
@@ -186,6 +190,7 @@ Evidence 复制回仓库。
 - 构建隔离 Alpine/OpenSSH Jump Host、Internal Target 和黑洞握手 Fixture。
 - 真实完成 TCP、SSH Handshake、Host Key 确认、密码认证、PTY 和命令输出。
 - 验证未加密/口令保护私钥、错误口令、未授权 Key 和密码 Jump + 私钥 Target。
+- 验证 Vault Lock/Unlock 后 Credential ID -> 加密 Private Key -> SSH Core。
 - 验证已保存 Host Key 匹配免提示、Host Key 变化硬阻断和 4 MiB 输出背压。
 - 验证 `direct-tcpip` 两跳、逐跳 Host Key、取消、超时、Target 认证失败和
   第一跳断开。
@@ -197,6 +202,7 @@ Evidence 复制回仓库。
 
 - PIN Slot 创建、正确/错误 PIN、损坏 Slot。
 - DB Actor 有界 Queue、oneshot Response、串行生命周期和 Shutdown。
+- Schema v1 -> v2 Credential Migration、中断回滚和 Locked Repository 拒绝。
 - SQLCipher 重启解锁和 Credential 字段 AEAD。
 - 数据库、WAL、Sidecar 与 Bootstrap 明文扫描。
 - Schema migration 中断回滚。
@@ -406,7 +412,9 @@ Clear
 | Terminal Adapter | `apps/client/src/components/TerminalPane.tsx` |
 | Browser/Native Bridge | `apps/client/src/lib/ssh-bridge.ts` |
 | Tauri IPC | `apps/client/src-tauri/src/lib.rs` |
+| Application Core | `crates/anyssh-app/src/lib.rs` |
 | DB Actor | `crates/anyssh-storage/src/actor.rs` |
+| Credential Model | `crates/anyssh-storage/src/credential.rs` |
 | SSH Core | `crates/anyssh-ssh/src/lib.rs` |
 | OpenSSH Fixture | `tests/fixtures/openssh/` |
 | Playwright E2E | `apps/client/e2e/connect-preview.spec.ts` |

@@ -8,16 +8,13 @@ use std::{
     },
 };
 
+use anyssh_app::{
+    ApplicationCore, AuthenticationSource, CredentialKind as StorageCredentialKind,
+    CredentialSummary as StorageCredentialSummary, DatabaseActorConfig, SshHopRequest,
+    SshSessionRequest, VaultState as StorageVaultState, VaultStatus as StorageVaultStatus,
+};
 use anyssh_domain::{SshEndpoint, TerminalSize};
-use anyssh_ssh::{
-    DEFAULT_CONNECTION_TIMEOUT, JumpPasswordSessionConfig, PasswordJumpHostConfig,
-    PasswordSessionConfig, SessionControl, SessionEvent, SessionHop, spawn_jump_password_session,
-    spawn_password_session,
-};
-use anyssh_storage::{
-    DatabaseActorConfig, DatabaseActorHandle, VaultState as StorageVaultState,
-    VaultStatus as StorageVaultStatus,
-};
+use anyssh_ssh::{SessionControl, SessionEvent, SessionHop};
 use serde::{Deserialize, Serialize};
 use tauri::{
     Manager, State,
@@ -74,9 +71,57 @@ impl From<StorageVaultStatus> for VaultStatus {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct VaultPinRequest {
     pin: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CredentialSummary {
+    id: String,
+    label: String,
+    username: String,
+    kind: CredentialKind,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum CredentialKind {
+    Password,
+    PrivateKey,
+}
+
+impl From<StorageCredentialSummary> for CredentialSummary {
+    fn from(summary: StorageCredentialSummary) -> Self {
+        let kind = match summary.kind() {
+            StorageCredentialKind::Password => CredentialKind::Password,
+            StorageCredentialKind::PrivateKey => CredentialKind::PrivateKey,
+        };
+        Self {
+            id: summary.id().to_owned(),
+            label: summary.label().to_owned(),
+            username: summary.username().to_owned(),
+            kind,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreatePasswordCredentialRequest {
+    label: String,
+    username: String,
+    password: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UpdatePasswordCredentialRequest {
+    credential_id: String,
+    label: String,
+    username: String,
+    password: String,
 }
 
 impl SessionRegistry {
@@ -157,24 +202,51 @@ async fn await_output_capacity(
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ConnectRequest {
     host: String,
     port: u16,
-    username: String,
-    password: String,
+    authentication: AuthenticationRequest,
     columns: u32,
     rows: u32,
     jump_host: Option<JumpHostRequest>,
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct JumpHostRequest {
     host: String,
     port: u16,
-    username: String,
-    password: String,
+    authentication: AuthenticationRequest,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+enum AuthenticationRequest {
+    TemporaryPassword {
+        username: String,
+        password: String,
+    },
+    Credential {
+        #[serde(rename = "credentialId")]
+        credential_id: String,
+    },
+}
+
+impl From<AuthenticationRequest> for AuthenticationSource {
+    fn from(authentication: AuthenticationRequest) -> Self {
+        match authentication {
+            AuthenticationRequest::TemporaryPassword { username, password } => {
+                Self::TemporaryPassword {
+                    username,
+                    password: Zeroizing::new(password),
+                }
+            }
+            AuthenticationRequest::Credential { credential_id } => {
+                Self::Credential { credential_id }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -234,9 +306,8 @@ fn runtime_info() -> RuntimeInfo {
 }
 
 #[tauri::command]
-async fn vault_status(actor: State<'_, DatabaseActorHandle>) -> Result<VaultStatus, String> {
-    actor
-        .status()
+async fn vault_status(core: State<'_, ApplicationCore>) -> Result<VaultStatus, String> {
+    core.vault_status()
         .await
         .map(VaultStatus::from)
         .map_err(|error| error.to_string())
@@ -245,11 +316,10 @@ async fn vault_status(actor: State<'_, DatabaseActorHandle>) -> Result<VaultStat
 #[tauri::command]
 async fn vault_create(
     request: VaultPinRequest,
-    actor: State<'_, DatabaseActorHandle>,
+    core: State<'_, ApplicationCore>,
 ) -> Result<VaultStatus, String> {
     let pin = Zeroizing::new(request.pin);
-    actor
-        .create(pin)
+    core.create_vault(pin)
         .await
         .map(VaultStatus::from)
         .map_err(|error| error.to_string())
@@ -258,11 +328,10 @@ async fn vault_create(
 #[tauri::command]
 async fn vault_unlock(
     request: VaultPinRequest,
-    actor: State<'_, DatabaseActorHandle>,
+    core: State<'_, ApplicationCore>,
 ) -> Result<VaultStatus, String> {
     let pin = Zeroizing::new(request.pin);
-    actor
-        .unlock(pin)
+    core.unlock_vault(pin)
         .await
         .map(VaultStatus::from)
         .map_err(|error| error.to_string())
@@ -270,16 +339,66 @@ async fn vault_unlock(
 
 #[tauri::command]
 async fn vault_lock(
-    actor: State<'_, DatabaseActorHandle>,
+    core: State<'_, ApplicationCore>,
     sessions: State<'_, SessionRegistry>,
 ) -> Result<VaultStatus, String> {
     for session in sessions.drain().await {
         let _ = session.disconnect().await;
     }
-    actor
-        .lock()
+    core.lock_vault()
         .await
         .map(VaultStatus::from)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn credential_create_password(
+    request: CreatePasswordCredentialRequest,
+    core: State<'_, ApplicationCore>,
+) -> Result<CredentialSummary, String> {
+    core.create_password_credential(
+        request.label,
+        request.username,
+        Zeroizing::new(request.password),
+    )
+    .await
+    .map(CredentialSummary::from)
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn credential_update_password(
+    request: UpdatePasswordCredentialRequest,
+    core: State<'_, ApplicationCore>,
+) -> Result<CredentialSummary, String> {
+    core.update_password_credential(
+        request.credential_id,
+        request.label,
+        request.username,
+        Zeroizing::new(request.password),
+    )
+    .await
+    .map(CredentialSummary::from)
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn credential_list(
+    core: State<'_, ApplicationCore>,
+) -> Result<Vec<CredentialSummary>, String> {
+    core.list_credentials()
+        .await
+        .map(|summaries| summaries.into_iter().map(CredentialSummary::from).collect())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn credential_delete(
+    credential_id: String,
+    core: State<'_, ApplicationCore>,
+) -> Result<bool, String> {
+    core.delete_credential(credential_id)
+        .await
         .map_err(|error| error.to_string())
 }
 
@@ -289,61 +408,38 @@ async fn ssh_connect(
     events: Channel<ClientEvent>,
     data: Channel<InvokeResponseBody>,
     registry: State<'_, SessionRegistry>,
+    core: State<'_, ApplicationCore>,
 ) -> Result<String, String> {
     let ConnectRequest {
         host,
         port,
-        username,
-        password,
+        authentication,
         columns,
         rows,
         jump_host,
     } = request;
-    let password = Zeroizing::new(password);
-    let jump_host = jump_host.map(|request| {
-        let JumpHostRequest {
-            host,
-            port,
-            username,
-            password,
-        } = request;
-        (host, port, username, Zeroizing::new(password))
-    });
 
     let endpoint = SshEndpoint::new(host, port).map_err(|error| error.to_string())?;
     let terminal_size = TerminalSize::new(columns, rows).map_err(|error| error.to_string())?;
-    let username = username.trim().to_owned();
-
-    if username.is_empty() {
-        return Err("SSH username must not be empty".to_owned());
-    }
-
-    let target = PasswordSessionConfig {
-        endpoint,
-        username,
-        password,
-        terminal_size,
+    let jump_host = match jump_host {
+        Some(request) => Some(SshHopRequest {
+            endpoint: SshEndpoint::new(request.host, request.port)
+                .map_err(|error| error.to_string())?,
+            authentication: request.authentication.into(),
+        }),
+        None => None,
     };
-
-    let spawned = if let Some((host, port, username, password)) = jump_host {
-        let username = username.trim().to_owned();
-        if username.is_empty() {
-            return Err("Jump Host SSH username must not be empty".to_owned());
-        }
-
-        let endpoint = SshEndpoint::new(host, port).map_err(|error| error.to_string())?;
-        spawn_jump_password_session(JumpPasswordSessionConfig {
-            jump_host: PasswordJumpHostConfig {
+    let spawned = core
+        .spawn_ssh_session(SshSessionRequest {
+            target: SshHopRequest {
                 endpoint,
-                username,
-                password,
+                authentication: authentication.into(),
             },
-            target,
-            connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
+            jump_host,
+            terminal_size,
         })
-    } else {
-        spawn_password_session(target)
-    };
+        .await
+        .map_err(|error| error.to_string())?;
 
     let session_id = registry.new_id();
     let (output_acknowledgements, mut output_acknowledgement_receiver) =
@@ -482,9 +578,8 @@ pub fn run() {
         .manage(SessionRegistry::default())
         .setup(|app| {
             let vault_root = app.path().app_data_dir()?.join("vault");
-            let actor =
-                DatabaseActorHandle::spawn(vault_root, DatabaseActorConfig::phase0_default())?;
-            app.manage(actor);
+            let core = ApplicationCore::spawn(vault_root, DatabaseActorConfig::phase0_default())?;
+            app.manage(core);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -493,6 +588,10 @@ pub fn run() {
             vault_create,
             vault_unlock,
             vault_lock,
+            credential_create_password,
+            credential_update_password,
+            credential_list,
+            credential_delete,
             ssh_connect,
             ssh_confirm_host_key,
             ssh_ack_output,
@@ -534,15 +633,20 @@ mod tests {
         let request: ConnectRequest = serde_json::from_value(serde_json::json!({
             "host": "target.internal",
             "port": 22,
-            "username": "target-user",
-            "password": "target-password",
+            "authentication": {
+                "kind": "temporaryPassword",
+                "username": "target-user",
+                "password": "target-password"
+            },
             "columns": 100,
             "rows": 30,
             "jumpHost": {
                 "host": "jump.example",
                 "port": 2222,
-                "username": "jump-user",
-                "password": "jump-password"
+                "authentication": {
+                    "kind": "credential",
+                    "credentialId": "cred-jump"
+                }
             }
         }))
         .expect("typed Jump Host request should deserialize");
@@ -550,7 +654,39 @@ mod tests {
         let jump_host = request.jump_host.expect("Jump Host should be present");
         assert_eq!(jump_host.host, "jump.example");
         assert_eq!(jump_host.port, 2222);
-        assert_eq!(jump_host.username, "jump-user");
+        assert!(matches!(
+            jump_host.authentication,
+            AuthenticationRequest::Credential { credential_id }
+                if credential_id == "cred-jump"
+        ));
+    }
+
+    #[test]
+    fn credential_authentication_rejects_raw_private_key_fields() {
+        let request = serde_json::from_value::<AuthenticationRequest>(serde_json::json!({
+            "kind": "credential",
+            "credentialId": "cred-private-key",
+            "privateKey": "must-not-enter-ipc"
+        }));
+
+        assert!(request.is_err());
+    }
+
+    #[test]
+    fn credential_summary_serializes_metadata_only() {
+        let value = serde_json::to_value(CredentialSummary {
+            id: "cred-test".to_owned(),
+            label: "Test key".to_owned(),
+            username: "alice".to_owned(),
+            kind: CredentialKind::PrivateKey,
+        })
+        .expect("credential summary should serialize");
+
+        assert_eq!(value["id"], "cred-test");
+        assert_eq!(value["kind"], "privateKey");
+        assert!(value.get("password").is_none());
+        assert!(value.get("privateKey").is_none());
+        assert!(value.get("passphrase").is_none());
     }
 
     #[tokio::test]

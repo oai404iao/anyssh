@@ -1,11 +1,13 @@
 #![forbid(unsafe_code)]
 
 mod actor;
+mod credential;
 
 pub use actor::{
     DEFAULT_DATABASE_COMMAND_QUEUE_CAPACITY, DatabaseActorConfig, DatabaseActorError,
     DatabaseActorHandle, DatabaseActorStartError, VaultState, VaultStatus,
 };
+pub use credential::{CredentialKind, CredentialSecret, CredentialSummary, ResolvedCredential};
 
 use std::{
     fmt::Write as _,
@@ -25,10 +27,12 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, pa
 use thiserror::Error;
 use zeroize::Zeroizing;
 
+use crate::credential::{CredentialRecord, validate_credential_id};
+
 pub const BOOTSTRAP_FILE_NAME: &str = "vault.bootstrap.json";
 pub const DATABASE_FILE_NAME: &str = "vault.db";
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 const KEY_BYTES: usize = 32;
 const NONCE_BYTES: usize = 24;
 const MAX_ID_BYTES: usize = 256;
@@ -53,6 +57,10 @@ pub enum StorageError {
     RecordIntegrity,
     #[error("host record is invalid")]
     InvalidHost,
+    #[error("credential record is invalid")]
+    InvalidCredential,
+    #[error("credential was not found")]
+    CredentialNotFound,
     #[error("vault schema migration was interrupted")]
     MigrationInterrupted,
     #[error(transparent)]
@@ -232,6 +240,32 @@ impl LocalVault {
     pub fn load_host(&self, id: &str) -> Result<Option<HostRecord>, StorageError> {
         self.database.load_host(id)
     }
+
+    fn create_credential(
+        &mut self,
+        record: &CredentialRecord,
+    ) -> Result<CredentialSummary, StorageError> {
+        self.database.create_credential(record)
+    }
+
+    fn update_credential(
+        &mut self,
+        record: &CredentialRecord,
+    ) -> Result<CredentialSummary, StorageError> {
+        self.database.update_credential(record)
+    }
+
+    fn list_credentials(&self) -> Result<Vec<CredentialSummary>, StorageError> {
+        self.database.list_credentials()
+    }
+
+    fn delete_credential(&mut self, id: &str) -> Result<bool, StorageError> {
+        self.database.delete_credential(id)
+    }
+
+    fn resolve_credential(&self, id: &str) -> Result<ResolvedCredential, StorageError> {
+        self.database.resolve_credential(id)
+    }
 }
 
 struct VaultDatabase {
@@ -253,7 +287,7 @@ impl VaultDatabase {
             | OpenFlags::SQLITE_OPEN_NOFOLLOW;
         let connection = Connection::open_with_flags(path, flags).map_err(StorageError::Sql)?;
         let mut database = Self::configure(connection, keys)?;
-        migrate_schema(&mut database.connection, false)?;
+        initialize_schema(&mut database.connection)?;
         database.connection.execute(
             "INSERT INTO vault_meta(key, value) VALUES('vault_id', ?1)",
             [keys.vault_id()],
@@ -267,8 +301,8 @@ impl VaultDatabase {
             | OpenFlags::SQLITE_OPEN_NOFOLLOW;
         let connection =
             Connection::open_with_flags(path, flags).map_err(|_| StorageError::InvalidDatabase)?;
-        let database = Self::configure(connection, keys)?;
-        ensure_schema_version(&database.connection)?;
+        let mut database = Self::configure(connection, keys)?;
+        migrate_existing_schema(&mut database.connection)?;
 
         let stored_vault_id: String = database
             .connection
@@ -439,6 +473,291 @@ impl VaultDatabase {
         )
         .map(Some)
     }
+
+    fn create_credential(
+        &mut self,
+        record: &CredentialRecord,
+    ) -> Result<CredentialSummary, StorageError> {
+        let encrypted = self.encrypt_credential(record)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute(
+            "
+            INSERT INTO credentials(
+                id, label, username, kind, secret_nonce, secret_ciphertext,
+                passphrase_nonce, passphrase_ciphertext
+            )
+            VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            ",
+            params![
+                &record.id,
+                &record.label,
+                &record.username,
+                record.secret.kind().storage_value(),
+                encrypted.secret.nonce.as_slice(),
+                encrypted.secret.ciphertext,
+                encrypted
+                    .passphrase
+                    .as_ref()
+                    .map(|field| field.nonce.as_slice()),
+                encrypted
+                    .passphrase
+                    .as_ref()
+                    .map(|field| field.ciphertext.as_slice()),
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(record.summary())
+    }
+
+    fn update_credential(
+        &mut self,
+        record: &CredentialRecord,
+    ) -> Result<CredentialSummary, StorageError> {
+        let encrypted = self.encrypt_credential(record)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = transaction.execute(
+            "
+            UPDATE credentials
+            SET label = ?2,
+                username = ?3,
+                kind = ?4,
+                secret_nonce = ?5,
+                secret_ciphertext = ?6,
+                passphrase_nonce = ?7,
+                passphrase_ciphertext = ?8
+            WHERE id = ?1
+            ",
+            params![
+                &record.id,
+                &record.label,
+                &record.username,
+                record.secret.kind().storage_value(),
+                encrypted.secret.nonce.as_slice(),
+                encrypted.secret.ciphertext,
+                encrypted
+                    .passphrase
+                    .as_ref()
+                    .map(|field| field.nonce.as_slice()),
+                encrypted
+                    .passphrase
+                    .as_ref()
+                    .map(|field| field.ciphertext.as_slice()),
+            ],
+        )?;
+        if changed != 1 {
+            return Err(StorageError::CredentialNotFound);
+        }
+        transaction.commit()?;
+        Ok(record.summary())
+    }
+
+    fn list_credentials(&self) -> Result<Vec<CredentialSummary>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT id, label, username, kind
+            FROM credentials
+            ORDER BY label COLLATE NOCASE, id
+            ",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(StoredCredentialSummary {
+                id: row.get(0)?,
+                label: row.get(1)?,
+                username: row.get(2)?,
+                kind: row.get(3)?,
+            })
+        })?;
+
+        rows.map(|row| {
+            let row = row?;
+            CredentialSummary::new(
+                row.id,
+                row.label,
+                row.username,
+                CredentialKind::from_storage_value(&row.kind)?,
+            )
+        })
+        .collect()
+    }
+
+    fn delete_credential(&mut self, id: &str) -> Result<bool, StorageError> {
+        validate_credential_id(id)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = transaction.execute("DELETE FROM credentials WHERE id = ?1", [id])?;
+        transaction.commit()?;
+        Ok(changed == 1)
+    }
+
+    fn resolve_credential(&self, id: &str) -> Result<ResolvedCredential, StorageError> {
+        validate_credential_id(id)?;
+        let stored = self
+            .connection
+            .query_row(
+                "
+                SELECT label, username, kind, secret_nonce, secret_ciphertext,
+                       passphrase_nonce, passphrase_ciphertext
+                FROM credentials
+                WHERE id = ?1
+                ",
+                [id],
+                |row| {
+                    Ok(StoredCredential {
+                        label: row.get(0)?,
+                        username: row.get(1)?,
+                        kind: row.get(2)?,
+                        secret_nonce: row.get(3)?,
+                        secret_ciphertext: row.get(4)?,
+                        passphrase_nonce: row.get(5)?,
+                        passphrase_ciphertext: row.get(6)?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or(StorageError::CredentialNotFound)?;
+
+        let kind = CredentialKind::from_storage_value(&stored.kind)?;
+        let secret = match kind {
+            CredentialKind::Password => {
+                if stored.passphrase_nonce.is_some() || stored.passphrase_ciphertext.is_some() {
+                    return Err(StorageError::RecordIntegrity);
+                }
+                CredentialSecret::Password {
+                    password: self.decrypt_credential_field(
+                        id,
+                        kind,
+                        "secret",
+                        stored.secret_nonce,
+                        stored.secret_ciphertext,
+                    )?,
+                }
+            }
+            CredentialKind::PrivateKey => {
+                let passphrase = match (stored.passphrase_nonce, stored.passphrase_ciphertext) {
+                    (None, None) => None,
+                    (Some(nonce), Some(ciphertext)) => Some(self.decrypt_credential_field(
+                        id,
+                        kind,
+                        "passphrase",
+                        nonce,
+                        ciphertext,
+                    )?),
+                    _ => return Err(StorageError::RecordIntegrity),
+                };
+                CredentialSecret::PrivateKey {
+                    private_key: self.decrypt_credential_field(
+                        id,
+                        kind,
+                        "secret",
+                        stored.secret_nonce,
+                        stored.secret_ciphertext,
+                    )?,
+                    passphrase,
+                }
+            }
+        };
+
+        CredentialRecord::new(id, stored.label, stored.username, secret)
+            .map(|record| record.into_resolved())
+    }
+
+    fn encrypt_credential(
+        &self,
+        record: &CredentialRecord,
+    ) -> Result<EncryptedCredential, StorageError> {
+        let kind = record.secret.kind();
+        match &record.secret {
+            CredentialSecret::Password { password } => Ok(EncryptedCredential {
+                secret: self.encrypt_credential_field(
+                    &record.id,
+                    kind,
+                    "secret",
+                    password.as_bytes(),
+                )?,
+                passphrase: None,
+            }),
+            CredentialSecret::PrivateKey {
+                private_key,
+                passphrase,
+            } => Ok(EncryptedCredential {
+                secret: self.encrypt_credential_field(
+                    &record.id,
+                    kind,
+                    "secret",
+                    private_key.as_bytes(),
+                )?,
+                passphrase: passphrase
+                    .as_ref()
+                    .map(|value| {
+                        self.encrypt_credential_field(
+                            &record.id,
+                            kind,
+                            "passphrase",
+                            value.as_bytes(),
+                        )
+                    })
+                    .transpose()?,
+            }),
+        }
+    }
+
+    fn encrypt_credential_field(
+        &self,
+        credential_id: &str,
+        kind: CredentialKind,
+        field: &str,
+        plaintext: &[u8],
+    ) -> Result<EncryptedField, StorageError> {
+        let mut nonce = [0_u8; NONCE_BYTES];
+        getrandom::fill(&mut nonce).map_err(|_| StorageError::RecordIntegrity)?;
+        let cipher = XChaCha20Poly1305::new_from_slice(&self.record_key[..])
+            .map_err(|_| StorageError::RecordIntegrity)?;
+        let aad = credential_record_aad(&self.vault_id, credential_id, kind, field);
+        let ciphertext = cipher
+            .encrypt(
+                XNonce::from_slice(&nonce),
+                Payload {
+                    msg: plaintext,
+                    aad: aad.as_bytes(),
+                },
+            )
+            .map_err(|_| StorageError::RecordIntegrity)?;
+        Ok(EncryptedField { nonce, ciphertext })
+    }
+
+    fn decrypt_credential_field(
+        &self,
+        credential_id: &str,
+        kind: CredentialKind,
+        field: &str,
+        nonce: Vec<u8>,
+        ciphertext: Vec<u8>,
+    ) -> Result<Zeroizing<String>, StorageError> {
+        let nonce: [u8; NONCE_BYTES] = nonce
+            .try_into()
+            .map_err(|_| StorageError::RecordIntegrity)?;
+        let cipher = XChaCha20Poly1305::new_from_slice(&self.record_key[..])
+            .map_err(|_| StorageError::RecordIntegrity)?;
+        let aad = credential_record_aad(&self.vault_id, credential_id, kind, field);
+        let plaintext = Zeroizing::new(
+            cipher
+                .decrypt(
+                    XNonce::from_slice(&nonce),
+                    Payload {
+                        msg: &ciphertext,
+                        aad: aad.as_bytes(),
+                    },
+                )
+                .map_err(|_| StorageError::RecordIntegrity)?,
+        );
+        let value = std::str::from_utf8(&plaintext).map_err(|_| StorageError::RecordIntegrity)?;
+        Ok(Zeroizing::new(value.to_owned()))
+    }
 }
 
 struct StoredHost {
@@ -448,6 +767,33 @@ struct StoredHost {
     username: String,
     password_nonce: Vec<u8>,
     password_ciphertext: Vec<u8>,
+}
+
+struct StoredCredentialSummary {
+    id: String,
+    label: String,
+    username: String,
+    kind: String,
+}
+
+struct StoredCredential {
+    label: String,
+    username: String,
+    kind: String,
+    secret_nonce: Vec<u8>,
+    secret_ciphertext: Vec<u8>,
+    passphrase_nonce: Option<Vec<u8>>,
+    passphrase_ciphertext: Option<Vec<u8>>,
+}
+
+struct EncryptedCredential {
+    secret: EncryptedField,
+    passphrase: Option<EncryptedField>,
+}
+
+struct EncryptedField {
+    nonce: [u8; NONCE_BYTES],
+    ciphertext: Vec<u8>,
 }
 
 fn apply_database_key(connection: &Connection, key: &[u8; KEY_BYTES]) -> Result<(), StorageError> {
@@ -462,28 +808,25 @@ fn apply_database_key(connection: &Connection, key: &[u8; KEY_BYTES]) -> Result<
         .map_err(|_| StorageError::InvalidDatabase)
 }
 
-fn migrate_schema(
-    connection: &mut Connection,
-    simulate_interruption: bool,
-) -> Result<(), StorageError> {
+fn initialize_schema(connection: &mut Connection) -> Result<(), StorageError> {
+    let current_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(StorageError::Sql)?;
+    if current_version != 0 {
+        return Err(StorageError::UnsupportedSchema(current_version));
+    }
+    migrate_to_v1(connection, false)?;
+    migrate_to_v2(connection, false)
+}
+
+fn migrate_existing_schema(connection: &mut Connection) -> Result<(), StorageError> {
     let current_version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(StorageError::Sql)?;
     match current_version {
         SCHEMA_VERSION => Ok(()),
-        0 => migrate_to_v1(connection, simulate_interruption),
+        1 => migrate_to_v2(connection, false),
         version => Err(StorageError::UnsupportedSchema(version)),
-    }
-}
-
-fn ensure_schema_version(connection: &Connection) -> Result<(), StorageError> {
-    let version: i64 = connection
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .map_err(StorageError::Sql)?;
-    if version == SCHEMA_VERSION {
-        Ok(())
-    } else {
-        Err(StorageError::UnsupportedSchema(version))
     }
 }
 
@@ -513,6 +856,43 @@ fn migrate_to_v1(
     if simulate_interruption {
         return Err(StorageError::MigrationInterrupted);
     }
+    transaction.pragma_update(None, "user_version", 1_i64)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_to_v2(
+    connection: &mut Connection,
+    simulate_interruption: bool,
+) -> Result<(), StorageError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    transaction.execute_batch(
+        "
+        CREATE TABLE credentials(
+            id TEXT PRIMARY KEY NOT NULL,
+            label TEXT NOT NULL,
+            username TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN ('password', 'private_key')),
+            secret_nonce BLOB NOT NULL,
+            secret_ciphertext BLOB NOT NULL,
+            passphrase_nonce BLOB,
+            passphrase_ciphertext BLOB,
+            CHECK(
+                (passphrase_nonce IS NULL AND passphrase_ciphertext IS NULL)
+                OR
+                (passphrase_nonce IS NOT NULL AND passphrase_ciphertext IS NOT NULL)
+            ),
+            CHECK(
+                kind = 'private_key'
+                OR
+                (passphrase_nonce IS NULL AND passphrase_ciphertext IS NULL)
+            )
+        ) WITHOUT ROWID;
+        ",
+    )?;
+    if simulate_interruption {
+        return Err(StorageError::MigrationInterrupted);
+    }
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
@@ -520,6 +900,18 @@ fn migrate_to_v1(
 
 fn record_aad(vault_id: &str, host_id: &str) -> String {
     format!("anyssh/record/v1|{vault_id}|host|{host_id}|password")
+}
+
+fn credential_record_aad(
+    vault_id: &str,
+    credential_id: &str,
+    kind: CredentialKind,
+    field: &str,
+) -> String {
+    format!(
+        "anyssh/record/v2|{vault_id}|credential|{credential_id}|{}|{field}",
+        kind.storage_value()
+    )
 }
 
 fn create_private_directory(path: &Path) -> Result<(), StorageError> {
@@ -581,6 +973,33 @@ mod tests {
             Zeroizing::new("fixture-password-should-never-leak".to_owned()),
         )
         .expect("host")
+    }
+
+    fn password_credential(id: &str, password: &str) -> CredentialRecord {
+        CredentialRecord::new(
+            id,
+            "Production password",
+            "credential-user",
+            CredentialSecret::Password {
+                password: Zeroizing::new(password.to_owned()),
+            },
+        )
+        .expect("password credential")
+    }
+
+    fn private_key_credential(id: &str) -> CredentialRecord {
+        CredentialRecord::new(
+            id,
+            "Production private key",
+            "key-user",
+            CredentialSecret::PrivateKey {
+                private_key: Zeroizing::new(
+                    "-----BEGIN OPENSSH PRIVATE KEY-----\nfixture-private-key\n".to_owned(),
+                ),
+                passphrase: Some(Zeroizing::new("fixture-private-key-passphrase".to_owned())),
+            },
+        )
+        .expect("private-key credential")
     }
 
     #[test]
@@ -667,6 +1086,103 @@ mod tests {
     }
 
     #[test]
+    fn credential_repository_round_trip_hides_secrets_and_metadata() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let mut vault =
+            LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+        let password = password_credential("cred-password", "credential-password-secret");
+        let private_key = private_key_credential("cred-private-key");
+
+        let password_summary = vault
+            .create_credential(&password)
+            .expect("create password credential");
+        let private_key_summary = vault
+            .create_credential(&private_key)
+            .expect("create private-key credential");
+        assert_eq!(password_summary.kind(), CredentialKind::Password);
+        assert_eq!(private_key_summary.kind(), CredentialKind::PrivateKey);
+
+        let summaries = vault.list_credentials().expect("list credentials");
+        assert_eq!(summaries.len(), 2);
+        let summary_debug = format!("{summaries:?}");
+        assert!(!summary_debug.contains("credential-password-secret"));
+        assert!(!summary_debug.contains("fixture-private-key"));
+
+        assert_files_do_not_contain(
+            &root,
+            &[
+                b"Production password",
+                b"credential-user",
+                b"credential-password-secret",
+                b"Production private key",
+                b"key-user",
+                b"fixture-private-key",
+                b"fixture-private-key-passphrase",
+            ],
+        );
+
+        drop(vault);
+        let mut reopened = LocalVault::unlock(&root, "123456").expect("unlock");
+        let resolved_password = reopened
+            .resolve_credential("cred-password")
+            .expect("resolve password");
+        let (username, secret) = resolved_password.into_parts();
+        assert_eq!(username, "credential-user");
+        let CredentialSecret::Password { password } = secret else {
+            panic!("expected password credential");
+        };
+        assert_eq!(password.as_str(), "credential-password-secret");
+
+        let resolved_key = reopened
+            .resolve_credential("cred-private-key")
+            .expect("resolve private key");
+        let (username, secret) = resolved_key.into_parts();
+        assert_eq!(username, "key-user");
+        let CredentialSecret::PrivateKey {
+            private_key,
+            passphrase,
+        } = secret
+        else {
+            panic!("expected private-key credential");
+        };
+        assert!(private_key.contains("BEGIN OPENSSH PRIVATE KEY"));
+        assert_eq!(
+            passphrase.as_deref().map(String::as_str),
+            Some("fixture-private-key-passphrase")
+        );
+
+        let updated = password_credential("cred-password", "updated-password-secret");
+        reopened
+            .update_credential(&updated)
+            .expect("update password credential");
+        let (_, updated_secret) = reopened
+            .resolve_credential("cred-password")
+            .expect("resolve updated credential")
+            .into_parts();
+        let CredentialSecret::Password { password } = updated_secret else {
+            panic!("expected updated password");
+        };
+        assert_eq!(password.as_str(), "updated-password-secret");
+        assert_files_do_not_contain(&root, &[b"updated-password-secret"]);
+
+        assert!(
+            reopened
+                .delete_credential("cred-private-key")
+                .expect("delete private key")
+        );
+        assert!(
+            !reopened
+                .delete_credential("cred-private-key")
+                .expect("delete missing private key")
+        );
+        assert!(matches!(
+            reopened.resolve_credential("cred-private-key"),
+            Err(StorageError::CredentialNotFound)
+        ));
+    }
+
+    #[test]
     fn incomplete_layout_is_not_overwritten() {
         let directory = tempfile::tempdir().expect("tempdir");
         let root = directory.path().join("vault");
@@ -687,7 +1203,7 @@ mod tests {
     #[test]
     fn interrupted_migration_rolls_back_schema() {
         let mut connection = Connection::open_in_memory().expect("connection");
-        let error = migrate_schema(&mut connection, true).expect_err("migration must fail");
+        let error = migrate_to_v1(&mut connection, true).expect_err("migration must fail");
         assert!(matches!(error, StorageError::MigrationInterrupted));
 
         let hosts_table: Option<String> = connection
@@ -703,6 +1219,65 @@ mod tests {
             .expect("version");
         assert!(hosts_table.is_none());
         assert_eq!(version, 0);
+    }
+
+    #[test]
+    fn interrupted_v2_migration_preserves_complete_v1_schema() {
+        let mut connection = Connection::open_in_memory().expect("connection");
+        migrate_to_v1(&mut connection, false).expect("create v1 schema");
+        let error = migrate_to_v2(&mut connection, true).expect_err("migration must fail");
+        assert!(matches!(error, StorageError::MigrationInterrupted));
+
+        let hosts_table: Option<String> = connection
+            .query_row(
+                "SELECT name FROM sqlite_schema WHERE type='table' AND name='hosts'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("query hosts schema");
+        let credentials_table: Option<String> = connection
+            .query_row(
+                "SELECT name FROM sqlite_schema WHERE type='table' AND name='credentials'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("query credentials schema");
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("version");
+
+        assert_eq!(hosts_table.as_deref(), Some("hosts"));
+        assert!(credentials_table.is_none());
+        assert_eq!(version, 1);
+    }
+
+    #[test]
+    fn unlocking_a_v1_vault_migrates_it_to_v2() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let vault = LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+        vault
+            .database
+            .connection
+            .execute_batch("DROP TABLE credentials; PRAGMA user_version = 1;")
+            .expect("downgrade fixture to v1");
+        drop(vault);
+
+        let migrated = LocalVault::unlock(&root, "123456").expect("unlock and migrate");
+        assert!(
+            migrated
+                .list_credentials()
+                .expect("list migrated credentials")
+                .is_empty()
+        );
+        let version: i64 = migrated
+            .database
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("schema version");
+        assert_eq!(version, SCHEMA_VERSION);
     }
 
     #[cfg(unix)]

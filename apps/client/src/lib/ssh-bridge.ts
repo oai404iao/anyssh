@@ -5,8 +5,7 @@ export const isNativeRuntime = isTauri();
 export interface ConnectRequest {
   host: string;
   port: number;
-  username: string;
-  password: string;
+  authentication: SshAuthenticationRequest;
   columns: number;
   rows: number;
   jumpHost?: JumpHostRequest;
@@ -15,9 +14,19 @@ export interface ConnectRequest {
 export interface JumpHostRequest {
   host: string;
   port: number;
-  username: string;
-  password: string;
+  authentication: SshAuthenticationRequest;
 }
+
+export type SshAuthenticationRequest =
+  | {
+      kind: "temporaryPassword";
+      username: string;
+      password: string;
+    }
+  | {
+      kind: "credential";
+      credentialId: string;
+    };
 
 export type SshSessionHop =
   { kind: "jumpHost"; index: number } | { kind: "target" };

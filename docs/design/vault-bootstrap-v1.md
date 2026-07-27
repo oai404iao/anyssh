@@ -89,9 +89,9 @@ HKDF-SHA-256 使用 Vault ID 的 UTF-8 表示作为 Salt，VMK 作为输入密�
 
 两个输出均为 32 bytes，必须分别持有和清零。
 
-## SQLCipher Schema v1
+## SQLCipher Schema v2
 
-数据库 `user_version` 为 `1`：
+数据库当前 `user_version` 为 `2`。Schema v1 创建：
 
 ```sql
 CREATE TABLE vault_meta(
@@ -110,12 +110,16 @@ CREATE TABLE hosts(
 ) WITHOUT ROWID;
 ```
 
-`vault_meta.vault_id` 必须与 Bootstrap 一致。Host 元数据依赖 SQLCipher，
-Password 另外使用 XChaCha20-Poly1305 加密；Password AAD 为：
+`vault_meta.vault_id` 必须与 Bootstrap 一致。该 `hosts` 表是 Phase 0
+兼容记录；Host 元数据依赖 SQLCipher，Password 另外使用
+XChaCha20-Poly1305 加密；Password AAD 为：
 
 ```text
 anyssh/record/v1|<vault_id>|host|<host_id>|password
 ```
+
+Schema v2 新增独立 `credentials` 表。完整字段、Record AAD 和 Rust-only Private
+Key 数据流见 [Credential Repository v1](credential-repository-v1.md)。
 
 ## 创建和迁移
 
@@ -123,6 +127,8 @@ anyssh/record/v1|<vault_id>|host|<host_id>|password
 - 文件同步后，通过目录 Rename 原子发布为正式 Vault。
 - 已存在或不完整的 Vault 不得被自动覆盖。
 - Schema migration 在 `IMMEDIATE` Transaction 中执行；失败或中断必须回滚。
+- 已有 Schema v1 Vault 在解锁时迁移到 v2；中断后保持完整 v1 并可重试。
+- Schema `0` 只用于新 Vault 初始化，不在已有文件上自动创建 Schema。
 - Linux 目录权限为 `0700`，Bootstrap 和数据库权限为 `0600`。
 
 ## 当前验证
@@ -133,4 +139,6 @@ anyssh/record/v1|<vault_id>|host|<host_id>|password
 - 原生 Xvfb 流程验证了创建、锁定、错误 PIN 和重新解锁。
 - Vault 生命周期现由专用 DB Actor Thread 串行管理；有界 Command Queue、
   oneshot Response、Shutdown 和 Thread Join 测试通过。
+- Schema v2 Credential Password、Private Key 与 Passphrase 重启恢复、明文扫描、
+  v1 -> v2 迁移和中断回滚通过。
 - Windows 与 Android 构建已经验证；iOS 仍等待 macOS/Xcode 环境。

@@ -189,6 +189,18 @@ ANYSSH_TEST_KEY_PASSPHRASE="$KEY_PASSPHRASE" \
 
 ANYSSH_TEST_JUMP_HOST=127.0.0.1 \
 ANYSSH_TEST_JUMP_PORT="$JUMP_PORT" \
+ANYSSH_TEST_ENCRYPTED_KEY="$KEY_DIR/id_ed25519_encrypted" \
+ANYSSH_TEST_KEY_PASSPHRASE="$KEY_PASSPHRASE" \
+  cargo test \
+    --package anyssh-app \
+    --test vault_credential_smoke \
+    -- \
+    --ignored \
+    --nocapture \
+    --test-threads=1
+
+ANYSSH_TEST_JUMP_HOST=127.0.0.1 \
+ANYSSH_TEST_JUMP_PORT="$JUMP_PORT" \
 ANYSSH_TEST_JUMP_CONTAINER="$JUMP_CONTAINER" \
   cargo test \
     --package anyssh-ssh \
@@ -214,4 +226,4 @@ ANYSSH_TEST_JUMP_CONTAINER="$JUMP_CONTAINER" \
     --nocapture \
     --test-threads=1
 
-echo "OpenSSH auth, host-key, backpressure, and Jump Host smoke tests passed."
+echo "OpenSSH auth, Vault Credential ID, host-key, backpressure, and Jump Host smoke tests passed."

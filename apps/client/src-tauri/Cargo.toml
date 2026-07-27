@@ -19,9 +19,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.4.1", features = [] }
 
 [dependencies]
+anyssh-app.workspace = true
 anyssh-domain.workspace = true
 anyssh-ssh.workspace = true
-anyssh-storage.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2.11.5", features = [] }

@@ -18,8 +18,11 @@ describe("browser preview SSH bridge", () => {
       {
         host: "127.0.0.1",
         port: 2222,
-        username: "anyssh",
-        password: "fixture",
+        authentication: {
+          kind: "temporaryPassword",
+          username: "anyssh",
+          password: "fixture",
+        },
         columns: 80,
         rows: 24,
       },
@@ -68,15 +71,21 @@ describe("browser preview SSH bridge", () => {
       {
         host: "db.internal",
         port: 22,
-        username: "target-user",
-        password: "target-password",
+        authentication: {
+          kind: "temporaryPassword",
+          username: "target-user",
+          password: "target-password",
+        },
         columns: 80,
         rows: 24,
         jumpHost: {
           host: "gateway.example",
           port: 22,
-          username: "jump-user",
-          password: "jump-password",
+          authentication: {
+            kind: "temporaryPassword",
+            username: "jump-user",
+            password: "jump-password",
+          },
         },
       },
       {

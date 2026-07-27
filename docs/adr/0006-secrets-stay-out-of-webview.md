@@ -45,7 +45,12 @@ Tauri UI 运行在 WebView 中。前端状态、DevTools、日志、错误序列
 - 2026-07-27：Vault PIN 从 Tauri Request 立即移入 `Zeroizing<String>`，再通过
   私有 DB Actor Command 送入专用线程；Actor State 只长期持有
   `Option<LocalVault>`，不把 VMK、派生 Key 或解密后的记录返回 Tauri/WebView。
+- 2026-07-27：SSH IPC 只接受临时密码或 Credential ID，并拒绝额外
+  `privateKey`/`passphrase` 字段。Private Key 由 DB Actor 解密后经
+  `anyssh-app` 直接 move 到 SSH Core；Credential Summary、Debug 和 IPC JSON
+  均不包含 Secret。
 
 ## 相关文档
 
 - [总体技术设计：分层规则](../design/technical-architecture-2026.md#分层规则)
+- [Credential Repository v1](../design/credential-repository-v1.md)

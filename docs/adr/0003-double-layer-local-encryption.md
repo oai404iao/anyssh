@@ -53,12 +53,17 @@
 - 2026-07-27：`anyssh-storage` 专用 DB Actor 已接管 Vault 生命周期和
   SQLCipher Connection；容量 16 的有界 Queue、oneshot Response、串行命令、
   Shutdown 和 Thread Join 测试通过。
+- 2026-07-27：Schema v2 `credentials` 表已实现 Password、Private Key 和
+  Passphrase 独立 Record AEAD；Schema v1 自动迁移、中断回滚、重启恢复和明文
+  扫描通过。
 - Linux WebKitGTK 同时引入系统 SQLite；bundled SQLCipher 的符号共存需要继续
   验证，当前未因此把本 ADR 提升为 Accepted。
-- Windows、Android 和 iOS 构建证据仍缺失，因此 ADR 保持 Proposed。
+- Windows 与 Android 构建已通过；iOS 及跨平台 SQLite/SQLCipher 符号共存证据
+  仍不完整，因此 ADR 保持 Proposed。
 
 ## 相关文档
 
 - [总体技术设计：本地 Vault](../design/technical-architecture-2026.md#8-本地加密-vault)
 - [Vault Bootstrap v1](../design/vault-bootstrap-v1.md)
+- [Credential Repository v1](../design/credential-repository-v1.md)
 - [ADR-0005](0005-vmk-multiple-key-slots.md)

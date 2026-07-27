@@ -255,8 +255,10 @@ Phase 0 SSH Core 使用 `SessionAuthentication` 统一表达 Password 和 Privat
 进入 `Zeroizing<String>`，同步的 `decode_secret_key` 在 Blocking Pool 解码；
 解析错误不把 Key、Passphrase 或底层错误细节发送给 WebView。
 
-当前 Tauri IPC 只暴露临时密码认证。私钥产品集成不得把原始 Key 序列化到 React；
-应由 Rust Vault 使用 Credential ID 解密并直接交给 `anyssh-ssh`。
+当前 Tauri IPC 支持临时密码或 Credential ID。`anyssh-app` 使用 ID 从 DB Actor
+解析 Password/Private Key，并把 `Zeroizing<String>` 直接 move 到
+`anyssh-ssh::SessionAuthentication`。IPC 使用 `deny_unknown_fields`，不接受
+Private Key 或 Passphrase 字段。原生 Private Key 文件选择与导入 UI 仍待实现。
 
 后续支持：
 
@@ -572,6 +574,11 @@ Queue；每条命令通过 `oneshot` 返回结果。Argon2id、Bootstrap 文件�
 SQLCipher 查询均在 Actor Thread 中串行执行，Tauri Command 不再使用
 `spawn_blocking` 或 `Mutex<Option<LocalVault>>`。最后一个 Handle 释放时先关闭
 Queue，再 Join Actor Thread，确保数据库连接按顺序销毁。
+
+Schema v2 Credential Repository 与 Rust-only SSH 解析流程见
+[Credential Repository v1](credential-repository-v1.md)。Tauri 只调用
+`anyssh-app::ApplicationCore`；它不直接解析 Credential Secret 或构造 SSH
+Authentication。
 
 除以下最小 bootstrap 信息外，不落地任何明文业务数据：
 

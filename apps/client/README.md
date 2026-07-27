@@ -22,9 +22,13 @@ pnpm check:container:android
 Browser mode is explicitly marked as **Browser QA mode** and uses a local SSH terminal simulation. It is intended for UI automation only and never opens a network connection.
 
 Native mode requires creation or unlocking of the Rust-owned encrypted Vault before the
-SSH workspace is mounted. Tauri accesses the Vault through the dedicated storage Actor;
-the SQLCipher connection and unlocked `LocalVault` never enter Tauri managed state.
+SSH workspace is mounted. Tauri calls `anyssh-app::ApplicationCore`; the SQLCipher
+connection and unlocked `LocalVault` remain inside the dedicated storage Actor.
 Browser QA mode bypasses this gate and does not persist a PIN.
+
+SSH authentication requests are a tagged temporary-password or Credential-ID reference.
+Raw Private Key and Passphrase fields are rejected by the IPC schema. Password Credential
+CRUD exposes metadata-only responses; native Private Key import UI is not implemented yet.
 
 The typed SSH bridge accepts an optional single Jump Host and scopes every host-key prompt
 to a request ID, route hop, host, and port. The Phase 0 connection form does not expose

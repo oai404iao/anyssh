@@ -196,8 +196,11 @@ function App() {
         {
           host: form.host.trim(),
           port,
-          username: form.username.trim(),
-          password: form.password,
+          authentication: {
+            kind: "temporaryPassword",
+            username: form.username.trim(),
+            password: form.password,
+          },
           columns: terminalSizeRef.current.columns,
           rows: terminalSizeRef.current.rows,
         },

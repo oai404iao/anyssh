@@ -95,12 +95,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
-name = "anyssh-client"
+name = "anyssh-app"
 version = "0.1.0"
 dependencies = [
  "anyssh-domain",
  "anyssh-ssh",
  "anyssh-storage",
+ "anyssh-vault",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
+name = "anyssh-client"
+version = "0.1.0"
+dependencies = [
+ "anyssh-app",
+ "anyssh-domain",
+ "anyssh-ssh",
  "serde",
  "serde_json",
  "tauri",

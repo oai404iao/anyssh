@@ -33,6 +33,10 @@
 - `anyssh-storage` 专用 DB Actor：Actor Thread 独占 `Option<LocalVault>`，
   使用 16 项有界 Command Queue 和 oneshot Response；Tauri 不再持有
   `LocalVault` 或使用 Vault `spawn_blocking`；Android ARM64 重新构建通过。
+- SQLCipher Schema v2 Credential Repository：Password/Private Key/Passphrase
+  Record AEAD、CRUD、Summary-only IPC、v1 -> v2 Migration 和中断回滚。
+- `anyssh-app` Application Service：Credential ID 经 DB Actor 解密后直接进入
+  SSH Core；Docker OpenSSH 已验证加密 Private Key 在 Lock/Unlock 后成功认证。
 - 原生 Vault 创建、错误 PIN、锁定和重新解锁流程。
 - `direct-tcpip` + `Channel::into_stream` + `connect_stream` 两跳 Jump Host。
 - Jump Host 与 Internal Target 独立 Host Key 确认、目标认证失败、握手超时、
@@ -58,7 +62,7 @@
 当前仓库尚未完成：
 
 - Jump Route 持久化和产品配置 UI。
-- 私钥 Credential 的 Vault/Tauri 产品集成和 SSH Agent 认证。
+- 原生 Private Key 文件导入 UI、Credential 管理 UI 和 SSH Agent 认证。
 - Windows 原生运行验证。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
 - iOS 构建验证；当前没有 macOS/Xcode 环境，按维护者指示暂缓。
