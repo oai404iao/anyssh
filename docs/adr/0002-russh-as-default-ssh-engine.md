@@ -1,6 +1,6 @@
 # ADR-0002：使用 russh 作为默认 SSH Engine
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-07-25
 - 决策人：项目维护者
 
@@ -67,9 +67,12 @@ SSH Engine 需要跨桌面和移动平台，支持现代算法、密码、公钥
   `Jump 1 -> Jump 2 -> Target`；两个 Jump 使用 Password，Target 使用 Vault
   Private Key，三跳 Host Key 顺序和 Jump 2 认证失败归属均通过。
 
-Agent、Forward 完整矩阵和平台证据尚未齐全，因此本 ADR继续保持 Proposed。
+Agent、Keyboard-interactive 和 Forward 完整矩阵仍属于后续产品能力，但密码、
+Private Key、Host Key、取消、超时、背压及最多 32 跳嵌套 Transport 已证明
+russh 可以承担默认 SSH Engine。本 ADR 接受；若后续特定能力需要外部 Signer 或
+辅助实现，应保持在 `anyssh-ssh` 隔离层后方。
 
 ## 相关文档
 
 - [总体技术设计：SSH](../design/technical-architecture-2026.md#5-ssh-技术方案)
-- [Phase 0 ExecPlan](../execplans/active/0001-phase-0-technical-validation.md)
+- [Phase 0 ExecPlan](../execplans/completed/0001-phase-0-technical-validation.md)

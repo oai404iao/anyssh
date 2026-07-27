@@ -1,6 +1,7 @@
 # AnySSH
 
-AnySSH 是一个处于 Phase 0 技术验证阶段的开源跨平台 SSH 客户端项目。
+AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MVP 的开源
+跨平台 SSH 客户端项目。
 
 项目名称已确定为 **AnySSH**。除单独标注许可证的第三方资源外，项目采用
 [GNU Affero General Public License v3.0 only](LICENSE)。
@@ -43,14 +44,20 @@ AnySSH 是一个处于 Phase 0 技术验证阶段的开源跨平台 SSH 客户�
 - 原生 Wayland + IBus/libpinyin + xterm.js 中文组合输入到真实 SSH Shell。
 - Android ARM64 Debug APK 构建，包含 Rust SSH、Vault 与 bundled SQLCipher。
 - GitHub Actions Windows Runner 已成功产出 x86-64 Debug EXE。
+- Windows 2025 Runner 已实际启动 EXE/WebView2，并验证 Vault、Repository、
+  错误 PIN、锁定/解锁与进程重启恢复。
 
-加密 Private Key 的原生 Passphrase Prompt、SSH Agent 和 Windows 运行验证尚未
-完成。
+加密 Private Key 的原生 Passphrase Prompt、SSH Agent 和 Windows Native
+Picker/真实 SSH 交互验证尚未完成。
 iOS 因当前没有 macOS/Xcode 环境暂缓。
 
 当前活动计划：
 
-- [`Phase 0：技术风险验证`](docs/execplans/active/0001-phase-0-technical-validation.md)
+- [`Phase 1：Group 持久化与三态继承`](docs/execplans/active/0002-group-persistence-and-inheritance.md)
+
+Phase 0 结果：
+
+- [`Phase 0：技术风险验证`](docs/execplans/completed/0001-phase-0-technical-validation.md)
 
 ## 文档入口
 

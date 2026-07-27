@@ -1,6 +1,6 @@
 # ADR-0006：秘密不得长期进入 WebView
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-07-25
 - 决策人：项目维护者
 
@@ -10,7 +10,9 @@ Tauri UI 运行在 WebView 中。前端状态、DevTools、日志、错误序列
 
 ## 决策
 
-- 密码、私钥、VMK、KEK 和数据库密钥保留在 Rust/原生层。
+- 保存的密码、私钥、VMK、KEK 和数据库密钥保留在 Rust/原生层。
+- 未保存 Quick Connection 可以提交一次性临时密码；它不得进入前端全局状态、
+  日志或持久化，并在提交、取消、锁定和切页时清空。
 - SSH 认证和签名由 Rust Core 执行。
 - 前端通过 ID 引用 Credential。
 - 用户查看密码时使用一次性、短 TTL 的秘密展示结果。
@@ -56,6 +58,13 @@ Tauri UI 运行在 WebView 中。前端状态、DevTools、日志、错误序列
   `path`、`privateKey` 和 `passphrase`。Native Picker、文件读取和 russh Key
   校验在 Rust 内完成；Browser QA DOM 不包含 File Input 或 Passphrase Input，
   原生 Xvfb 已验证导入后的 UI 只显示 metadata。
+- 2026-07-27：Windows WebView2 Runtime 已验证 Credential/Host/Route CRUD 和
+  重启恢复；截图、DOM Snapshot、Console/Error Log 与 Vault 明文扫描均未返回
+  保存的 Password 或其他 Secret。
+
+Quick Connection 的临时 Password 与 Vault PIN 在用户输入期间仍会短暂存在于
+WebView 内存，这是当前明确的剩余风险；它们不得进入全局 Store、日志或持久化。
+Secret Reveal 尚未实现，实施时必须更新 Threat Model。
 
 ## 相关文档
 

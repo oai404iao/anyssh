@@ -1,6 +1,6 @@
 # ADR-0003：SQLCipher 与记录级 AEAD 双层本地加密
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-07-25
 - 决策人：项目维护者
 
@@ -59,10 +59,15 @@
 - 2026-07-27：Schema v3 已把旧 Host 内嵌 Password 原子迁移为 Password
   Credential；新 Host/Jump Route 只保存 ID 引用。v2 -> v3 中断回滚、重启恢复、
   引用占用和循环检测通过。
-- Linux WebKitGTK 同时引入系统 SQLite；bundled SQLCipher 的符号共存需要继续
-  验证，当前未因此把本 ADR 提升为 Accepted。
-- Windows 与 Android 构建已通过；iOS 及跨平台 SQLite/SQLCipher 符号共存证据
-  仍不完整，因此 ADR 保持 Proposed。
+- Linux WebKitGTK 同时引入系统 SQLite；当前 X11/Wayland 长流程已在同一进程
+  持续执行 Vault 与 SSH，未观察到 bundled SQLCipher 符号冲突。
+- Windows Run `30270414706` 已通过真实 SQLCipher Vault 创建、错误 PIN、
+  Lock/Unlock、Repository 写入、进程重启恢复和数据库 Header/明文扫描；EXE
+  同时包含 SQLCipher 符号。
+- Android ARM64 APK 已包含 bundled SQLCipher Marker；iOS Evidence 仍延期。
+
+Linux 与 Windows Runtime、Android Build、Record AEAD 和 Migration 恢复证据
+已足以接受双层本地加密决策。iOS 与未来平台 Slot 继续作为平台验证债务。
 
 ## 相关文档
 

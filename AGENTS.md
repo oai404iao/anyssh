@@ -17,9 +17,10 @@ React/xterm.js UI
         -> Platform Security APIs
 ```
 
-仓库当前处于 **Phase 0 技术验证实施阶段**。已经存在可构建的 React 前端、
-Rust Workspace、russh SSH/Jump Host 原型、SQLCipher/PIN Vault、Tauri IPC 适配、
-OpenSSH Fixture、Playwright E2E、agent-browser 与原生 Xvfb 真实交互检查。
+仓库已完成 **Phase 0 技术验证**，当前进入 **Phase 1 Group 持久化与三态继承**。
+已经存在可构建的 React 前端、Rust Workspace、russh SSH/Jump Host、SQLCipher/
+PIN Vault、Tauri IPC、Host/Credential/Route Repository、Windows WebView2、
+OpenSSH Fixture、Playwright E2E、agent-browser 与原生 X11/Wayland 检查。
 
 ## 仓库布局
 
@@ -283,12 +284,15 @@ pnpm qa:browser
 
 ## 架构约束
 
-以下约束来自当前设计基线；对应 Proposed ADR 在 Phase 0 后确认状态。
+以下约束来自 Accepted ADR、当前 Proposed ADR 和 Threat Model；具体状态以
+`docs/adr/README.md` 为准。
 
 ### 1. 秘密不得长期进入 WebView
 
 - React 只持有展示模型、页面状态和终端数据。
-- 密码、私钥、VMK、KEK、数据库密钥和长期 Token 留在 Rust/原生层。
+- 保存的密码、私钥、VMK、KEK、数据库密钥和长期 Token 留在 Rust/原生层。
+- Quick Connection 的一次性临时密码可以存在于局部表单并通过当前请求提交，但
+  不得进入全局状态、日志或持久化，提交、取消、锁定和切页时必须清空。
 - 临时显示密码必须经过 step-up authentication，并设置短 TTL。
 - 秘密不得进入前端全局状态、日志、错误对象、崩溃报告或遥测。
 
@@ -418,15 +422,16 @@ Clear
 2. 确认秘密是否跨越 Rust/WebView 边界。
 3. 确认日志、剪贴板、导出和崩溃路径。
 4. 增加失败、恢复和迁移测试。
-5. 更新 threat model；当前正式文件将在 Phase 0 创建。
+5. 更新 [`docs/design/threat-model-v1.md`](docs/design/threat-model-v1.md)。
 
 ## 当前下一步
 
 当前唯一活动计划是：
 
-- [`0001-phase-0-technical-validation.md`](docs/execplans/active/0001-phase-0-technical-validation.md)
+- [`0002-group-persistence-and-inheritance.md`](docs/execplans/active/0002-group-persistence-and-inheritance.md)
 
-除非用户明确改变优先级，应先完成 Phase 0，而不是直接开发完整 UI、WebDAV 或高级脚本系统。
+除非用户明确改变优先级，应先完成 Group Schema v4、三态继承和 Rust-only
+Effective Connection Plan，而不是直接开发 WebDAV 或高级脚本系统。
 
 ## 关键文件
 
@@ -448,6 +453,7 @@ Clear
 | Jump Route Model | `crates/anyssh-storage/src/jump_route.rs` |
 | Connection Plan | `crates/anyssh-storage/src/connection_plan.rs` |
 | Native Key Import Design | `docs/design/native-private-key-import-v1.md` |
+| Threat Model | `docs/design/threat-model-v1.md` |
 | SSH Core | `crates/anyssh-ssh/src/lib.rs` |
 | OpenSSH Fixture | `tests/fixtures/openssh/` |
 | Playwright E2E | `apps/client/e2e/connect-preview.spec.ts` |
@@ -460,7 +466,8 @@ Clear
 | 总体技术设计 | `docs/design/technical-architecture-2026.md` |
 | ADR 索引 | `docs/adr/README.md` |
 | ExecPlan 规范 | `docs/execplans/README.md` |
-| 当前活动计划 | `docs/execplans/active/0001-phase-0-technical-validation.md` |
+| 当前活动计划 | `docs/execplans/active/0002-group-persistence-and-inheritance.md` |
+| Phase 0 结果 | `docs/execplans/completed/0001-phase-0-technical-validation.md` |
 | 2026 技术基线 | `docs/reference/technology-baseline-2026.md` |
 | 术语表 | `docs/reference/glossary.md` |
 

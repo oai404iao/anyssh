@@ -4,4 +4,6 @@
 
 不要删除历史计划；后续 Agent 需要通过它理解为什么代码和 ADR 形成当前状态。
 
-当前暂无已完成计划。
+已完成：
+
+- [0001：Phase 0 技术风险验证](0001-phase-0-technical-validation.md)

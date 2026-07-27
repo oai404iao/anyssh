@@ -1,6 +1,6 @@
 # ADR-0010：Saved Host Connection Plan 只在 Rust 内解析
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-07-27
 - 决策人：项目维护者
 
@@ -74,6 +74,6 @@ Route。
 - Design：[Saved Host Connection Plan v1](../design/saved-host-connection-plan-v1.md)
 - ADR：[ADR-0002](0002-russh-as-default-ssh-engine.md)
 - ADR：[ADR-0009](0009-host-jump-route-reference-model.md)
-- ExecPlan：[Phase 0 技术风险验证](../execplans/active/0001-phase-0-technical-validation.md)
+- ExecPlan：[Phase 0 技术风险验证](../execplans/completed/0001-phase-0-technical-validation.md)
 - Supersedes：
 - Superseded by：

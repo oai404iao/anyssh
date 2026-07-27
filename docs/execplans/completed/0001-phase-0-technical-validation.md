@@ -1,6 +1,6 @@
 # ExecPlan 0001：Phase 0 技术风险验证
 
-- 状态：Active
+- 状态：Completed
 - 创建日期：2026-07-25
 - 最后更新：2026-07-27
 - 负责人：项目维护者与执行 Agent
@@ -135,11 +135,12 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
 - [x] 2026-07-27：增加 Windows WebView2 Runtime Smoke：启动已构建 EXE，
   通过仅限 QA 的 CDP Port 驱动真实 WebView，验证 Vault/Repository/重启恢复并
   导出截图。
-- [ ] 2026-07-27：在 `windows-2025` Runner 获取非零原生窗口句柄、WebView2
+- [x] 2026-07-27：在 `windows-2025` Runner 获取非零原生窗口句柄、WebView2
   渲染截图、SQLCipher 明文扫描和重启解锁证据。
-- [ ] Windows 运行证据仍待补充。
+- [x] Windows WebView2 Vault/Repository 运行证据已完成。
 - [ ] iOS Build 因当前没有 macOS/Xcode 环境暂缓。
-- [ ] 根据证据更新 ADR 状态并完成 Phase 0 报告。
+- [x] 2026-07-27：创建 Threat Model v1。
+- [x] 2026-07-27：根据证据更新 ADR 状态并完成 Phase 0 报告。
 
 ## Milestones
 
@@ -420,14 +421,11 @@ React { label, username }
 - Build Isolation：`infra/build/Dockerfile` 使用独立 `linux`/`android` Target；
   容器从 Git 已跟踪和未忽略的文件生成隔离工作树，不继承宿主 Token，并仅复制
   `artifacts/linux-build` 或 `artifacts/android-build` 回仓库。
-- Windows：GitHub Actions `windows-2025` Runner 已成功产出 33,130,496 Byte
-  的 x86-64 PE32+ Debug EXE；SHA-256 为
-  `83b3d4510a0084a371fa54bce87bb72301dc6b28be97650415335983a4f70c60`。
-  该证据只证明 MSVC/WebView2 Application Shell 可链接。下一步在同一 Runner
-  启动 EXE，使用独立 `tauri.windows-qa.conf.json` 仅为 QA Debug Build 开放
-  Loopback CDP Port；Playwright 只连接现有 WebView2，不启动 Chromium。
-  Smoke 必须验证非零窗口句柄、Vault Create/Lock/Wrong-PIN/Unlock、Repository
-  CRUD、进程重启恢复、截图和 Vault 明文扫描。CDP Port 不进入 Release 配置。
+- Windows：GitHub Actions `windows-2025` Runner 已构建并启动 x86-64 Debug
+  EXE。Run `30270414706` 通过 QA-only Tauri Config Overlay 连接现有 WebView2
+  `Edg/150.0.4078.65`，获得创建/重启窗口句柄 `0x601E0`/`0x6007A`，并验证
+  Vault Create/Lock/Wrong-PIN/Unlock、Credential/Host/Route CRUD、进程重启恢复、
+  SQLCipher 明文扫描和截图。Canonical/Release Tauri Config 不开放 CDP。
 - iOS：维护者当前没有 Mac，Build 验证暂缓；Linux 结果不得冒充 Xcode Build。
 
 ### Milestone 6：Phase 0 关闭
@@ -443,6 +441,9 @@ React { label, username }
 5. 编写 Outcomes & Retrospective。
 6. 将本计划移动到 `completed/`。
 7. 创建 Phase 1 ExecPlan。
+
+状态：已完成。iOS Build 作为明确延期项保留；Phase 1 首个活动计划为 Group
+持久化与三态继承。
 
 ## Validation
 
@@ -686,6 +687,22 @@ ssh-target-internal
   `Credentials 0` Accessible Name 查找 Nav；Compact 模式隐藏 Count 后名称变为
   `Credentials`。Windows Smoke 改为使用稳定的 Primary Nav 结构位置，而不依赖
   响应式可见文本或 Count。
+- 2026-07-27：稳定导航提交 `99b71ec` 的 Run `30270414706` 九个 Job 全部
+  通过。Windows Artifact 位于
+  `/tmp/anyssh-ci-30270414706/windows-native-evidence/smoke-20260727-133040-5872`；
+  WebView2 为 `Edg/150.0.4078.65`、CDP 1.3，创建/重启窗口句柄分别为
+  `0x601E0` 和 `0x6007A`。截图已人工确认 Vault 创建、错误 PIN、重启锁定和
+  Repository 恢复页面不存在截断或秘密明文。
+- 2026-07-27：同一 Run 的 agent-browser Compact Artifact 为
+  `/tmp/anyssh-ci-30270414706/agent-browser-evidence/smoke-1785158954`；
+  X11/Wayland Artifact 分别为 `smoke-1785158968-5998` 和
+  `smoke-1785159036-7270`，Wayland 远端 UTF-8 Marker 仍为
+  `/tmp/anyssh-ime-中文文`。Windows EXE SHA-256 为
+  `194d4923329f03b1c7479ba19b03e520dbb43f59f2cd72af00d05388013c44e6`；
+  Android APK 为
+  `b5ac5656660154d4117fb88f5b2ded76225eada9929f100250f30de89869a29c`；
+  Linux ELF 为
+  `d767a995f3278215645501e41f7e09fed2d001de12e8b07604a08d36dab9fb18`。
 - 2026-07-27：Commit `9f14940` 的 GitHub Actions Run `30243415893` 九个 Job
   全部通过。OpenSSH Log 明确执行
   `encrypted_private_key_flows_from_credential_id_to_ssh_core`，Windows、Android、
@@ -762,12 +779,67 @@ ssh-target-internal
 
 ## Outcomes & Retrospective
 
-尚未完成。
+### 实际完成
 
-计划结束时必须记录：
+- 建立 Tauri 2 + React + xterm.js 跨平台应用壳、Rust Workspace 和 canonical
+  pnpm/Cargo/CI 命令。
+- 使用 russh 完成 Password/Private Key、Host Key、PTY、Resize、取消、超时、
+  4 MiB 背压和最多 32 Jump Host。
+- 完成随机 VMK、PIN Slot、SQLCipher、Record AEAD、Schema v1 -> v2 -> v3、
+  中断回滚和专用 DB Actor。
+- 完成 Credential、Host、Jump Route Repository、Rust-only Saved Host Plan、
+  产品配置 UI和 Rust-owned Native Private Key Import。
+- Linux X11/Wayland、Windows WebView2、Android ARM64 Build、Windows/Linux
+  Build 和 Browser QA 均获得可重复 Evidence。
+- 创建 Threat Model v1，并把长期安全边界写入 ADR/Design/AGENTS。
 
-- 哪些技术选择获得验证。
-- 哪些 ADR 被拒绝或替代。
-- 各平台真实限制。
-- 性能和安全测试结果。
-- Phase 1 的剩余风险。
+### ADR 结论
+
+已接受：
+
+- ADR-0001：Tauri 2 + React 统一应用壳。
+- ADR-0002：russh 默认 SSH Engine。
+- ADR-0003：SQLCipher + Record AEAD。
+- ADR-0006：Secret 不长期进入 WebView。
+- ADR-0008：MVP 不允许任意本地脚本。
+- ADR-0009：Host/Route 只保存 ID 引用。
+- ADR-0010：Saved Host Plan 在 Rust 内解析。
+- ADR-0011：Native Private Key Import 留在 Rust。
+
+继续 Proposed：
+
+- ADR-0004：WebDAV Operation Log，尚未实现。
+- ADR-0005：Platform/Sync/Recovery Slot 尚未实现。
+- ADR-0007：Per-Host Legacy 算法策略尚未实现。
+
+没有 ADR 被 Rejected 或 Superseded。
+
+### 平台限制
+
+- Linux X11 与 Wayland/IBus 已验证；真实 NVIDIA/GPU 和 WebGL 尚未验证。
+- 当前 xterm.js 使用默认 Renderer，因此已有稳定非 WebGL 路径；WebGL 启用与
+  Context Lost 回退属于后续工作。
+- Windows 已验证 EXE/WebView2、Vault 与 Repository；Native Picker 和真实 SSH
+  交互仍需真实 Windows 环境。
+- Android 只完成 ARM64 Debug APK Build；Runtime、软键盘和 Content URI 未验证。
+- iOS 因无 macOS/Xcode 环境延期，不用 Linux 结果替代。
+
+### 性能与安全结果
+
+- SSH Core Queue 64 项，WebView Credit Window 8 Chunk；4 MiB 输出完成后仍可
+  执行命令和断开。
+- DB Actor Queue 16 项，最后 Handle 先关闭 Sender 再 Join，未出现 Shutdown
+  Deadlock。
+- Vault、WAL、Sidecar、Bootstrap 和 QA Artifact 明文扫描未发现测试 Secret。
+- Host Key 变化硬阻断；Jump Host Prompt 按 Request/Hop/Endpoint 绑定。
+- Private Key、Path 和 Passphrase 不进入 WebView IPC；Quick Connection 临时
+  Password/PIN 的短暂 WebView 生命周期记录为剩余风险。
+
+### Phase 1 剩余风险
+
+- Group Schema v4 和三态继承 Migration。
+- Known Host Repository。
+- SSH Agent、Keyboard-interactive 和加密 Key Native Passphrase Prompt。
+- 多 Tab、Proxy、Forward、Theme/Font 和 Snippet。
+- Platform Key Slot、Secret Reveal、Android/iOS Runtime。
+- WebDAV E2EE 继续等待独立 Phase 2 ExecPlan。

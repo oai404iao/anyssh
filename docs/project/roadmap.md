@@ -4,6 +4,8 @@
 
 ## Phase 0：技术风险验证
 
+状态：已完成（iOS Build 因无 macOS/Xcode 环境延期并明确记录）。
+
 目标：
 
 - 初始化 Agent 友好的 Monorepo。
@@ -19,6 +21,8 @@
 - AGENTS.md 与 CI 使用相同命令。
 
 ## Phase 1：桌面 MVP
+
+状态：进行中；首个 ExecPlan 为 Group 持久化与三态继承。
 
 - Host 与 Group 继承。
 - 密码、私钥、系统 Agent。

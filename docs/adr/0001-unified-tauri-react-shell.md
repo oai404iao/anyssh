@@ -1,6 +1,6 @@
 # ADR-0001：使用 Tauri 2 + React 作为统一应用壳
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-07-25
 - 决策人：项目维护者
 
@@ -46,7 +46,21 @@ Phase 0 必须证明：
 - Linux X11/Wayland 有可用渲染路径。
 - xterm.js 大输出和移动输入满足原型要求。
 
+### Phase 0 结论
+
+- Linux X11 与真实 Wayland/WebKitGTK 均完成原生运行、输入和截图验证。
+- Windows 2025 Runner 已启动真实 EXE/WebView2，完成 Vault、Repository、
+  错误 PIN、锁定/解锁和进程重启恢复。
+- Android ARM64 Debug APK 已包含 Rust SSH、Vault 与 bundled SQLCipher。
+- React/xterm.js 已通过桌面、Compact、移动视口、IBus CJK 和 4 MiB 输出验证。
+- 当前终端使用 xterm.js 默认 Renderer；WebGL 与 Context Lost 回退留给后续
+  显式里程碑。
+- iOS Build/Runtime 因无 macOS/Xcode 环境延期。若后续 Xcode Evidence 否定该
+  架构，需要新增 ADR Supersede 本决策，而不是改写本 ADR。
+
+现有桌面运行和 Android Build 已足以接受统一应用壳决策。
+
 ## 相关文档
 
 - [总体技术设计](../design/technical-architecture-2026.md)
-- [Phase 0 ExecPlan](../execplans/active/0001-phase-0-technical-validation.md)
+- [Phase 0 ExecPlan](../execplans/completed/0001-phase-0-technical-validation.md)

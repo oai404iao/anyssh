@@ -1,6 +1,6 @@
 # ADR-0008：MVP 不允许任意本地脚本执行
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-07-25
 - 决策人：项目维护者
 
@@ -49,6 +49,12 @@ MVP 仅支持：
 - Runbook 无法访问未授权本地文件或原生命令。
 - Secret 变量由 Rust 注入，前端和持久化日志不出现明文。
 - 批量执行具备并发上限和危险步骤确认。
+
+### 当前结论
+
+Phase 0 未引入 JavaScript Runtime、系统 Shell 或第三方插件加载入口。该 ADR
+属于 MVP 权限边界而非某个库的技术验证，现接受此范围决策。Snippet/Runbook
+实现仍需在后续 ExecPlan 中证明 Secret 注入、并发上限和危险步骤确认。
 
 ## 相关文档
 

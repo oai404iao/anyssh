@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**Phase 0 implementation in progress**
+**Phase 0 completed; Phase 1 Group implementation starting**
 
 当前仓库已完成：
 
@@ -76,12 +76,17 @@
 - Host/Credential/Jump Route 配置 UI 与原生 Private Key Import Commit
   `780059d` 的 Run `30258051366` 全部九个 Job 通过；远端 Artifact 已人工检查
   X11 Native Picker、4 MiB 输出、Wayland/IBus 中文输入以及桌面/移动配置页面。
+- Windows WebView2 Runtime Commit `99b71ec` 的 Run `30270414706` 全部九个
+  Job 通过；真实 EXE 获得非零窗口句柄并完成 Vault、Repository、错误 PIN、
+  Lock/Unlock 和进程重启恢复，截图及 Browser Error Log 已人工检查。
+- Phase 0 Threat Model、Outcomes 和 ADR 状态评审已完成。
+- Phase 1 首个计划已确定为 Group Schema v4 与 `Inherit / Set / Clear` 三态继承。
 - CI 工作流。
 
 当前仓库尚未完成：
 
 - 加密 Private Key 的原生 Passphrase Prompt 和 SSH Agent 认证。
-- Windows 原生运行验证。
+- Windows Native Picker 与真实 SSH Runtime 交互。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
 - iOS 构建验证；当前没有 macOS/Xcode 环境，按维护者指示暂缓。
 - Group 持久化与继承。
@@ -103,4 +108,8 @@
 
 ## 当前活动计划
 
-- [`Phase 0：技术风险验证`](../execplans/active/0001-phase-0-technical-validation.md)
+- [`Phase 1：Group 持久化与三态继承`](../execplans/active/0002-group-persistence-and-inheritance.md)
+
+## 已完成计划
+
+- [`Phase 0：技术风险验证`](../execplans/completed/0001-phase-0-technical-validation.md)

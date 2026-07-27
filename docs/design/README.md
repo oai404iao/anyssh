@@ -14,6 +14,10 @@ Design 文档描述系统如何实现，包括组件、数据流、接口、安�
   ID、Rust-only Route 解析和任意长度 Jump Runtime。
 - [native-private-key-import-v1.md](native-private-key-import-v1.md)：Rust-owned
   Native Picker、Private Key 文件约束和 IPC 边界。
+- [threat-model-v1.md](threat-model-v1.md)：Phase 0 资产、信任边界、威胁控制和
+  剩余风险。
+- [group-inheritance-v1.md](group-inheritance-v1.md)：Group Schema、三态
+  Override、Migration 和 Rust-only Effective Resolution。
 
 ## 规则
 

@@ -1,6 +1,6 @@
 # ADR-0009：Host 与 Jump Route 只保存 ID 引用
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-07-27
 - 决策人：项目维护者
 
@@ -76,6 +76,6 @@ Passphrase，会造成更新不一致并扩大秘密暴露面。旧 Schema v1/v2
 ## 相关文档
 
 - Design：[Host 与 Jump Route Repository v1](../design/host-jump-route-repository-v1.md)
-- ExecPlan：[Phase 0 技术风险验证](../execplans/active/0001-phase-0-technical-validation.md)
+- ExecPlan：[Phase 0 技术风险验证](../execplans/completed/0001-phase-0-technical-validation.md)
 - Supersedes：
 - Superseded by：

@@ -1,6 +1,6 @@
 # ADR-0011：原生私钥导入完全留在 Rust 边界
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-07-27
 - 决策人：项目维护者
 
@@ -73,10 +73,14 @@ Command，Private Key 与文件系统能力都会越过既定安全边界。Key 
 - 2026-07-27：Commit `780059d` 的 GitHub Actions Run `30258051366` 九个 Job
   全部通过；远端 X11 Artifact 实际打开 GTK Native File Picker，导入后截图只
   显示 Metadata，Vault 明文扫描和临时源文件删除检查同时通过。
+- 2026-07-27：Windows WebView2 Runtime 与 Android Build 继续通过该 Command
+  的编译和应用启动；Windows Native Picker 交互、Reparse Point 和移动 Content
+  URI 保留为平台专项测试，不改变“Path/Key/Passphrase 不进入 WebView”的已接受
+  边界。
 
 ## 相关文档
 
 - [Credential Repository v1](../design/credential-repository-v1.md)
 - [原生私钥导入 v1](../design/native-private-key-import-v1.md)
 - [ADR-0006](0006-secrets-stay-out-of-webview.md)
-- [Phase 0 ExecPlan](../execplans/active/0001-phase-0-technical-validation.md)
+- [Phase 0 ExecPlan](../execplans/completed/0001-phase-0-technical-validation.md)
