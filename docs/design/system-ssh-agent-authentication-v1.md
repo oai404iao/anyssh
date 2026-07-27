@@ -1,6 +1,6 @@
 # System SSH Agent Authentication v1
 
-> 状态：已实现，Windows CI 验证中
+> 状态：已实现并通过同 Commit CI
 > 日期：2026-07-27
 > 外部基线核验日期：2026-07-27
 
@@ -153,8 +153,19 @@ Agent Frame。
 - Android Container APK SHA-256：
   `28950dde0621e49976a9ddee949c2fb253b574e8c1d73eee10ca00356914802f`。
 
-Windows Named Pipe、standalone OpenSSH Server 和真实 EXE/WebView2 Smoke 等待
-同一 Feature Commit 的 Windows Runner。
+同 Commit 远端证据：
+
+- Head `123e684c9328b87f6001a10de48e2c3bed8134e6` 的 Run `30287139254`
+  全部九个 Job 通过。
+- Windows `smoke-20260727-170152-4388` 使用 OpenSSH Agent Named Pipe 和
+  standalone `sshd.exe` 完成真实 EXE/WebView2 SSH；WebView2 为
+  `Edg/150.0.4078.65`，CDP 1.3，Browser Error Log 为空。
+- 同 Run 的 X11 `smoke-1785171904-6176`、Wayland
+  `smoke-1785171978-7509` 和 agent-browser `smoke-1785171550` 已人工检查。
+- Android APK、Linux ELF 和 Windows EXE SHA-256 分别为
+  `07acb10103410efef349659cfbefd75e8608f2dd957ee3095e99aef6f9ccf45a`、
+  `943a30b9ecf9df4209f542c49026e5cf3fb6fa4780e00c7e013ea5348c3c08bb`、
+  `adb2382bee82ec0c898f249b3766c10ee10269275b6cd311f5af2b6a04e86410`。
 
 ## 外部参考
 

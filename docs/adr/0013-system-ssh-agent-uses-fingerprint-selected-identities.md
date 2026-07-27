@@ -1,6 +1,6 @@
 # ADR-0013：系统 SSH Agent 使用 Fingerprint 选择的外部签名身份
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-07-27
 - 决策人：项目维护者
 
@@ -76,7 +76,19 @@ Server `MaxAuthTries`、泄露不必要的 Public Key 列表，并使认证结�
   Target 和 Agent Jump -> Private Key Target；错误 Fingerprint 不回退。
 - 2026-07-27：Playwright、agent-browser Desktop/Mobile、X11 真实
   `SSH_AUTH_SOCK` UI、Wayland、Android Host 和 Linux/Android Container 本地
-  回归通过。Windows Named Pipe/EXE/OpenSSH Evidence 等待同一 Feature Commit。
+  回归通过。
+- 2026-07-27：Head `123e684c9328b87f6001a10de48e2c3bed8134e6` 的 Run
+  `30287139254` 全部九个 Job 通过。Windows 真实 EXE/WebView2 通过 OpenSSH
+  Agent Named Pipe 连接 standalone `sshd.exe`，创建远端 Marker，并完成
+  Vault 错误 PIN、Lock/Unlock、重启恢复和明文扫描；Windows/Browser Error Log
+  为空。
+- 2026-07-27：X11、Wayland、Windows、Android ARM64 和 Linux Container
+  Artifact 已人工检查，未发现 Private Key Header、签名 Payload、布局截断或
+  Browser Runtime Error。
+
+Linux 与 Windows Runtime、Direct/Jump OpenSSH、Schema v5、日志边界和移动端
+Unsupported Build 证据已满足本决策的验收条件，因此接受 ADR-0013。
+iOS 编译仍按项目既有决定等待 macOS/Xcode，不阻塞 Desktop System Agent v1。
 
 ## 相关文档
 
@@ -84,4 +96,4 @@ Server `MaxAuthTries`、泄露不必要的 Public Key 列表，并使认证结�
 - [ADR-0002](0002-russh-as-default-ssh-engine.md)
 - [ADR-0006](0006-secrets-stay-out-of-webview.md)
 - [ADR-0010](0010-saved-host-plans-resolve-in-rust.md)
-- [Phase 1 System Agent ExecPlan](../execplans/active/0003-system-ssh-agent-authentication.md)
+- [Phase 1 System Agent ExecPlan](../execplans/completed/0003-system-ssh-agent-authentication.md)

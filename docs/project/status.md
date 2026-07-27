@@ -98,13 +98,16 @@
 - X11 原生 Tauri UI 已从真实 `SSH_AUTH_SOCK` 枚举 Identity 并创建 Credential；
   agent-browser Desktop/Mobile、Wayland、Android Host、Linux/Android Container
   本地回归通过。
+- Head `123e684c9328b87f6001a10de48e2c3bed8134e6` 的 GitHub Actions Run
+  `30287139254` 全部九个 Job 通过；Windows 真实 EXE/WebView2 使用 OpenSSH
+  Agent Named Pipe 连接 standalone `sshd.exe` 并创建远端 Marker。X11、
+  Wayland、Windows、Browser、Android 和 Linux Artifact 已人工检查。
+- ADR-0013 已接受，System Agent ExecPlan 已完成。
 - CI 工作流。
 
 当前仓库尚未完成：
 
 - 加密 Private Key 的原生 Passphrase Prompt。
-- 系统 SSH Agent 的 Windows Named Pipe/真实 EXE/OpenSSH Evidence 与同 Commit
-  全平台 CI 正在执行 Active ExecPlan。
 - Windows Native Picker。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
 - iOS 构建验证；当前没有 macOS/Xcode 环境，按维护者指示暂缓。
@@ -126,9 +129,10 @@
 
 ## 当前活动计划
 
-- [`Phase 1：系统 SSH Agent 认证`](../execplans/active/0003-system-ssh-agent-authentication.md)
+- [`Phase 1：Native Encrypted Private Key Passphrase`](../execplans/active/0004-native-encrypted-private-key-passphrase.md)
 
 ## 已完成计划
 
 - [`Phase 0：技术风险验证`](../execplans/completed/0001-phase-0-technical-validation.md)
 - [`Phase 1：Group 持久化与三态继承`](../execplans/completed/0002-group-persistence-and-inheritance.md)
+- [`Phase 1：系统 SSH Agent 认证`](../execplans/completed/0003-system-ssh-agent-authentication.md)

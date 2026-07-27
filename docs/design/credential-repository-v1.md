@@ -6,7 +6,9 @@
 本文定义在 SQLCipher Schema v2 引入、并由当前 Schema v5 继续使用的
 Vault-backed Credential Repository，以及 SSH Credential ID 解析边界。当前产品
 已实现 metadata-only Credential 管理 UI 和 Rust-owned Native File Picker；本文
-仍不定义 Secret Reveal/Export 或加密 Key Passphrase Prompt。
+仍不定义 Secret Reveal/Export。加密 Key Passphrase Prompt 由
+[Native Encrypted Private Key Passphrase v1](native-encrypted-private-key-passphrase-v1.md)
+定义，当前正在实施。
 
 ## 安全目标
 

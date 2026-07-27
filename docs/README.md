@@ -25,6 +25,7 @@
 - [Threat Model v1](design/threat-model-v1.md)
 - [Group Inheritance v1](design/group-inheritance-v1.md)
 - [System SSH Agent Authentication v1](design/system-ssh-agent-authentication-v1.md)
+- [Native Encrypted Private Key Passphrase v1](design/native-encrypted-private-key-passphrase-v1.md)
 
 Design 文档回答“系统如何工作、模块边界是什么”。
 

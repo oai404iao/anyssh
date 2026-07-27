@@ -51,20 +51,21 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
 - GitHub Actions Windows Runner 已成功产出 x86-64 Debug EXE。
 - Windows 2025 Runner 已实际启动 EXE/WebView2，并验证 Vault、Repository、
   错误 PIN、锁定/解锁与进程重启恢复。
+- Windows 2025 Runner 已通过 OpenSSH Agent Named Pipe 和 standalone
+  `sshd.exe` 完成真实 System Agent SSH，且源 Private Key 在 AnySSH 启动前删除。
 
 加密 Private Key 的原生 Passphrase Prompt 和 Windows Native Picker 尚未完成。
-System Agent 的 Windows Named Pipe/真实 SSH Evidence 等待同 Feature Commit
-CI。
 iOS 因当前没有 macOS/Xcode 环境暂缓。
 
 当前活动计划：
 
-- [`Phase 1：系统 SSH Agent 认证`](docs/execplans/active/0003-system-ssh-agent-authentication.md)
+- [`Phase 1：Native Encrypted Private Key Passphrase`](docs/execplans/active/0004-native-encrypted-private-key-passphrase.md)
 
 已完成计划：
 
 - [`Phase 0：技术风险验证`](docs/execplans/completed/0001-phase-0-technical-validation.md)
 - [`Phase 1：Group 持久化与三态继承`](docs/execplans/completed/0002-group-persistence-and-inheritance.md)
+- [`Phase 1：系统 SSH Agent 认证`](docs/execplans/completed/0003-system-ssh-agent-authentication.md)
 
 ## 文档入口
 

@@ -41,6 +41,10 @@ Windows uses the OpenSSH Agent Named Pipe. Agent Socket/Pipe paths, Private Keys
 blobs, and signature payloads do not enter IPC. Android/iOS return an explicit unsupported
 error for this desktop-only v1 capability.
 
+The Windows CI smoke launches the real EXE/WebView2, enumerates the OpenSSH Agent Named
+Pipe, connects to a standalone local OpenSSH Server, and verifies the remote marker plus
+Vault restart recovery.
+
 Group, Host, and Jump Route CRUD is also metadata-only. Groups form a bounded parent tree.
 Groups and Hosts persist explicit `Inherit`, `Set`, or `Clear` Credential/Route reference
 state; ordered Jump Routes persist Host IDs only. They never copy a username, password,

@@ -4,7 +4,8 @@
 > 日期：2026-07-27
 
 本文定义 Desktop MVP 的受约束 SSH Private Key 文件导入。它不定义 Secret
-Reveal/Export、Key 生成、加密私钥 Passphrase Prompt 或移动端 Content URI。
+Reveal/Export、Key 生成或移动端 Content URI。加密私钥 Passphrase 的后续边界
+见 [Native Encrypted Private Key Passphrase v1](native-encrypted-private-key-passphrase-v1.md)。
 
 ## 数据流
 

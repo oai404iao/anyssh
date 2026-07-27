@@ -20,6 +20,8 @@ Design 文档描述系统如何实现，包括组件、数据流、接口、安�
   Override、Migration 和 Rust-only Effective Resolution。
 - [system-ssh-agent-authentication-v1.md](system-ssh-agent-authentication-v1.md)：
   Linux/Windows 系统 Agent Identity 选择、外部签名和 Secret 边界。
+- [native-encrypted-private-key-passphrase-v1.md](native-encrypted-private-key-passphrase-v1.md)：
+  加密 OpenSSH Key 检测、Desktop Native Secure Prompt 和 Secret 生命周期。
 
 ## 规则
 

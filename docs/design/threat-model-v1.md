@@ -51,6 +51,11 @@ Native Picker
     -> bounded validation
       -> Credential Repository
 
+Native Secure Passphrase Prompt
+  -> Zeroizing<String>
+    -> encrypted Key validation
+      -> independent Key/Passphrase Record AEAD
+
 System SSH Agent Socket / Named Pipe
   -> Rust-only identity enumeration
     -> exact SHA-256 fingerprint selection
@@ -103,6 +108,7 @@ System SSH Agent Socket / Named Pipe
 | T-15 | 恶意 WebDAV 删除、回滚或分叉数据 | 计划使用加密不可变 Operation、Snapshot、ETag CAS | Sync 尚未实现；ADR-0004 保持 Proposed |
 | T-16 | 任意本地脚本获得文件/网络/Secret | MVP 禁止任意 Shell、`eval` 和第三方插件 | Runbook Engine 尚未实现，需要 Phase 1/后续测试 |
 | T-17 | WebView、日志或恶意配置滥用系统 Agent | IPC 不接受 Socket/Pipe/Key/签名；最多 64 Identity；Credential 精确 Fingerprint；不自动回退；Agent Forwarding 关闭；依赖 `log` 静态上限为 Info | Agent 本身和已解锁用户 Session 仍是外部信任边界；Flatpak/确认策略待验证 |
+| T-18 | 加密 Key Passphrase 经 WebView、外部进程或 Prompt Buffer 泄露 | Proposed ADR-0014：进程内/系统原生 Secure Prompt、无 Passphrase IPC、`Zeroizing<String>`、三次上限、失败不落库 | Linux/Windows Adapter 和 Native QA 尚在 ExecPlan 0004 实施 |
 
 ## 6. 平台结论
 
@@ -110,9 +116,9 @@ System SSH Agent Socket / Named Pipe
   Identity UI、SSH 和 4 MiB 输出已验证。
 - Linux Wayland：无 `DISPLAY`、Weston、IBus/libpinyin、xterm 和 SSH 已验证。
 - Windows：真实 EXE/WebView2、非零窗口句柄、Vault/Repository 和重启恢复已
-  验证；Group/Inherited Host/Route 的 Schema v4 重启恢复也已验证。System
-  Agent Named Pipe/standalone OpenSSH QA 已实现，等待同 Commit Windows
-  Evidence；Native Picker 仍未覆盖。
+  验证；Group/Inherited Host/Route 的 Schema v4 重启恢复也已验证。Run
+  `30287139254` 已通过 System Agent Named Pipe、standalone OpenSSH、远端
+  Marker 和 Agent Selector 明文扫描；Native Picker 仍未覆盖。
 - Android：ARM64 Debug APK、Rust Core 和 bundled SQLCipher 构建已验证；Runtime
   与 Content URI 尚未验证。
 - iOS：因无 macOS/Xcode 环境而明确延期。

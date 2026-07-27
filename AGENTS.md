@@ -17,8 +17,9 @@ React/xterm.js UI
         -> Platform Security APIs
 ```
 
-仓库已完成 **Phase 0 技术验证** 与 **Phase 1 Group 持久化/三态继承**，当前
-实施 **Phase 1 系统 SSH Agent 认证**。
+仓库已完成 **Phase 0 技术验证**、**Phase 1 Group 持久化/三态继承** 和
+**System SSH Agent 认证**，当前实施 **Native Encrypted Private Key
+Passphrase**。
 已经存在可构建的 React 前端、Rust Workspace、russh SSH/Jump Host、SQLCipher/
 PIN Vault、Tauri IPC、Host/Credential/Route Repository、Windows WebView2、
 OpenSSH Fixture、Playwright E2E、agent-browser 与原生 X11/Wayland 检查。
@@ -110,6 +111,9 @@ Proposed ADR 是待验证方案，不是不可变事实。若 Phase 0 验证结�
 - Native Private Key Import Request 只允许 Label/Username。Tauri Command
   必须在 Rust 内打开 Native Picker，再由 `ApplicationCore` 有界读取和验证；
   WebView 不得提交 Path、Private Key 或 Passphrase。当前仅允许未加密 Key。
+- 加密 Key Passphrase 必须通过进程内/系统原生 Secure Prompt 获取，不得使用
+  React Input、普通 IPC、Shell、`zenity` 或 PowerShell 子进程。Prompt Result
+  必须立即进入 `Zeroizing<String>`，取消或失败不得创建 Credential。
 - System SSH Agent Identity 枚举和签名只在 Rust 内执行。WebView 不得提交
   Agent Socket/Pipe Path、Public Key Blob 或签名 Payload；Credential 必须用
   SHA-256 Fingerprint 选择唯一 Identity，不得自动尝试 Agent 中全部 Key。
@@ -439,11 +443,11 @@ Clear
 
 当前唯一活动计划是：
 
-- [`0003-system-ssh-agent-authentication.md`](docs/execplans/active/0003-system-ssh-agent-authentication.md)
+- [`0004-native-encrypted-private-key-passphrase.md`](docs/execplans/active/0004-native-encrypted-private-key-passphrase.md)
 
-除非用户明确改变优先级，应先完成 Linux/Windows 系统 SSH Agent 的
-Fingerprint-selected Credential、真实 OpenSSH/Windows Smoke、ADR-0013 状态
-评审和 ExecPlan 收尾，而不是直接开发 WebDAV 或高级脚本系统。
+除非用户明确改变优先级，应先完成 Linux/Windows 加密 OpenSSH Private Key 的
+Native Secure Passphrase Prompt、真实 Picker/SSH/明文扫描、ADR-0014 状态评审
+和 ExecPlan 收尾，而不是直接开发 WebDAV 或高级脚本系统。
 
 ## 关键文件
 
@@ -467,6 +471,7 @@ Fingerprint-selected Credential、真实 OpenSSH/Windows Smoke、ADR-0013 状态
 | Jump Route Model | `crates/anyssh-storage/src/jump_route.rs` |
 | Connection Plan | `crates/anyssh-storage/src/connection_plan.rs` |
 | Native Key Import Design | `docs/design/native-private-key-import-v1.md` |
+| Encrypted Key Prompt Design | `docs/design/native-encrypted-private-key-passphrase-v1.md` |
 | Threat Model | `docs/design/threat-model-v1.md` |
 | SSH Core | `crates/anyssh-ssh/src/lib.rs` |
 | OpenSSH Fixture | `tests/fixtures/openssh/` |
@@ -480,9 +485,10 @@ Fingerprint-selected Credential、真实 OpenSSH/Windows Smoke、ADR-0013 状态
 | 总体技术设计 | `docs/design/technical-architecture-2026.md` |
 | ADR 索引 | `docs/adr/README.md` |
 | ExecPlan 规范 | `docs/execplans/README.md` |
-| 当前活动计划 | `docs/execplans/active/0003-system-ssh-agent-authentication.md` |
+| 当前活动计划 | `docs/execplans/active/0004-native-encrypted-private-key-passphrase.md` |
 | Phase 0 结果 | `docs/execplans/completed/0001-phase-0-technical-validation.md` |
 | Group 结果 | `docs/execplans/completed/0002-group-persistence-and-inheritance.md` |
+| System Agent 结果 | `docs/execplans/completed/0003-system-ssh-agent-authentication.md` |
 | 2026 技术基线 | `docs/reference/technology-baseline-2026.md` |
 | 术语表 | `docs/reference/glossary.md` |
 

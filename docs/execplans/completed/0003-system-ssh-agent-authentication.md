@@ -1,6 +1,6 @@
 # ExecPlan 0003：系统 SSH Agent 认证
 
-- 状态：Active
+- 状态：Completed
 - 创建日期：2026-07-27
 - 最后更新：2026-07-27
 - 负责人：项目维护者与执行 Agent
@@ -68,8 +68,8 @@ ADR-0006 要求 Private Key 和 Passphrase 不进入 WebView。Proposed ADR-0013
 - [x] 2026-07-27：实现 Schema v5、Credential Repository、
   Actor/Application/Tauri Commands。
 - [x] 2026-07-27：实现 Credential UI 与 Browser QA。
-- [ ] 完成 OpenSSH、Windows、Android/Linux Build 与全量回归。
-- [ ] 评审 ADR-0013 并收尾本计划。
+- [x] 2026-07-27：完成 OpenSSH、Windows、Android/Linux Build 与全量回归。
+- [x] 2026-07-27：接受 ADR-0013 并收尾本计划。
 
 ## Milestones
 
@@ -152,6 +152,13 @@ pnpm format:check
 - 2026-07-27：russh Agent Client 在 Debug Level 会记录 Identity Frame 和待签名
   Payload。Workspace 对 `log` 启用静态 `max_level_info`，编译期关闭这些依赖级
   Debug 记录，并用单元测试固定上限。
+- 2026-07-27：Run `30285281457` 首次 Windows QA 在 `ssh-add` 已成功时失败，
+  原因是 Windows OpenSSH 把 `Identity added` 写入 stderr，Windows PowerShell
+  在 `ErrorActionPreference=Stop` 下把它提升为 `NativeCommandError`。修复后只
+  依据 Native Exit Code 判断。
+- 2026-07-27：Run `30286195725` 已完成真实 Agent SSH，但旧 Recovery 断言仍
+  假设解锁后显示 `Local lab`。Agent 流程会保留当前 Target Host，因此改为先
+  验证 Vault Ready，再导航到 Repository 检查持久化数据。
 
 ## Decision Log
 
@@ -189,8 +196,46 @@ pnpm format:check
 - Android Container：
   `artifacts/android-build/build-1785169283-1`，APK SHA-256 为
   `28950dde0621e49976a9ddee949c2fb253b574e8c1d73eee10ca00356914802f`。
-- Windows PowerShell/Node QA 流程已更新；本机无 Windows，等待远端 Runner。
+- 本地验证阶段已更新 Windows PowerShell/Node QA；本机无 Windows，最终由下述
+  同 Commit Remote Runner Evidence 完成验收。
+
+## 同 Commit CI 证据
+
+- Feature/Fix Head：`123e684c9328b87f6001a10de48e2c3bed8134e6`。
+- GitHub Actions Run `30287139254` 于 2026-07-27 通过全部九个 Job：
+  frontend、rust-core、browser-e2e、agent-browser、openssh-smoke、
+  native-linux-check、linux-container-build、android-build 和 windows-build。
+- agent-browser：`smoke-1785171550`；Desktop/Mobile Credential、Group、Route
+  截图无截断或遮挡，Browser Error 为空。
+- X11：`smoke-1785171904-6176`；真实 `SSH_AUTH_SOCK` Identity、Native Picker、
+  Vault、SSH 和 4 MiB 背压全部通过。
+- Wayland：`smoke-1785171978-7509`；`DISPLAY` 缺失、`GDK_BACKEND=wayland`，
+  IME Marker 为 `/tmp/anyssh-ime-中文文`。
+- Windows：`smoke-20260727-170152-4388`；WebView2
+  `Edg/150.0.4078.65`、CDP 1.3、非零 HWND、Named Pipe Agent、standalone
+  OpenSSH、远端 Marker、错误 PIN、Lock/Unlock 和重启恢复通过；Browser Error
+  Log 为空。
+- Android APK SHA-256：
+  `07acb10103410efef349659cfbefd75e8608f2dd957ee3095e99aef6f9ccf45a`。
+- Linux ELF SHA-256：
+  `943a30b9ecf9df4209f542c49026e5cf3fb6fa4780e00c7e013ea5348c3c08bb`。
+- Windows EXE SHA-256：
+  `adb2382bee82ec0c898f249b3766c10ee10269275b6cd311f5af2b6a04e86410`。
 
 ## Outcomes & Retrospective
 
-尚未完成。
+System SSH Agent v1 已完成。Linux 和 Windows Desktop 都通过 russh Agent
+Protocol 使用确定的 SHA-256 Fingerprint Identity；Private Key、Agent Endpoint
+和签名 Payload 不进入 Vault/WebView。SQLCipher Schema v5、Rust-only Saved Host
+Resolution、Direct/Jump OpenSSH、Native UI、Android Unsupported Build 与同
+Commit CI 均已验证。
+
+主要经验：
+
+- 外部签名边界不能只检查 AnySSH 自身日志；依赖库的 Debug Frame 也必须在编译期
+  关闭。
+- Windows Native Command 的成功 stderr 不能用 PowerShell Error Stream 语义
+  判断，必须读取 Native Exit Code。
+- Recovery QA 应验证安全状态和持久化语义，而不是依赖连接后当前页面标题。
+
+ADR-0013 已接受。本计划于 2026-07-27 移入 `completed/`。
