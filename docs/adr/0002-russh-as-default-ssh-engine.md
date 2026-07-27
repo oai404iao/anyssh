@@ -63,6 +63,9 @@ SSH Engine 需要跨桌面和移动平台，支持现代算法、密码、公钥
 - Jump Host 与 Target 使用独立 Host Key 请求 ID、Endpoint 和确认步骤。
 - 已覆盖密码 Jump Host + 私钥 Target、握手取消、Target 认证失败、
   Target 握手超时和第一跳丢失。
+- 2026-07-27：Saved Host ID 已通过 Rust-only Connection Plan 展开为
+  `Jump 1 -> Jump 2 -> Target`；两个 Jump 使用 Password，Target 使用 Vault
+  Private Key，三跳 Host Key 顺序和 Jump 2 认证失败归属均通过。
 
 Agent、Forward 完整矩阵和平台证据尚未齐全，因此本 ADR继续保持 Proposed。
 

@@ -23,6 +23,7 @@ ADR 记录需要长期保留的架构决策。实现细节放在 `docs/design/`�
 | [0007](0007-modern-ssh-algorithm-policy.md) | Proposed | 默认现代 SSH 算法，Legacy 按 Host 开启 |
 | [0008](0008-no-arbitrary-local-scripting-in-mvp.md) | Proposed | MVP 不允许任意本地脚本执行 |
 | [0009](0009-host-jump-route-reference-model.md) | Proposed | Host 与 Jump Route 只保存 ID 引用 |
+| [0010](0010-saved-host-plans-resolve-in-rust.md) | Proposed | Saved Host Connection Plan 只在 Rust 内解析 |
 
 Phase 0 完成后，应根据实验证据更新这些 ADR 的状态。
 

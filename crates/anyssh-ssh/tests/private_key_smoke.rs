@@ -84,7 +84,7 @@ async fn private_key_authentication_suite_against_openssh() {
             },
             host_key_policy: HostKeyPolicy::Prompt,
         },
-        jump_host: Some(SshConnectionConfig {
+        jump_hosts: vec![SshConnectionConfig {
             endpoint: SshEndpoint::new(&fixture.jump_host, fixture.jump_port)
                 .expect("valid jump endpoint"),
             username: FIXTURE_USERNAME.to_owned(),
@@ -92,7 +92,7 @@ async fn private_key_authentication_suite_against_openssh() {
                 password: Zeroizing::new(FIXTURE_PASSWORD.to_owned()),
             },
             host_key_policy: HostKeyPolicy::Prompt,
-        }),
+        }],
         terminal_size: TerminalSize::new(100, 30).expect("valid terminal size"),
         connection_timeout: Duration::from_secs(10),
     });

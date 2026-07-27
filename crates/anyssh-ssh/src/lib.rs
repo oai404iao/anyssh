@@ -34,6 +34,7 @@ pub const SESSION_COMMAND_BUFFER_CAPACITY: usize = 64;
 const HOST_KEY_DECISION_BUFFER: usize = 4;
 const HOST_KEY_DECISION_TIMEOUT: Duration = Duration::from_secs(60);
 pub const DEFAULT_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
+pub const MAX_JUMP_HOSTS: usize = 32;
 const CHANNEL_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_PRIVATE_KEY_BYTES: usize = 1024 * 1024;
 const MAX_PRIVATE_KEY_PASSPHRASE_BYTES: usize = 64 * 1024;
@@ -168,7 +169,7 @@ impl fmt::Debug for SshConnectionConfig {
 
 pub struct SshSessionConfig {
     pub target: SshConnectionConfig,
-    pub jump_host: Option<SshConnectionConfig>,
+    pub jump_hosts: Vec<SshConnectionConfig>,
     pub terminal_size: TerminalSize,
     pub connection_timeout: Duration,
 }
@@ -178,7 +179,7 @@ impl fmt::Debug for SshSessionConfig {
         formatter
             .debug_struct("SshSessionConfig")
             .field("target", &self.target)
-            .field("jump_host", &self.jump_host)
+            .field("jump_hosts", &self.jump_hosts)
             .field("terminal_size", &self.terminal_size)
             .field("connection_timeout", &self.connection_timeout)
             .finish()
@@ -362,7 +363,7 @@ pub fn spawn_password_session(config: PasswordSessionConfig) -> SpawnedSession {
             authentication: SessionAuthentication::Password { password },
             host_key_policy: HostKeyPolicy::Prompt,
         },
-        jump_host: None,
+        jump_hosts: Vec::new(),
         terminal_size,
         connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
     })
@@ -386,7 +387,7 @@ pub fn spawn_private_key_session(config: PrivateKeySessionConfig) -> SpawnedSess
             },
             host_key_policy: HostKeyPolicy::Prompt,
         },
-        jump_host: None,
+        jump_hosts: Vec::new(),
         terminal_size,
         connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
     })
@@ -419,14 +420,14 @@ pub fn spawn_jump_password_session(config: JumpPasswordSessionConfig) -> Spawned
             },
             host_key_policy: HostKeyPolicy::Prompt,
         },
-        jump_host: Some(SshConnectionConfig {
+        jump_hosts: vec![SshConnectionConfig {
             endpoint: jump_endpoint,
             username: jump_username,
             authentication: SessionAuthentication::Password {
                 password: jump_password,
             },
             host_key_policy: HostKeyPolicy::Prompt,
-        }),
+        }],
         terminal_size,
         connection_timeout,
     })
@@ -513,7 +514,7 @@ async fn connect_and_run(
 ) -> Result<(), SessionError> {
     let SshSessionConfig {
         target,
-        jump_host,
+        jump_hosts,
         terminal_size,
         connection_timeout,
     } = config;
@@ -522,8 +523,15 @@ async fn connect_and_run(
         return Err(SessionError::InvalidConnectionTimeout);
     }
 
+    if jump_hosts.len() > MAX_JUMP_HOSTS {
+        return Err(SessionError::TooManyJumpHosts {
+            count: jump_hosts.len(),
+            maximum: MAX_JUMP_HOSTS,
+        });
+    }
+
     let client_config = make_client_config();
-    let Some(jump_host) = jump_host else {
+    if jump_hosts.is_empty() {
         let target_session = connect_tcp_endpoint(
             &target.endpoint,
             SessionHop::Target,
@@ -548,48 +556,103 @@ async fn connect_and_run(
             connection_timeout,
         )
         .await;
-    };
+    }
 
-    let SshConnectionConfig {
-        endpoint: jump_endpoint,
-        username: jump_username,
-        authentication: jump_authentication,
-        host_key_policy: jump_host_key_policy,
-    } = jump_host;
-    let jump_hop = SessionHop::JumpHost { index: 1 };
-    let mut jump_session = connect_tcp_endpoint(
-        &jump_endpoint,
-        jump_hop.clone(),
-        jump_host_key_policy,
-        client_config.clone(),
-        events,
-        host_key_decisions.clone(),
-        pending_host_key_request.clone(),
-        next_host_key_request.clone(),
-        cancellation,
-        connection_timeout,
-    )
-    .await?;
-
+    let mut jump_sessions: Vec<Handle<ClientHandler>> = Vec::with_capacity(jump_hosts.len());
     let result = async {
-        authenticate(
-            &mut jump_session,
-            &jump_hop,
-            &jump_username,
-            jump_authentication,
-            cancellation,
-            connection_timeout,
-        )
-        .await?;
+        for (offset, jump_host) in jump_hosts.into_iter().enumerate() {
+            let index = offset + 1;
+            let jump_hop = SessionHop::JumpHost { index };
+            let SshConnectionConfig {
+                endpoint,
+                username,
+                authentication,
+                host_key_policy,
+            } = jump_host;
 
-        debug!(
-            host = %jump_endpoint.host,
-            port = jump_endpoint.port,
-            "jump host authenticated"
-        );
+            let mut jump_session = if offset == 0 {
+                connect_tcp_endpoint(
+                    &endpoint,
+                    jump_hop.clone(),
+                    host_key_policy,
+                    client_config.clone(),
+                    events,
+                    host_key_decisions.clone(),
+                    pending_host_key_request.clone(),
+                    next_host_key_request.clone(),
+                    cancellation,
+                    connection_timeout,
+                )
+                .await?
+            } else {
+                let parent_hop = SessionHop::JumpHost { index: offset };
+                let parent_session = jump_sessions
+                    .last_mut()
+                    .ok_or(SessionError::InvalidJumpRoute)?;
+                let channel = await_ssh_operation(
+                    parent_session.channel_open_direct_tcpip(
+                        endpoint.host.clone(),
+                        u32::from(endpoint.port),
+                        "127.0.0.1",
+                        0,
+                    ),
+                    cancellation,
+                    connection_timeout,
+                    parent_hop,
+                    "direct-tcpip channel",
+                )
+                .await?;
 
+                connect_stream_endpoint(
+                    channel.into_stream(),
+                    &endpoint,
+                    jump_hop.clone(),
+                    host_key_policy,
+                    client_config.clone(),
+                    events,
+                    host_key_decisions.clone(),
+                    pending_host_key_request.clone(),
+                    next_host_key_request.clone(),
+                    cancellation,
+                    connection_timeout,
+                )
+                .await?
+            };
+
+            if let Err(error) = authenticate(
+                &mut jump_session,
+                &jump_hop,
+                &username,
+                authentication,
+                cancellation,
+                connection_timeout,
+            )
+            .await
+            {
+                let _ = jump_session
+                    .disconnect(Disconnect::ByApplication, "", "en")
+                    .await;
+                return Err(error);
+            }
+
+            debug!(
+                %jump_hop,
+                host = %endpoint.host,
+                port = endpoint.port,
+                "jump host authenticated"
+            );
+            jump_sessions.push(jump_session);
+        }
+
+        let final_jump_index = jump_sessions.len();
+        let final_jump_hop = SessionHop::JumpHost {
+            index: final_jump_index,
+        };
+        let final_jump_session = jump_sessions
+            .last_mut()
+            .ok_or(SessionError::InvalidJumpRoute)?;
         let target_channel = await_ssh_operation(
-            jump_session.channel_open_direct_tcpip(
+            final_jump_session.channel_open_direct_tcpip(
                 target.endpoint.host.clone(),
                 u32::from(target.endpoint.port),
                 "127.0.0.1",
@@ -597,7 +660,7 @@ async fn connect_and_run(
             ),
             cancellation,
             connection_timeout,
-            jump_hop.clone(),
+            final_jump_hop,
             "direct-tcpip channel",
         )
         .await?;
@@ -630,9 +693,11 @@ async fn connect_and_run(
     }
     .await;
 
-    let _ = jump_session
-        .disconnect(Disconnect::ByApplication, "", "en")
-        .await;
+    for jump_session in jump_sessions.into_iter().rev() {
+        let _ = jump_session
+            .disconnect(Disconnect::ByApplication, "", "en")
+            .await;
+    }
 
     result
 }
@@ -1267,6 +1332,10 @@ enum SessionError {
     PrivateKeyTaskFailed { hop: SessionHop },
     #[error("SSH connection timeout must be greater than zero")]
     InvalidConnectionTimeout,
+    #[error("SSH Jump Route contains {count} hosts; maximum is {maximum}")]
+    TooManyJumpHosts { count: usize, maximum: usize },
+    #[error("SSH Jump Route is invalid")]
+    InvalidJumpRoute,
     #[error("SSH event receiver closed")]
     EventReceiverClosed,
     #[error("SSH session was cancelled")]
@@ -1337,5 +1406,42 @@ mod tests {
         assert_eq!(decision.request_id, 17);
         assert!(decision.accepted);
         assert_eq!(pending.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test]
+    async fn oversized_jump_route_is_rejected_before_network_access() {
+        let jump_hosts = (0..=MAX_JUMP_HOSTS)
+            .map(|index| SshConnectionConfig {
+                endpoint: SshEndpoint::new(format!("jump-{index}.invalid"), 22)
+                    .expect("jump endpoint"),
+                username: "alice".to_owned(),
+                authentication: SessionAuthentication::Password {
+                    password: Zeroizing::new(format!("secret-{index}")),
+                },
+                host_key_policy: HostKeyPolicy::Prompt,
+            })
+            .collect();
+        let spawned = spawn_session(SshSessionConfig {
+            target: SshConnectionConfig {
+                endpoint: SshEndpoint::new("target.invalid", 22).expect("target endpoint"),
+                username: "alice".to_owned(),
+                authentication: SessionAuthentication::Password {
+                    password: Zeroizing::new("target-secret".to_owned()),
+                },
+                host_key_policy: HostKeyPolicy::Prompt,
+            },
+            jump_hosts,
+            terminal_size: TerminalSize::default(),
+            connection_timeout: Duration::from_secs(1),
+        });
+        let mut events = spawned.events;
+        assert_eq!(events.recv().await, Some(SessionEvent::Connecting));
+        let Some(SessionEvent::Error(error)) = events.recv().await else {
+            panic!("oversized Jump Route must emit an error");
+        };
+        assert!(error.contains("maximum is 32"));
+        assert!(!error.contains("target-secret"));
+        assert!(!error.contains("secret-0"));
+        assert_eq!(events.recv().await, Some(SessionEvent::Closed));
     }
 }

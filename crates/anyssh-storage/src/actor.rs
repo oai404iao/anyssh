@@ -12,7 +12,7 @@ use zeroize::Zeroizing;
 
 use crate::{
     CredentialSecret, CredentialSummary, HostSummary, JumpRouteSummary, LocalVault,
-    ResolvedCredential, StorageError, VaultPresence,
+    ResolvedCredential, ResolvedHostConnectionPlan, StorageError, VaultPresence,
     credential::{CredentialRecord, generate_credential_id},
     host::generate_host_id,
     jump_route::generate_jump_route_id,
@@ -289,6 +289,14 @@ impl DatabaseActorHandle {
             .await
     }
 
+    pub async fn resolve_host_connection_plan(
+        &self,
+        id: String,
+    ) -> Result<ResolvedHostConnectionPlan, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::ResolveHostConnectionPlan { id, response })
+            .await
+    }
+
     pub async fn shutdown(&self) -> Result<(), DatabaseActorError> {
         self.request(|response| DatabaseCommand::Shutdown { response })
             .await
@@ -351,6 +359,8 @@ type HostSummaryResponse = oneshot::Sender<Result<HostSummary, DatabaseActorErro
 type HostListResponse = oneshot::Sender<Result<Vec<HostSummary>, DatabaseActorError>>;
 type JumpRouteSummaryResponse = oneshot::Sender<Result<JumpRouteSummary, DatabaseActorError>>;
 type JumpRouteListResponse = oneshot::Sender<Result<Vec<JumpRouteSummary>, DatabaseActorError>>;
+type ResolvedHostConnectionPlanResponse =
+    oneshot::Sender<Result<ResolvedHostConnectionPlan, DatabaseActorError>>;
 type DeleteResponse = oneshot::Sender<Result<bool, DatabaseActorError>>;
 type EmptyResponse = oneshot::Sender<Result<(), DatabaseActorError>>;
 
@@ -434,6 +444,10 @@ enum DatabaseCommand {
     DeleteJumpRoute {
         id: String,
         response: DeleteResponse,
+    },
+    ResolveHostConnectionPlan {
+        id: String,
+        response: ResolvedHostConnectionPlanResponse,
     },
     Shutdown {
         response: EmptyResponse,
@@ -647,6 +661,17 @@ impl DatabaseActorState {
             .delete_jump_route(id)
             .map_err(DatabaseActorError::from)
     }
+
+    fn resolve_host_connection_plan(
+        &self,
+        id: &str,
+    ) -> Result<ResolvedHostConnectionPlan, DatabaseActorError> {
+        self.unlocked
+            .as_ref()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .resolve_host_connection_plan(id)
+            .map_err(DatabaseActorError::from)
+    }
 }
 
 fn unlocked_status(vault: &LocalVault) -> VaultStatus {
@@ -768,6 +793,9 @@ fn run_database_actor(
             }
             DatabaseCommand::DeleteJumpRoute { id, response } => {
                 let _ = response.send(state.delete_jump_route(&id));
+            }
+            DatabaseCommand::ResolveHostConnectionPlan { id, response } => {
+                let _ = response.send(state.resolve_host_connection_plan(&id));
             }
             DatabaseCommand::Shutdown { response } => {
                 state.unlocked = None;
@@ -1028,6 +1056,22 @@ mod tests {
         assert!(!debug.contains("shared-secret"));
         assert!(!debug.contains("shared-user"));
 
+        let plan = actor
+            .resolve_host_connection_plan(target.id().to_owned())
+            .await
+            .expect("resolve saved Host plan");
+        assert_eq!(plan.target().host_id(), target.id());
+        assert_eq!(
+            plan.jump_hosts()
+                .iter()
+                .map(|host| host.host_id())
+                .collect::<Vec<_>>(),
+            [jump.id()]
+        );
+        let plan_debug = format!("{plan:?}");
+        assert!(!plan_debug.contains("shared-secret"));
+        assert!(!plan_debug.contains("shared-user"));
+
         assert!(matches!(
             actor.delete_credential(credential.id().to_owned()).await,
             Err(DatabaseActorError::Storage(StorageError::CredentialInUse))
@@ -1044,6 +1088,12 @@ mod tests {
         actor.lock().await.expect("lock vault");
         assert!(matches!(
             actor.list_hosts().await,
+            Err(DatabaseActorError::VaultLocked)
+        ));
+        assert!(matches!(
+            actor
+                .resolve_host_connection_plan(target.id().to_owned())
+                .await,
             Err(DatabaseActorError::VaultLocked)
         ));
     }

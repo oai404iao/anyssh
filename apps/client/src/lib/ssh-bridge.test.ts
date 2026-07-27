@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   confirmHostKey,
+  connectSavedHost,
   connectSsh,
   disconnectSsh,
   sendSshInput,
@@ -8,6 +9,22 @@ import {
 } from "./ssh-bridge";
 
 describe("browser preview SSH bridge", () => {
+  it("keeps Saved Host connection resolution native-only", async () => {
+    await expect(
+      connectSavedHost(
+        {
+          hostId: "host-target",
+          columns: 80,
+          rows: 24,
+        },
+        {
+          onEvent: () => {},
+          onData: () => {},
+        },
+      ),
+    ).rejects.toThrow("native runtime");
+  });
+
   it("requires host-key confirmation before connecting", async () => {
     vi.useFakeTimers();
     const events: SshClientEvent[] = [];

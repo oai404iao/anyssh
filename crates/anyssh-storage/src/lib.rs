@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod actor;
+mod connection_plan;
 mod credential;
 mod entity_id;
 mod host;
@@ -10,6 +11,7 @@ pub use actor::{
     DEFAULT_DATABASE_COMMAND_QUEUE_CAPACITY, DatabaseActorConfig, DatabaseActorError,
     DatabaseActorHandle, DatabaseActorStartError, VaultState, VaultStatus,
 };
+pub use connection_plan::{ResolvedHostConnection, ResolvedHostConnectionPlan};
 pub use credential::{CredentialKind, CredentialSecret, CredentialSummary, ResolvedCredential};
 pub use host::HostSummary;
 pub use jump_route::{JumpRouteSummary, MAX_JUMP_ROUTE_STEPS};
@@ -66,6 +68,8 @@ pub enum StorageError {
     InvalidHost,
     #[error("host was not found")]
     HostNotFound,
+    #[error("host `{0}` does not reference a Credential")]
+    HostCredentialMissing(String),
     #[error("host is referenced by a Jump Route")]
     HostInUse,
     #[error("Jump Route record is invalid")]
@@ -76,6 +80,10 @@ pub enum StorageError {
     JumpRouteInUse,
     #[error("Jump Route references form a cycle")]
     JumpRouteCycle,
+    #[error("Jump Route expands the same Host more than once")]
+    JumpRouteDuplicateHost,
+    #[error("Jump Route exceeds the maximum of {0} hosts")]
+    JumpRouteTooLong(usize),
     #[error("credential record is invalid")]
     InvalidCredential,
     #[error("credential was not found")]
@@ -238,6 +246,13 @@ impl LocalVault {
 
     fn delete_jump_route(&mut self, id: &str) -> Result<bool, StorageError> {
         self.database.delete_jump_route(id)
+    }
+
+    fn resolve_host_connection_plan(
+        &self,
+        id: &str,
+    ) -> Result<ResolvedHostConnectionPlan, StorageError> {
+        self.database.resolve_host_connection_plan(id)
     }
 
     fn create_credential(
@@ -563,6 +578,130 @@ impl VaultDatabase {
         let changed = transaction.execute("DELETE FROM jump_routes WHERE id = ?1", [id])?;
         transaction.commit()?;
         Ok(changed == 1)
+    }
+
+    fn resolve_host_connection_plan(
+        &self,
+        id: &str,
+    ) -> Result<ResolvedHostConnectionPlan, StorageError> {
+        let target = self.load_host(id)?;
+        let mut active_hosts = HashSet::new();
+        let mut emitted_hosts = HashSet::new();
+        let mut jump_hosts = Vec::new();
+        self.expand_jump_hosts(
+            &target,
+            &mut active_hosts,
+            &mut emitted_hosts,
+            &mut jump_hosts,
+        )?;
+
+        let jump_hosts = jump_hosts
+            .into_iter()
+            .map(|host| self.resolve_host_connection(host))
+            .collect::<Result<Vec<_>, _>>()?;
+        let target = self.resolve_host_connection(target)?;
+        Ok(ResolvedHostConnectionPlan::new(target, jump_hosts))
+    }
+
+    fn expand_jump_hosts(
+        &self,
+        host: &HostSummary,
+        active_hosts: &mut HashSet<String>,
+        emitted_hosts: &mut HashSet<String>,
+        output: &mut Vec<HostSummary>,
+    ) -> Result<(), StorageError> {
+        if !active_hosts.insert(host.id().to_owned()) {
+            return Err(StorageError::JumpRouteCycle);
+        }
+
+        if let Some(route_id) = host.jump_route_id() {
+            let route = self.load_jump_route(route_id)?;
+            for step_id in route.host_ids() {
+                let step = self.load_host(step_id)?;
+                self.expand_jump_hosts(&step, active_hosts, emitted_hosts, output)?;
+                if !emitted_hosts.insert(step.id().to_owned()) {
+                    return Err(StorageError::JumpRouteDuplicateHost);
+                }
+                if output.len() >= MAX_JUMP_ROUTE_STEPS {
+                    return Err(StorageError::JumpRouteTooLong(MAX_JUMP_ROUTE_STEPS));
+                }
+                output.push(step);
+            }
+        }
+
+        active_hosts.remove(host.id());
+        Ok(())
+    }
+
+    fn resolve_host_connection(
+        &self,
+        host: HostSummary,
+    ) -> Result<ResolvedHostConnection, StorageError> {
+        let credential_id = host
+            .credential_id()
+            .ok_or_else(|| StorageError::HostCredentialMissing(host.id().to_owned()))?;
+        let credential = self.resolve_credential(credential_id)?;
+        Ok(ResolvedHostConnection::new(
+            host.id().to_owned(),
+            host.host().to_owned(),
+            host.port(),
+            credential,
+        ))
+    }
+
+    fn load_host(&self, id: &str) -> Result<HostSummary, StorageError> {
+        validate_host_id(id)?;
+        let stored = self
+            .connection
+            .query_row(
+                "
+                SELECT id, display_name, host, port, credential_id, jump_route_id
+                FROM hosts
+                WHERE id = ?1
+                ",
+                [id],
+                |row| {
+                    Ok(StoredHostSummary {
+                        id: row.get(0)?,
+                        display_name: row.get(1)?,
+                        host: row.get(2)?,
+                        port: row.get(3)?,
+                        credential_id: row.get(4)?,
+                        jump_route_id: row.get(5)?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or(StorageError::HostNotFound)?;
+        HostSummary::new(
+            stored.id,
+            stored.display_name,
+            stored.host,
+            u16::try_from(stored.port).map_err(|_| StorageError::RecordIntegrity)?,
+            stored.credential_id,
+            stored.jump_route_id,
+        )
+    }
+
+    fn load_jump_route(&self, id: &str) -> Result<JumpRouteSummary, StorageError> {
+        validate_jump_route_id(id)?;
+        let label = self
+            .connection
+            .query_row("SELECT label FROM jump_routes WHERE id = ?1", [id], |row| {
+                row.get::<_, String>(0)
+            })
+            .optional()?
+            .ok_or(StorageError::JumpRouteNotFound)?;
+        let mut statement = self.connection.prepare(
+            "
+            SELECT host_id
+            FROM jump_route_steps
+            WHERE route_id = ?1
+            ORDER BY position
+            ",
+        )?;
+        let rows = statement.query_map([id], |row| row.get::<_, String>(0))?;
+        JumpRouteSummary::new(id, label, rows.collect::<Result<Vec<_>, _>>()?)
     }
 
     fn create_credential(
@@ -1820,6 +1959,218 @@ mod tests {
         assert!(matches!(
             vault.delete_jump_route("route-for-b"),
             Err(StorageError::JumpRouteInUse)
+        ));
+    }
+
+    #[test]
+    fn saved_host_plan_expands_nested_routes_and_resolves_credentials() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let mut vault =
+            LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+        for (id, username, password) in [
+            ("cred-jump-one", "jump-one-user", "jump-one-secret"),
+            ("cred-jump-two", "jump-two-user", "jump-two-secret"),
+            ("cred-target", "target-user", "target-secret"),
+        ] {
+            vault
+                .create_credential(
+                    &CredentialRecord::new(
+                        id,
+                        id,
+                        username,
+                        CredentialSecret::Password {
+                            password: Zeroizing::new(password.to_owned()),
+                        },
+                    )
+                    .expect("credential"),
+                )
+                .expect("create credential");
+        }
+
+        let jump_one = fixture_host(
+            "host-jump-one",
+            "Jump one",
+            "jump-one.internal",
+            Some("cred-jump-one"),
+            None,
+        );
+        vault.create_host(&jump_one).expect("create Jump 1");
+        let route_to_jump_two =
+            fixture_route("route-to-jump-two", "Route to Jump 2", &["host-jump-one"]);
+        vault
+            .create_jump_route(&route_to_jump_two)
+            .expect("create route to Jump 2");
+        let jump_two = fixture_host(
+            "host-jump-two",
+            "Jump two",
+            "jump-two.internal",
+            Some("cred-jump-two"),
+            Some("route-to-jump-two"),
+        );
+        vault.create_host(&jump_two).expect("create Jump 2");
+        let route_to_target =
+            fixture_route("route-to-target", "Route to Target", &["host-jump-two"]);
+        vault
+            .create_jump_route(&route_to_target)
+            .expect("create route to Target");
+        let target = fixture_host(
+            "host-target",
+            "Target",
+            "target.internal",
+            Some("cred-target"),
+            Some("route-to-target"),
+        );
+        vault.create_host(&target).expect("create Target");
+
+        let plan = vault
+            .resolve_host_connection_plan("host-target")
+            .expect("resolve saved Host plan");
+        assert_eq!(plan.target().host_id(), "host-target");
+        assert_eq!(
+            plan.jump_hosts()
+                .iter()
+                .map(ResolvedHostConnection::host_id)
+                .collect::<Vec<_>>(),
+            ["host-jump-one", "host-jump-two"]
+        );
+        let debug = format!("{plan:?}");
+        for secret in ["jump-one-secret", "jump-two-secret", "target-secret"] {
+            assert!(!debug.contains(secret));
+        }
+
+        let (target, jump_hosts) = plan.into_parts();
+        let usernames = jump_hosts
+            .into_iter()
+            .chain(std::iter::once(target))
+            .map(|connection| {
+                let (_, _, _, credential) = connection.into_parts();
+                credential.into_parts().0
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(usernames, ["jump-one-user", "jump-two-user", "target-user"]);
+    }
+
+    #[test]
+    fn saved_host_plan_rejects_missing_duplicate_and_oversized_routes() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let mut vault =
+            LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+        vault
+            .create_credential(&password_credential("cred-shared", "shared-secret"))
+            .expect("create shared credential");
+
+        let missing_credential = fixture_host(
+            "host-no-credential",
+            "No credential",
+            "none.internal",
+            None,
+            None,
+        );
+        vault
+            .create_host(&missing_credential)
+            .expect("create Host without Credential");
+        assert!(matches!(
+            vault.resolve_host_connection_plan("host-no-credential"),
+            Err(StorageError::HostCredentialMissing(id)) if id == "host-no-credential"
+        ));
+
+        let jump_one = fixture_host(
+            "host-duplicate-one",
+            "Duplicate one",
+            "duplicate-one.internal",
+            Some("cred-shared"),
+            None,
+        );
+        vault
+            .create_host(&jump_one)
+            .expect("create duplicate Host 1");
+        let nested_route = fixture_route(
+            "route-nested-duplicate",
+            "Nested duplicate",
+            &["host-duplicate-one"],
+        );
+        vault
+            .create_jump_route(&nested_route)
+            .expect("create nested duplicate route");
+        let jump_two = fixture_host(
+            "host-duplicate-two",
+            "Duplicate two",
+            "duplicate-two.internal",
+            Some("cred-shared"),
+            Some("route-nested-duplicate"),
+        );
+        vault
+            .create_host(&jump_two)
+            .expect("create duplicate Host 2");
+        let duplicate_route = fixture_route(
+            "route-duplicate-expanded",
+            "Expanded duplicate",
+            &["host-duplicate-one", "host-duplicate-two"],
+        );
+        vault
+            .create_jump_route(&duplicate_route)
+            .expect("create expanded duplicate route");
+        let duplicate_target = fixture_host(
+            "host-duplicate-target",
+            "Duplicate target",
+            "duplicate-target.internal",
+            Some("cred-shared"),
+            Some("route-duplicate-expanded"),
+        );
+        vault
+            .create_host(&duplicate_target)
+            .expect("create duplicate Target");
+        assert!(matches!(
+            vault.resolve_host_connection_plan("host-duplicate-target"),
+            Err(StorageError::JumpRouteDuplicateHost)
+        ));
+
+        let mut wide_host_ids = Vec::new();
+        for index in 0..MAX_JUMP_ROUTE_STEPS {
+            let id = format!("host-wide-{index}");
+            let host = fixture_host(
+                &id,
+                &format!("Wide {index}"),
+                &format!("wide-{index}.internal"),
+                Some("cred-shared"),
+                None,
+            );
+            vault.create_host(&host).expect("create wide Route Host");
+            wide_host_ids.push(id);
+        }
+        let wide_route =
+            JumpRouteSummary::new("route-wide", "Wide route", wide_host_ids).expect("wide route");
+        vault
+            .create_jump_route(&wide_route)
+            .expect("create maximum-size route");
+        let gateway = fixture_host(
+            "host-wide-gateway",
+            "Wide gateway",
+            "wide-gateway.internal",
+            Some("cred-shared"),
+            Some("route-wide"),
+        );
+        vault.create_host(&gateway).expect("create wide gateway");
+        let oversized_route =
+            fixture_route("route-oversized", "Oversized route", &["host-wide-gateway"]);
+        vault
+            .create_jump_route(&oversized_route)
+            .expect("create oversized parent route");
+        let oversized_target = fixture_host(
+            "host-oversized-target",
+            "Oversized target",
+            "oversized-target.internal",
+            Some("cred-shared"),
+            Some("route-oversized"),
+        );
+        vault
+            .create_host(&oversized_target)
+            .expect("create oversized Target");
+        assert!(matches!(
+            vault.resolve_host_connection_plan("host-oversized-target"),
+            Err(StorageError::JumpRouteTooLong(MAX_JUMP_ROUTE_STEPS))
         ));
     }
 

@@ -37,7 +37,7 @@ any_ssh/
 |   |-- e2e/                          # Playwright 浏览器 E2E
 |   `-- src-tauri/                    # Tauri 壳、命令与 Session Registry
 |-- crates/
-|   |-- anyssh-app/                   # Application Service、Credential ID -> SSH
+|   |-- anyssh-app/                   # Application Service、Saved Host Plan -> SSH
 |   |-- anyssh-domain/                # Endpoint、TerminalSize 等领域值对象
 |   |-- anyssh-ssh/                   # russh Session、Host Key、PTY、背压
 |   |-- anyssh-vault/                 # VMK、PIN Key Slot、HKDF、Bootstrap
@@ -102,10 +102,13 @@ Proposed ADR 是待验证方案，不是不可变事实。若 Phase 0 验证结�
 - Tauri 业务调用只进入 `ApplicationCore`；`ApplicationCore` 通过
   `DatabaseActorHandle` 访问 Vault/SQLCipher。不得在 Tauri Command 或其他
   Runtime State 中直接持有 `LocalVault`/`rusqlite::Connection`。
-- SSH Private Key/Passphrase 不得出现在 Tauri IPC。Connect IPC 只传 Credential
-  ID，`anyssh-app` 在 Rust 内解析并直接构造 SSH Authentication。
+- SSH Private Key/Passphrase 不得出现在 Tauri IPC。保存的认证只传 Credential
+  ID；显式临时密码仅用于当前未保存连接。`anyssh-app` 在 Rust 内解析并直接构造
+  SSH Authentication。
 - Host 只保存可选 Credential/Jump Route ID；Jump Route Step 只保存 Host ID。
   不得在 Host 或 Route 中复制 Username、Password、Private Key 或 Passphrase。
+- Saved Host Connect IPC 只传 Target Host ID 和 Terminal Size。Route 展开与
+  Credential 解析必须在 DB Actor/Rust 内完成，不得由 WebView 拼装连接计划。
 - VMK、KEK、数据库 Key 和解密后的 Credential 不得序列化到前端。
 - Vault Bootstrap 只能包含版本、随机 ID、KDF 参数和加密 Key Slot。
 - 新增依赖时检查其 AGPLv3 兼容性，并更新 lockfile。
@@ -189,13 +192,16 @@ Evidence 复制回仓库。
 
 `pnpm test:ssh:smoke`：
 
-- 构建隔离 Alpine/OpenSSH Jump Host、Internal Target 和黑洞握手 Fixture。
+- 构建隔离 Alpine/OpenSSH 双 Jump Host、Internal/Deep Target 和黑洞握手
+  Fixture。
 - 真实完成 TCP、SSH Handshake、Host Key 确认、密码认证、PTY 和命令输出。
 - 验证未加密/口令保护私钥、错误口令、未授权 Key 和密码 Jump + 私钥 Target。
 - 验证 Vault Lock/Unlock 后 Credential ID -> 加密 Private Key -> SSH Core。
 - 验证已保存 Host Key 匹配免提示、Host Key 变化硬阻断和 4 MiB 输出背压。
 - 验证 `direct-tcpip` 两跳、逐跳 Host Key、取消、超时、Target 认证失败和
   第一跳断开。
+- 验证 Saved Host ID -> Password Jump 1 -> Password Jump 2 -> Private Key
+  Target，并确认 Jump 2 认证失败按 Hop 归属。
 - Fixture 凭据只能用于测试，不得替换为真实主机或真实密钥。
 
 ### Vault 检查
@@ -423,6 +429,7 @@ Clear
 | Credential Model | `crates/anyssh-storage/src/credential.rs` |
 | Host Model | `crates/anyssh-storage/src/host.rs` |
 | Jump Route Model | `crates/anyssh-storage/src/jump_route.rs` |
+| Connection Plan | `crates/anyssh-storage/src/connection_plan.rs` |
 | SSH Core | `crates/anyssh-ssh/src/lib.rs` |
 | OpenSSH Fixture | `tests/fixtures/openssh/` |
 | Playwright E2E | `apps/client/e2e/connect-preview.spec.ts` |

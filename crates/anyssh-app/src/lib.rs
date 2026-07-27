@@ -9,9 +9,12 @@ use anyssh_ssh::{
 };
 use anyssh_storage::{
     CredentialSecret, DatabaseActorError, DatabaseActorHandle, ResolvedCredential,
+    ResolvedHostConnection,
 };
 use thiserror::Error;
 use zeroize::Zeroizing;
+
+const _: () = assert!(anyssh_storage::MAX_JUMP_ROUTE_STEPS == anyssh_ssh::MAX_JUMP_HOSTS);
 
 pub use anyssh_storage::{
     CredentialKind, CredentialSummary, DatabaseActorConfig, DatabaseActorStartError, HostSummary,
@@ -255,10 +258,45 @@ impl ApplicationCore {
 
         Ok(spawn_session(SshSessionConfig {
             target,
-            jump_host,
+            jump_hosts: jump_host.into_iter().collect(),
             terminal_size: request.terminal_size,
             connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
         }))
+    }
+
+    pub async fn spawn_saved_host_session(
+        &self,
+        host_id: String,
+        terminal_size: TerminalSize,
+    ) -> Result<SpawnedSession, ApplicationError> {
+        self.resolve_saved_session_config(host_id, terminal_size)
+            .await
+            .map(spawn_session)
+    }
+
+    async fn resolve_saved_session_config(
+        &self,
+        host_id: String,
+        terminal_size: TerminalSize,
+    ) -> Result<SshSessionConfig, ApplicationError> {
+        let plan = self
+            .database
+            .resolve_host_connection_plan(host_id)
+            .await
+            .map_err(ApplicationError::from)?;
+        let (target, jump_hosts) = plan.into_parts();
+        let target = resolved_host_connection(target)?;
+        let jump_hosts = jump_hosts
+            .into_iter()
+            .map(resolved_host_connection)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(SshSessionConfig {
+            target,
+            jump_hosts,
+            terminal_size,
+            connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
+        })
     }
 
     async fn resolve_connection(
@@ -350,6 +388,8 @@ impl fmt::Debug for AuthenticationSource {
 pub enum ApplicationError {
     #[error("SSH username must not be empty")]
     EmptyUsername,
+    #[error("saved Host endpoint is invalid")]
+    InvalidStoredHost,
     #[error(transparent)]
     Database(#[from] DatabaseActorError),
 }
@@ -367,6 +407,20 @@ fn resolved_authentication(resolved: ResolvedCredential) -> (String, SessionAuth
         },
     };
     (username, authentication)
+}
+
+fn resolved_host_connection(
+    connection: ResolvedHostConnection,
+) -> Result<SshConnectionConfig, ApplicationError> {
+    let (_, host, port, credential) = connection.into_parts();
+    let endpoint = SshEndpoint::new(host, port).map_err(|_| ApplicationError::InvalidStoredHost)?;
+    let (username, authentication) = resolved_authentication(credential);
+    Ok(SshConnectionConfig {
+        endpoint,
+        username,
+        authentication,
+        host_key_policy: HostKeyPolicy::Prompt,
+    })
 }
 
 fn normalize_username(username: String) -> Result<String, ApplicationError> {
@@ -482,36 +536,53 @@ mod tests {
             )
             .await
             .expect("create credential");
-        let jump = core
+        let jump_one = core
             .create_host(
-                "Jump".to_owned(),
-                "jump.internal".to_owned(),
+                "Jump one".to_owned(),
+                "jump-one.internal".to_owned(),
                 22,
                 Some(credential.id().to_owned()),
                 None,
             )
             .await
-            .expect("create jump Host");
-        let route = core
-            .create_jump_route("Production".to_owned(), vec![jump.id().to_owned()])
+            .expect("create first jump Host");
+        let route_to_jump_two = core
+            .create_jump_route(
+                "Route to Jump two".to_owned(),
+                vec![jump_one.id().to_owned()],
+            )
             .await
-            .expect("create Jump Route");
+            .expect("create route to second Jump");
+        let jump_two = core
+            .create_host(
+                "Jump two".to_owned(),
+                "jump-two.internal".to_owned(),
+                22,
+                Some(credential.id().to_owned()),
+                Some(route_to_jump_two.id().to_owned()),
+            )
+            .await
+            .expect("create second jump Host");
+        let route_to_target = core
+            .create_jump_route("Route to Target".to_owned(), vec![jump_two.id().to_owned()])
+            .await
+            .expect("create route to Target");
         let target = core
             .create_host(
                 "Target".to_owned(),
                 "target.internal".to_owned(),
                 2222,
                 Some(credential.id().to_owned()),
-                Some(route.id().to_owned()),
+                Some(route_to_target.id().to_owned()),
             )
             .await
             .expect("create target Host");
 
         assert_eq!(target.credential_id(), Some(credential.id()));
-        assert_eq!(target.jump_route_id(), Some(route.id()));
+        assert_eq!(target.jump_route_id(), Some(route_to_target.id()));
         assert_eq!(
             core.list_jump_routes().await.expect("list Jump Routes"),
-            vec![route]
+            vec![route_to_jump_two, route_to_target]
         );
         let debug = format!(
             "{:?}",
@@ -519,5 +590,22 @@ mod tests {
         );
         assert!(!debug.contains("shared-user"));
         assert!(!debug.contains("shared-password-secret"));
+
+        let config = core
+            .resolve_saved_session_config(target.id().to_owned(), TerminalSize::default())
+            .await
+            .expect("resolve saved Host session");
+        assert_eq!(config.target.endpoint.host, "target.internal");
+        assert_eq!(
+            config
+                .jump_hosts
+                .iter()
+                .map(|host| host.endpoint.host.as_str())
+                .collect::<Vec<_>>(),
+            ["jump-one.internal", "jump-two.internal"]
+        );
+        let config_debug = format!("{config:?}");
+        assert!(config_debug.contains("<redacted>"));
+        assert!(!config_debug.contains("shared-password-secret"));
     }
 }

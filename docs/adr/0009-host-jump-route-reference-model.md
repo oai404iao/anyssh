@@ -39,14 +39,15 @@ Passphrase，会造成更新不一致并扩大秘密暴露面。旧 Schema v1/v2
 
 - Credential Secret 保持单一存储和统一生命周期。
 - 同一个 Credential 可以被多个 Host 安全复用。
-- Jump Route 顺序稳定，并可在后续 SSH Core 支持任意长度 Route 时直接解析。
+- Jump Route 顺序稳定，并可直接被 Rust-only Connection Plan 递归解析。
 - 旧 Phase 0 Host 数据可无损迁移。
 
 ### 代价与风险
 
 - Host、Route、Credential CRUD 需要 Foreign Key 与引用占用错误处理。
 - Route 更新需要全图循环检测。
-- 当前 SSH Core 仍只执行单个 Jump Host；本 ADR 只确定持久化和引用模型。
+- Route Runtime 由 ADR-0010 的 Rust-only Connection Plan 执行；持久化模型仍
+  不包含展开后的 endpoint 或 Credential 副本。
 
 ## 验证
 
@@ -69,6 +70,8 @@ Passphrase，会造成更新不一致并扩大秘密暴露面。旧 Schema v1/v2
 - 2026-07-27：Commit `5e366fd` 的 GitHub Actions Run `30245997616` 九个 Job
   全部通过，包括 Windows、Android/Linux Container、原生 X11/Wayland、
   OpenSSH、浏览器和 Rust Core。
+- 2026-07-27：后续 Saved Host Runtime 直接使用本 ADR 的 Host/Route ID 图，
+  WebView 不读取 Route Step 或 Credential。
 
 ## 相关文档
 

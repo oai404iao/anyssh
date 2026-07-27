@@ -33,6 +33,7 @@
 - 两跳 Jump Host。
 - 基础 CI、lint、format 和 test 命令。
 - 用户明确追加的 Host/Jump Route 持久化验证；Host/Route 只保存 ID 引用。
+- 用户明确追加的 Saved Host ID 连接与任意长度 Jump Route Runtime 验证。
 - Phase 0 结果驱动的 ADR 状态更新。
 
 ### 不包含
@@ -116,6 +117,11 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
 - [x] 2026-07-27：Schema v3 通过 Workspace、Clippy、OpenSSH、Playwright、
   agent-browser、原生 X11、原生 Wayland/IBus 和 Android ARM64 本地回归；
   远端 Run `30245997616` 的九个 CI Job 全部通过。
+- [x] 2026-07-27：实现 Rust-only Saved Host Connection Plan、
+  `ssh_connect_saved_host` IPC 和最多 32 跳的 russh Jump Route Runtime。
+- [x] 2026-07-27：Saved Host Runtime 通过 Workspace、Clippy、两 Jump
+  OpenSSH、Playwright、agent-browser、原生 X11、Wayland/IBus 和 Android ARM64
+  本地回归。
 - [ ] Windows 运行证据仍待补充。
 - [ ] iOS Build 因当前没有 macOS/Xcode 环境暂缓。
 - [ ] 根据证据更新 ADR 状态并完成 Phase 0 报告。
@@ -268,6 +274,9 @@ PIN
 - Schema v3 已增加 Host/Jump Route Repository。旧 Host Password 在单个
   `IMMEDIATE` Transaction 中转为 Credential；新 Host 只保存 Credential/Route
   ID，Route 只保存有序 Host ID。Actor、Application Core 和 Tauri IPC 均已接入。
+- DB Actor 现可从 Target Host ID 递归生成 Rust-only Connection Plan；缺失
+  Credential、重复 Host 和超过 32 跳会在网络连接前失败。Application Core 把
+  Plan 转换为 SSH Config，Tauri Saved Host IPC 不接收 endpoint 或 Credential。
 
 状态：已完成；iOS SQLCipher 构建仍等待 macOS/Xcode 环境。
 
@@ -303,10 +312,11 @@ Client -> Jump Host -> Internal Target
 - 已验证 Internal Target PTY 命令、取消 Host Key 等待、Target 密码错误、
   Target 握手超时和第一跳容器终止。
 - 测试路径只启动 Fixture 容器和当前 Rust 测试进程，不调用系统 `ssh` 客户端。
-- Tauri Typed IPC 已接受可选单 Jump Host；Phase 0 表单尚未暴露配置 UI。
+- 显式 endpoint Tauri IPC 仍接受可选单 Jump Host；Saved Host IPC 可执行最多
+  32 跳。Phase 0 表单尚未暴露配置 UI。
 
-状态：已完成；有序 Jump Route 持久化已由 Schema v3 实现，任意长度 Route 的
-SSH Runtime 执行和产品 UI 留待后续阶段。
+状态：已完成；有序 Jump Route 持久化和最多 32 跳的 Runtime 已实现，产品 UI
+留待后续阶段。
 
 ### Milestone 5：平台与图形验证
 
@@ -517,6 +527,18 @@ ssh-target-internal
   全部通过。Rust Core Log 明确执行 Schema v3 Migration、Host/Route 引用完整性
   和 Actor Repository 测试；Windows、Android/Linux Container、原生 X11/
   Wayland、OpenSSH 和浏览器路径同时通过。
+- 2026-07-27：russh `Channel::into_stream()` 不借用上游 Handle，但上游
+  Session 必须保持存活。任意长度 Runtime 使用 `Vec<Handle<_>>` 持有全部 Jump，
+  Target 结束后逆序 Disconnect；当前三跳真实协议测试通过。
+- 2026-07-27：单个 Route 内 Host ID 唯一仍不足以保证递归展开唯一。例如
+  `Target -> [Jump 1, Jump 2]` 且 `Jump 2 -> [Jump 1]` 会重复。Connection Plan
+  因此在展开时另行维护 emitted set，并在网络连接前拒绝重复或超过 32 跳。
+- 2026-07-27：Saved Host 本地证据包括 agent-browser
+  `artifacts/agent-browser/smoke-1785140189`、Xvfb
+  `artifacts/native-xvfb/smoke-1785140219-681840`、Wayland
+  `artifacts/native-wayland/smoke-1785140269-683942` 和 Android
+  `artifacts/android-build/build-1785140209-679737`。Android APK SHA-256 为
+  `ea6f1d68bb6251827d32251465027f633c6cf1cdc487e0be5bc97a2d2e571ad8`。
 - 2026-07-27：Commit `9f14940` 的 GitHub Actions Run `30243415893` 九个 Job
   全部通过。OpenSSH Log 明确执行
   `encrypted_private_key_flows_from_credential_id_to_ssh_core`，Windows、Android、
@@ -574,6 +596,11 @@ ssh-target-internal
   持久化。Schema v3 将旧 Host 内嵌 Password 原子迁移为 Credential；新 Host
   只保存 Credential/Route ID，Route Step 只保存 Host ID，并使用 Restrict 删除
   与全图循环检测。
+- 2026-07-27：Saved Host 连接只允许 WebView 提交 Target Host ID 和 Terminal
+  Size。DB Actor 原子展开 Route 并解析 Credential，Application Core 转换为
+  `Vec<SshConnectionConfig>`；现有显式 endpoint IPC 仅保留给 Phase 0 QA。
+- 2026-07-27：递归 Route 使用 DFS 后序展开，先加入 Step Host 自身的上游
+  Route，再加入 Step Host；最大展开长度与持久化单 Route 上限统一为 32。
 
 ## Outcomes & Retrospective
 

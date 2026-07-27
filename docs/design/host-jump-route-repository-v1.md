@@ -4,8 +4,8 @@
 > 日期：2026-07-27
 
 本文定义 Vault-backed Host/Jump Route Repository 和 SQLCipher Schema v3。
-本阶段不包含 Group 继承、Known Host、产品配置 UI 或任意长度 Jump Route 的
-SSH Runtime 执行。
+本阶段不包含 Group 继承、Known Host 或产品配置 UI。任意长度 Jump Route 的
+Rust-only 执行见 [Saved Host Connection Plan v1](saved-host-connection-plan-v1.md)。
 
 ## 安全边界
 
@@ -104,3 +104,4 @@ Operation Log 中，Host 的 Credential/Route ID 作为普通引用字段合并�
 - Migration 中断回滚。
 - 无效引用、删除占用和 Route 循环被拒绝。
 - Host/Route Debug、List 和 IPC JSON 不包含 Credential Secret。
+- Saved Host ID 解析与多跳 Runtime 见独立 Connection Plan 设计。

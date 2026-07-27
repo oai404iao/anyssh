@@ -289,10 +289,11 @@ Jump Route 使用有序列表存储，并在保存时检测循环引用。
 
 当前 Schema v3 已实现该持久化模型：Route Step 只保存 Host ID，Host 只保存
 可选 Credential/Route ID；Foreign Key 使用 Restrict 删除语义，保存时对完整
-Host -> Route -> Step Host 图执行循环检测。当前 SSH Runtime 仍只执行单个
-Jump Host，任意长度 Route 执行属于后续 SSH Core 工作。
+Host -> Route -> Step Host 图执行循环检测。Saved Host IPC 只提交 Target Host
+ID；DB Actor 递归展开 Route 并解析 Credential，SSH Core 使用
+`Vec<SshConnectionConfig>` 执行最多 32 个 Jump Host。
 
-Phase 0 已验证单个 Jump Host：
+Phase 0 最初验证单个 Jump Host：
 
 ```text
 TCP -> Jump SSH Handle
@@ -305,6 +306,16 @@ TCP -> Jump SSH Handle
 两个 SSH Handle 在 Target Session 生命周期内同时存活，并按 Target、Jump 的
 顺序关闭。Host Key 确认携带不可复用的 Request ID、Hop、Host 和 Port，避免前一跳
 的延迟确认被下一跳误用。
+
+当前进一步验证：
+
+```text
+Client -> Jump 1 -> Jump 2 -> Target
+```
+
+所有上游 Handle 在 Target 生命周期内保持存活，并在 Target 结束后按最后一跳到
+第一跳逆序关闭。Host Key Event 使用从 1 开始的 Jump Index；Jump 2 认证失败不会
+被误报为 Target 或 Jump 1。
 
 ### 5.6 Proxy 与端口转发
 

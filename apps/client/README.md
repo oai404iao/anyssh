@@ -34,10 +34,14 @@ Host and Jump Route CRUD is also metadata-only. Hosts persist optional Credentia
 IDs; ordered Jump Routes persist Host IDs only. They never copy a username, password,
 Private Key, Passphrase, or endpoint into a Route step.
 
-The typed SSH bridge accepts an optional single Jump Host and scopes every host-key prompt
-to a request ID, route hop, host, and port. The Phase 0 connection form does not expose
-Jump Host editing yet; the Rust core and Docker protocol fixture provide the current
-end-to-end validation.
+Saved Host connections use `ssh_connect_saved_host` and send only a Host ID plus terminal
+size. The DB Actor expands the ordered Route and resolves every Credential in Rust before
+the SSH core creates up to 32 nested russh transports.
+
+The explicit Phase 0 SSH bridge accepts an optional single Jump Host. Saved Host connections
+can execute up to 32 resolved Route hops. Every host-key prompt is scoped to a request ID,
+route hop, host, and port. The current form does not expose Jump Route editing yet; the Rust
+core and Docker protocol fixture provide the end-to-end validation.
 
 Native terminal output uses an acknowledgement window: Tauri keeps at most eight chunks
 in flight and React acknowledges each chunk from the xterm.js `write` callback. Browser QA

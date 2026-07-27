@@ -10,6 +10,8 @@ Design 文档描述系统如何实现，包括组件、数据流、接口、安�
   Actor Commands 和 Private Key Rust-only 数据流。
 - [host-jump-route-repository-v1.md](host-jump-route-repository-v1.md)：Host/
   Jump Route Schema、ID 引用和循环检测。
+- [saved-host-connection-plan-v1.md](saved-host-connection-plan-v1.md)：Saved Host
+  ID、Rust-only Route 解析和任意长度 Jump Runtime。
 
 ## 规则
 

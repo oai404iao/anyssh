@@ -30,6 +30,8 @@ AnySSH 是一个处于 Phase 0 技术验证阶段的开源跨平台 SSH 客户�
 - 专用 DB Actor Thread、16 项有界 Command Queue 和 oneshot Response。
 - Schema v3 Host/Jump Route Repository；Host 只保存 Credential/Route ID，
   Route 只保存有序 Host ID。
+- Saved Host 连接 IPC 只提交 Host ID；DB Actor 在 Rust 内解析 Credential 和
+  Route，SSH Core 最多执行 32 个有序 Jump Host。
 - Schema v2 Credential Repository，以及 Credential ID -> Vault -> SSH Core
   的 Rust-only Private Key 路径。
 - 原生 Vault 创建、锁定和解锁界面。

@@ -15,7 +15,7 @@ use anyssh_app::{
     SshSessionRequest, VaultState as StorageVaultState, VaultStatus as StorageVaultStatus,
 };
 use anyssh_domain::{SshEndpoint, TerminalSize};
-use anyssh_ssh::{SessionControl, SessionEvent, SessionHop};
+use anyssh_ssh::{SessionControl, SessionEvent, SessionHop, SpawnedSession};
 use serde::{Deserialize, Serialize};
 use tauri::{
     Manager, State,
@@ -289,6 +289,14 @@ struct ConnectRequest {
     columns: u32,
     rows: u32,
     jump_host: Option<JumpHostRequest>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ConnectSavedHostRequest {
+    host_id: String,
+    columns: u32,
+    rows: u32,
 }
 
 #[derive(Deserialize)]
@@ -612,6 +620,33 @@ async fn ssh_connect(
         .await
         .map_err(|error| error.to_string())?;
 
+    register_spawned_session(spawned, events, data, registry.inner()).await
+}
+
+#[tauri::command]
+async fn ssh_connect_saved_host(
+    request: ConnectSavedHostRequest,
+    events: Channel<ClientEvent>,
+    data: Channel<InvokeResponseBody>,
+    registry: State<'_, SessionRegistry>,
+    core: State<'_, ApplicationCore>,
+) -> Result<String, String> {
+    let terminal_size =
+        TerminalSize::new(request.columns, request.rows).map_err(|error| error.to_string())?;
+    let spawned = core
+        .spawn_saved_host_session(request.host_id, terminal_size)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    register_spawned_session(spawned, events, data, registry.inner()).await
+}
+
+async fn register_spawned_session(
+    spawned: SpawnedSession,
+    events: Channel<ClientEvent>,
+    data: Channel<InvokeResponseBody>,
+    registry: &SessionRegistry,
+) -> Result<String, String> {
     let session_id = registry.new_id();
     let (output_acknowledgements, mut output_acknowledgement_receiver) =
         tokio::sync::mpsc::channel(OUTPUT_ACK_BUFFER);
@@ -619,7 +654,7 @@ async fn ssh_connect(
         .insert(session_id.clone(), spawned.control, output_acknowledgements)
         .await;
 
-    let registry = registry.inner().clone();
+    let registry = registry.clone();
     let event_session_id = session_id.clone();
 
     tauri::async_runtime::spawn(async move {
@@ -772,6 +807,7 @@ pub fn run() {
             jump_route_list,
             jump_route_delete,
             ssh_connect,
+            ssh_connect_saved_host,
             ssh_confirm_host_key,
             ssh_ack_output,
             ssh_send,
@@ -917,6 +953,40 @@ mod tests {
             "credentialId": "cred-must-not-be-copied"
         }));
         assert!(route.is_err());
+    }
+
+    #[test]
+    fn saved_host_connect_request_accepts_only_host_id_and_terminal_size() {
+        let request: ConnectSavedHostRequest = serde_json::from_value(serde_json::json!({
+            "hostId": "host-target",
+            "columns": 120,
+            "rows": 32
+        }))
+        .expect("saved Host request should deserialize");
+        assert_eq!(request.host_id, "host-target");
+
+        for extra in [
+            serde_json::json!({
+                "hostId": "host-target",
+                "columns": 120,
+                "rows": 32,
+                "credentialId": "cred-target"
+            }),
+            serde_json::json!({
+                "hostId": "host-target",
+                "columns": 120,
+                "rows": 32,
+                "password": "must-not-enter-saved-host-ipc"
+            }),
+            serde_json::json!({
+                "hostId": "host-target",
+                "columns": 120,
+                "rows": 32,
+                "host": "must-not-enter-saved-host-ipc"
+            }),
+        ] {
+            assert!(serde_json::from_value::<ConnectSavedHostRequest>(extra).is_err());
+        }
     }
 
     #[tokio::test]

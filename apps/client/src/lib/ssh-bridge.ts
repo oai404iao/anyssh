@@ -11,6 +11,12 @@ export interface ConnectRequest {
   jumpHost?: JumpHostRequest;
 }
 
+export interface ConnectSavedHostRequest {
+  hostId: string;
+  columns: number;
+  rows: number;
+}
+
 export interface JumpHostRequest {
   host: string;
   port: number;
@@ -76,6 +82,25 @@ export async function connectSsh(
     return connectPreview(request, callbacks);
   }
 
+  return connectNative("ssh_connect", request, callbacks);
+}
+
+export async function connectSavedHost(
+  request: ConnectSavedHostRequest,
+  callbacks: SessionCallbacks,
+): Promise<string> {
+  if (!isNativeRuntime) {
+    throw new Error("Saved Host connections require the native runtime");
+  }
+
+  return connectNative("ssh_connect_saved_host", request, callbacks);
+}
+
+async function connectNative(
+  command: "ssh_connect" | "ssh_connect_saved_host",
+  request: ConnectRequest | ConnectSavedHostRequest,
+  callbacks: SessionCallbacks,
+): Promise<string> {
   const events = new Channel<SshClientEvent>();
   events.onmessage = callbacks.onEvent;
 
@@ -105,7 +130,7 @@ export async function connectSsh(
   };
 
   try {
-    const sessionId = await invoke<string>("ssh_connect", {
+    const sessionId = await invoke<string>(command, {
       request,
       events,
       data,

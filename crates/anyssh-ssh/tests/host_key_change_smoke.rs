@@ -36,7 +36,7 @@ impl HostKeyFixture {
                 },
                 host_key_policy,
             },
-            jump_host: None,
+            jump_hosts: Vec::new(),
             terminal_size: TerminalSize::new(100, 30).expect("valid terminal size"),
             connection_timeout: Duration::from_secs(10),
         })

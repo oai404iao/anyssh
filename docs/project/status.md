@@ -38,6 +38,10 @@
 - SQLCipher Schema v3 Host/Jump Route Repository：CSPRNG ID、metadata-only
   CRUD、有序 Host ID Step、Credential/Route ID 引用、Restrict 删除、循环检测，
   以及旧 Host Password -> Credential 的原子迁移。
+- Rust-only Saved Host Connection Plan：WebView 只提交 Target Host ID，
+  DB Actor 递归展开 Route 并解析 Credential，russh 最多执行 32 个 Jump Host。
+- 隔离 OpenSSH 已验证 Password Jump 1 -> Password Jump 2 -> Private Key
+  Target、三跳 Host Key 顺序和 Jump 2 认证失败归属。
 - `anyssh-app` Application Service：Credential ID 经 DB Actor 解密后直接进入
   SSH Core；Docker OpenSSH 已验证加密 Private Key 在 Lock/Unlock 后成功认证。
 - 原生 Vault 创建、错误 PIN、锁定和重新解锁流程。
