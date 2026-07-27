@@ -372,6 +372,8 @@ set_ibus_engine "libpinyin"
 "$DRIVER" type "zhongwen"
 "$DRIVER" space
 sleep 1
+"$DRIVER" enter
+sleep 0.5
 set_ibus_engine "xkb:us::eng"
 "$DRIVER" enter
 
@@ -386,6 +388,13 @@ done
 
 if [[ "$IME_COMMAND_SUCCEEDED" -ne 1 ]]; then
   echo "The Chinese IBus composition did not reach the remote SSH shell." >&2
+  docker exec "$CONTAINER_NAME" sh -lc '
+    for path in /tmp/*; do
+      [ -e "$path" ] || continue
+      printf "path=%s\n" "$path"
+      printf "%s" "$path" | od -An -tx1
+    done
+  ' >"$RUN_DIR/remote-tmp-entries.txt" 2>&1 || true
   "$DRIVER" probe "$RUN_DIR/failed-ime-command.bmp" >/dev/null || true
   tail -n 120 "$RUN_DIR/app.log" >&2
   exit 1
