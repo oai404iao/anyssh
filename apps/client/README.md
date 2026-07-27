@@ -62,6 +62,6 @@ The canonical reproducible build paths use the independent Linux and Android ima
 `infra/build`. Direct host Android builds remain available for debugging.
 
 On Windows, `pnpm qa:native:windows` builds and launches the actual Debug EXE, then attaches
-Playwright to its existing WebView2 instance through an ephemeral loopback CDP port. The
-smoke verifies native Vault/Repository IPC and restart recovery without enabling CDP in
-Tauri configuration or release builds.
+Playwright to its existing WebView2 instance through a QA-only loopback CDP port. The
+separate `tauri.windows-qa.conf.json` overlay enables that port only for the smoke build;
+the canonical Tauri configuration and release builds do not expose it.

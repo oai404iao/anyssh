@@ -424,8 +424,8 @@ React { label, username }
   的 x86-64 PE32+ Debug EXE；SHA-256 为
   `83b3d4510a0084a371fa54bce87bb72301dc6b28be97650415335983a4f70c60`。
   该证据只证明 MSVC/WebView2 Application Shell 可链接。下一步在同一 Runner
-  启动 EXE，使用 WebView2 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 仅为 QA
-  开放 Loopback CDP Port；Playwright 只连接现有 WebView2，不启动 Chromium。
+  启动 EXE，使用独立 `tauri.windows-qa.conf.json` 仅为 QA Debug Build 开放
+  Loopback CDP Port；Playwright 只连接现有 WebView2，不启动 Chromium。
   Smoke 必须验证非零窗口句柄、Vault Create/Lock/Wrong-PIN/Unlock、Repository
   CRUD、进程重启恢复、截图和 Vault 明文扫描。CDP Port 不进入 Release 配置。
 - iOS：维护者当前没有 Mac，Build 验证暂缓；Linux 结果不得冒充 Xcode Build。
@@ -662,6 +662,13 @@ ssh-target-internal
   `d74b03450e7d21281e823266698be86169ab40e9f9e7a240a55ddbf55e427bca`；
   Windows x86-64 PE32+ Debug EXE SHA-256 为
   `1fc5ac6e49f96817bf90d0de7dfe7501cffcc772c1c4c82e372e6b34fe6ea4f8`。
+- 2026-07-27：Windows Runtime Smoke 首次提交 `d7df342` 的 Run
+  `30267608590` 中其余八个 Job 全部通过；Windows EXE 成功构建且标题为
+  `AnySSH` 的原生窗口已经出现，但 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`
+  没有产生 CDP Listener，应用 stdout/stderr 均为空。根据实际 Runner 证据，
+  QA 改用单独的 Tauri Config Overlay 让 Wry 通过
+  `ICoreWebView2EnvironmentOptions` 设置 Browser Arguments，而不是依赖进程
+  环境。
 - 2026-07-27：Commit `9f14940` 的 GitHub Actions Run `30243415893` 九个 Job
   全部通过。OpenSSH Log 明确执行
   `encrypted_private_key_flows_from_credential_id_to_ssh_core`，Windows、Android、
@@ -728,11 +735,13 @@ ssh-target-internal
   Username；Command 自己打开 Native Picker，选中的 Path 和 Key 内容只在 Rust
   中存在。首版不接受 Passphrase，因此只导入可在无 Passphrase 条件下成功解析的
   Private Key。
-- 2026-07-27：Windows Runtime QA 复用已构建 Debug EXE，通过进程环境临时设置
-  WebView2 Loopback CDP Port，并使用 Playwright `connectOverCDP` 驱动真实
-  Tauri WebView。该入口只存在于 QA Script，不写入 Tauri Config、Capability 或
-  Release Build；Native Picker 和真实 SSH 的 Windows 交互证据若 Hosted Runner
-  无法提供桌面输入能力，则必须明确保留为后续真实 Windows 环境检查。
+- 2026-07-27：Windows Runtime QA 复用已构建 Debug EXE，并使用 Playwright
+  `connectOverCDP` 驱动真实 Tauri WebView。首次远端尝试发现 Runner 中的
+  WebView2 未应用进程环境 Browser
+  Arguments，因此改为单独的 `tauri.windows-qa.conf.json` Overlay；Canonical
+  Config、Capability 和 Release Build 不包含该入口。Native Picker 和真实 SSH
+  的 Windows 交互证据若 Hosted Runner 无法提供桌面输入能力，则必须明确保留为
+  后续真实 Windows 环境检查。
 
 ## Outcomes & Retrospective
 

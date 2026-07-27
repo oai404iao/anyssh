@@ -15,14 +15,17 @@ $ExecutablePath = (Resolve-Path $ExecutablePath).Path
 $Timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmss")
 $RunDirectory = Join-Path $RootDirectory "artifacts\native-windows\smoke-$Timestamp-$PID"
 $VaultRoot = Join-Path $env:TEMP "anyssh-windows-vault-$Timestamp-$PID"
-$WebViewRoot = Join-Path $env:TEMP "anyssh-windows-webview2-$Timestamp-$PID"
+$WebViewDataRoot = Join-Path `
+  ([Environment]::GetFolderPath("LocalApplicationData")) `
+  "main\anyssh-qa-webview2"
+$CdpPort = 9222
 $script:NativeProcess = $null
 $script:NativeWindowHandle = [IntPtr]::Zero
 $script:StageRecords = @()
 
 New-Item -ItemType Directory -Force -Path $RunDirectory | Out-Null
 New-Item -ItemType Directory -Force -Path $VaultRoot | Out-Null
-New-Item -ItemType Directory -Force -Path $WebViewRoot | Out-Null
+Remove-Item -LiteralPath $WebViewDataRoot -Recurse -Force -ErrorAction SilentlyContinue
 
 Add-Type -TypeDefinition @"
 using System;
@@ -87,18 +90,24 @@ public static class AnySshWindowProbe
 }
 "@
 
-function Get-FreeTcpPort {
-  $Listener = [System.Net.Sockets.TcpListener]::new(
-    [System.Net.IPAddress]::Loopback,
-    0
-  )
-  $Listener.Start()
-  try {
-    return ([System.Net.IPEndPoint]$Listener.LocalEndpoint).Port
+function Wait-CdpPortAvailable {
+  for ($Attempt = 0; $Attempt -lt 80; $Attempt++) {
+    $Listener = [System.Net.Sockets.TcpListener]::new(
+      [System.Net.IPAddress]::Loopback,
+      $CdpPort
+    )
+    try {
+      $Listener.Start()
+      return
+    }
+    catch {
+      Start-Sleep -Milliseconds 250
+    }
+    finally {
+      $Listener.Stop()
+    }
   }
-  finally {
-    $Listener.Stop()
-  }
+  throw "The Windows QA WebView2 CDP port $CdpPort is unavailable."
 }
 
 function Stop-NativeProcess {
@@ -133,14 +142,9 @@ function Start-NativeStage {
     [string]$Stage
   )
 
-  $Port = Get-FreeTcpPort
-  $StageWebViewRoot = Join-Path $WebViewRoot $Stage
-  New-Item -ItemType Directory -Force -Path $StageWebViewRoot | Out-Null
+  Wait-CdpPortAvailable
 
   $env:ANYSSH_QA_VAULT_ROOT = $VaultRoot
-  $env:WEBVIEW2_USER_DATA_FOLDER = $StageWebViewRoot
-  $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = `
-    "--remote-debugging-port=$Port --remote-allow-origins=*"
 
   $StandardOutput = Join-Path $RunDirectory "app-$Stage.stdout.log"
   $StandardError = Join-Path $RunDirectory "app-$Stage.stderr.log"
@@ -156,7 +160,7 @@ function Start-NativeStage {
   $WindowHandle = [IntPtr]::Zero
   $WindowReady = $false
   $CdpReady = $false
-  for ($Attempt = 0; $Attempt -lt 240; $Attempt++) {
+  for ($Attempt = 0; $Attempt -lt 120; $Attempt++) {
     if ($script:NativeProcess.HasExited) {
       throw "AnySSH exited before the Windows runtime became ready."
     }
@@ -171,11 +175,11 @@ function Start-NativeStage {
 
     try {
       $Targets = Invoke-RestMethod `
-        -Uri "http://127.0.0.1:$Port/json/list" `
-        -TimeoutSec 2
+        -Uri "http://127.0.0.1:$CdpPort/json/list" `
+        -TimeoutSec 1
       $Version = Invoke-RestMethod `
-        -Uri "http://127.0.0.1:$Port/json/version" `
-        -TimeoutSec 2
+        -Uri "http://127.0.0.1:$CdpPort/json/version" `
+        -TimeoutSec 1
       if ($null -ne $Targets -and @($Targets).Count -gt 0) {
         $CdpReady = $true
       }
@@ -189,6 +193,25 @@ function Start-NativeStage {
     }
     Start-Sleep -Milliseconds 250
   }
+
+  if ($WindowReady) {
+    $WindowTitle = [AnySshWindowProbe]::GetTitle($WindowHandle)
+  }
+  else {
+    $WindowTitle = ""
+  }
+  $ProbeRecord = [PSCustomObject]@{
+    stage = $Stage
+    pid = $script:NativeProcess.Id
+    sessionId = $script:NativeProcess.SessionId
+    windowReady = $WindowReady
+    mainWindowHandle = ("0x{0:X}" -f $WindowHandle.ToInt64())
+    mainWindowTitle = $WindowTitle
+    cdpReady = $CdpReady
+  }
+  $ProbeRecord |
+    ConvertTo-Json |
+    Set-Content -Encoding UTF8 -Path (Join-Path $RunDirectory "probe-$Stage.json")
 
   if (-not $WindowReady) {
     throw "AnySSH did not expose a non-zero native Windows window handle."
@@ -224,7 +247,7 @@ function Start-NativeStage {
     ConvertTo-Json |
     Set-Content -Encoding UTF8 -Path (Join-Path $RunDirectory "cdp-targets-$Stage.json")
 
-  $env:ANYSSH_WINDOWS_CDP_URL = "http://127.0.0.1:$Port"
+  $env:ANYSSH_WINDOWS_CDP_URL = "http://127.0.0.1:$CdpPort"
   $env:ANYSSH_WINDOWS_RUN_DIR = $RunDirectory
   $env:ANYSSH_WINDOWS_STAGE = $Stage
 
@@ -314,8 +337,8 @@ try {
 - The built Windows EXE launched and exposed a non-zero top-level window handle.
 - The existing WebView2 instance rendered the Tauri application and accepted
   Playwright input through a QA-only loopback CDP port.
-- CDP was enabled only through process environment for this ephemeral Debug run;
-  no Release configuration or Tauri Capability exposes it.
+- CDP was enabled only by ``tauri.windows-qa.conf.json`` for this ephemeral
+  Debug build; the canonical Tauri config and Release builds do not expose it.
 - Native Tauri IPC created a PIN Slot and SQLCipher Vault.
 - Wrong PIN, Lock, Unlock, process termination, relaunch, and restart recovery passed.
 - Password Credential, Host, and Jump Route metadata persisted across process restart.
@@ -334,6 +357,8 @@ try {
 - ``07-restart-recovered.png``
 - ``process-create.json``
 - ``process-restart.json``
+- ``probe-create.json``
+- ``probe-restart.json``
 - ``cdp-targets-create.json``
 - ``cdp-targets-restart.json``
 - ``console-create.txt``
@@ -359,8 +384,6 @@ finally {
   Remove-Item Env:ANYSSH_WINDOWS_CDP_URL -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_RUN_DIR -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_STAGE -ErrorAction SilentlyContinue
-  Remove-Item Env:WEBVIEW2_USER_DATA_FOLDER -ErrorAction SilentlyContinue
-  Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $VaultRoot -Recurse -Force -ErrorAction SilentlyContinue
-  Remove-Item -LiteralPath $WebViewRoot -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $WebViewDataRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

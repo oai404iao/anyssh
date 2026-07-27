@@ -28,6 +28,6 @@
     "qa:browser": "bash scripts/qa/agent-browser-smoke.sh",
     "qa:native:xvfb": "bash scripts/qa/native-xvfb-smoke.sh",
     "qa:native:wayland": "bash scripts/qa/native-wayland-ime-smoke.sh",
-    "qa:native:windows": "pnpm --filter @anyssh/client tauri build --debug --no-bundle --ci && powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/qa/native-windows-smoke.ps1"
+    "qa:native:windows": "pnpm --filter @anyssh/client tauri build --debug --no-bundle --ci --config src-tauri/tauri.windows-qa.conf.json && powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/qa/native-windows-smoke.ps1"
   }
 }
