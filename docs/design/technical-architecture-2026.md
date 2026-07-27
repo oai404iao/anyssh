@@ -566,6 +566,13 @@ Argon2id 参数不要硬编码为所有设备相同：
 - Schema migration 必须支持中断恢复。
 - 自动备份同样使用独立加密格式。
 
+当前 DB Actor 实现在 `anyssh-storage` 的专用 OS Thread 中持有
+`Option<LocalVault>`。Cloneable Handle 使用容量为 16 的 Tokio `mpsc` Command
+Queue；每条命令通过 `oneshot` 返回结果。Argon2id、Bootstrap 文件操作和
+SQLCipher 查询均在 Actor Thread 中串行执行，Tauri Command 不再使用
+`spawn_blocking` 或 `Mutex<Option<LocalVault>>`。最后一个 Handle 释放时先关闭
+Queue，再 Join Actor Thread，确保数据库连接按顺序销毁。
+
 除以下最小 bootstrap 信息外，不落地任何明文业务数据：
 
 - Vault 格式版本。

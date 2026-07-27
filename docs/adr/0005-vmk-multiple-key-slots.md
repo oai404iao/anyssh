@@ -50,8 +50,8 @@
 
 - 2026-07-26：随机 256-bit VMK、版本化 PIN Slot 和 Argon2id KEK 已实现。
 - 2026-07-26：正确 PIN、错误 PIN、损坏 Ciphertext 和不安全 KDF 参数测试通过。
-- 2026-07-26：锁定会销毁 Rust 中持有的 `LocalVault`，随后可用同一 PIN
-  重新解包 VMK。
+- 2026-07-27：锁定命令会在 DB Actor Thread 中销毁其独占的 `LocalVault`，
+  随后可用同一 PIN 重新解包 VMK；错误 PIN 不改变 Locked 状态。
 - Platform、Sync 和 Recovery Slot 尚未实现，因此 ADR 保持 Proposed。
 
 ## 相关文档

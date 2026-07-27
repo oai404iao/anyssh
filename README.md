@@ -27,6 +27,7 @@ AnySSH 是一个处于 Phase 0 技术验证阶段的开源跨平台 SSH 客户�
 - 4 MiB 终端输出下的 64 项 Core Queue、8 项 WebView Window 和 xterm Ack 背压。
 - 随机 VMK、Argon2id PIN Slot、HKDF 子密钥和版本化 Bootstrap。
 - SQLCipher 4.10 整库加密与 XChaCha20-Poly1305 Credential 字段加密。
+- 专用 DB Actor Thread、16 项有界 Command Queue 和 oneshot Response。
 - 原生 Vault 创建、锁定和解锁界面。
 - Docker OpenSSH 真实协议测试。
 - Vitest、Playwright 和 agent-browser 测试路径。

@@ -22,7 +22,6 @@ tauri-build = { version = "2.4.1", features = [] }
 anyssh-domain.workspace = true
 anyssh-ssh.workspace = true
 anyssh-storage.workspace = true
-anyssh-vault.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2.11.5", features = [] }

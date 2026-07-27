@@ -50,6 +50,9 @@
   Sidecar 和 Bootstrap 中均未检出。
 - 2026-07-26：Credential 密码使用独立 XChaCha20-Poly1305 AAD 加密。
 - 2026-07-26：Schema migration 中断事务回滚通过。
+- 2026-07-27：`anyssh-storage` 专用 DB Actor 已接管 Vault 生命周期和
+  SQLCipher Connection；容量 16 的有界 Queue、oneshot Response、串行命令、
+  Shutdown 和 Thread Join 测试通过。
 - Linux WebKitGTK 同时引入系统 SQLite；bundled SQLCipher 的符号共存需要继续
   验证，当前未因此把本 ADR 提升为 Accepted。
 - Windows、Android 和 iOS 构建证据仍缺失，因此 ADR 保持 Proposed。

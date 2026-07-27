@@ -1,6 +1,6 @@
 # 项目状态
 
-> 更新日期：2026-07-26
+> 更新日期：2026-07-27
 
 ## 当前阶段
 
@@ -30,6 +30,9 @@
   包装和 HKDF-SHA-256 子密钥。
 - `anyssh-storage`：SQLCipher 4.10、版本化 Schema、Credential 字段 AEAD、
   重启解锁和明文泄漏检查。
+- `anyssh-storage` 专用 DB Actor：Actor Thread 独占 `Option<LocalVault>`，
+  使用 16 项有界 Command Queue 和 oneshot Response；Tauri 不再持有
+  `LocalVault` 或使用 Vault `spawn_blocking`；Android ARM64 重新构建通过。
 - 原生 Vault 创建、错误 PIN、锁定和重新解锁流程。
 - `direct-tcpip` + `Channel::into_stream` + `connect_stream` 两跳 Jump Host。
 - Jump Host 与 Internal Target 独立 Host Key 确认、目标认证失败、握手超时、

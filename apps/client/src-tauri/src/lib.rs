@@ -2,9 +2,8 @@
 
 use std::{
     collections::HashMap,
-    path::PathBuf,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -15,8 +14,10 @@ use anyssh_ssh::{
     PasswordSessionConfig, SessionControl, SessionEvent, SessionHop, spawn_jump_password_session,
     spawn_password_session,
 };
-use anyssh_storage::{LocalVault, VaultPresence};
-use anyssh_vault::PinKdfParameters;
+use anyssh_storage::{
+    DatabaseActorConfig, DatabaseActorHandle, VaultState as StorageVaultState,
+    VaultStatus as StorageVaultStatus,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{
     Manager, State,
@@ -39,95 +40,6 @@ struct SessionEntry {
     output_acknowledgements: tokio::sync::mpsc::Sender<()>,
 }
 
-#[derive(Clone)]
-struct VaultManager {
-    root: Arc<PathBuf>,
-    unlocked: Arc<Mutex<Option<LocalVault>>>,
-}
-
-impl VaultManager {
-    fn new(root: PathBuf) -> Self {
-        Self {
-            root: Arc::new(root),
-            unlocked: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    fn status(&self) -> Result<VaultStatus, String> {
-        let unlocked = self
-            .unlocked
-            .lock()
-            .map_err(|_| "Vault state lock is unavailable".to_owned())?;
-        if let Some(vault) = unlocked.as_ref() {
-            return Ok(VaultStatus {
-                state: VaultStatusKind::Unlocked,
-                vault_id: Some(vault.vault_id().to_owned()),
-                cipher_version: Some(vault.cipher_version().to_owned()),
-            });
-        }
-
-        let state = match LocalVault::presence(&self.root) {
-            VaultPresence::Uninitialized => VaultStatusKind::Uninitialized,
-            VaultPresence::Locked => VaultStatusKind::Locked,
-            VaultPresence::Damaged => VaultStatusKind::Damaged,
-        };
-        Ok(VaultStatus {
-            state,
-            vault_id: None,
-            cipher_version: None,
-        })
-    }
-
-    fn create(&self, pin: &str) -> Result<VaultStatus, String> {
-        let mut unlocked = self
-            .unlocked
-            .lock()
-            .map_err(|_| "Vault state lock is unavailable".to_owned())?;
-        if unlocked.is_some() {
-            return Err("Vault is already unlocked".to_owned());
-        }
-
-        let vault = LocalVault::create(&self.root, pin, PinKdfParameters::phase0_default())
-            .map_err(|error| error.to_string())?;
-        let status = VaultStatus {
-            state: VaultStatusKind::Unlocked,
-            vault_id: Some(vault.vault_id().to_owned()),
-            cipher_version: Some(vault.cipher_version().to_owned()),
-        };
-        *unlocked = Some(vault);
-        Ok(status)
-    }
-
-    fn unlock(&self, pin: &str) -> Result<VaultStatus, String> {
-        let mut unlocked = self
-            .unlocked
-            .lock()
-            .map_err(|_| "Vault state lock is unavailable".to_owned())?;
-        if unlocked.is_some() {
-            return Err("Vault is already unlocked".to_owned());
-        }
-
-        let vault = LocalVault::unlock(&self.root, pin).map_err(|error| error.to_string())?;
-        let status = VaultStatus {
-            state: VaultStatusKind::Unlocked,
-            vault_id: Some(vault.vault_id().to_owned()),
-            cipher_version: Some(vault.cipher_version().to_owned()),
-        };
-        *unlocked = Some(vault);
-        Ok(status)
-    }
-
-    fn lock(&self) -> Result<VaultStatus, String> {
-        let mut unlocked = self
-            .unlocked
-            .lock()
-            .map_err(|_| "Vault state lock is unavailable".to_owned())?;
-        *unlocked = None;
-        drop(unlocked);
-        self.status()
-    }
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct VaultStatus {
@@ -143,6 +55,22 @@ enum VaultStatusKind {
     Locked,
     Unlocked,
     Damaged,
+}
+
+impl From<StorageVaultStatus> for VaultStatus {
+    fn from(status: StorageVaultStatus) -> Self {
+        let state = match status.state() {
+            StorageVaultState::Uninitialized => VaultStatusKind::Uninitialized,
+            StorageVaultState::Locked => VaultStatusKind::Locked,
+            StorageVaultState::Unlocked => VaultStatusKind::Unlocked,
+            StorageVaultState::Damaged => VaultStatusKind::Damaged,
+        };
+        Self {
+            state,
+            vault_id: status.vault_id().map(str::to_owned),
+            cipher_version: status.cipher_version().map(str::to_owned),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -306,43 +234,53 @@ fn runtime_info() -> RuntimeInfo {
 }
 
 #[tauri::command]
-fn vault_status(manager: State<'_, VaultManager>) -> Result<VaultStatus, String> {
-    manager.status()
+async fn vault_status(actor: State<'_, DatabaseActorHandle>) -> Result<VaultStatus, String> {
+    actor
+        .status()
+        .await
+        .map(VaultStatus::from)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 async fn vault_create(
     request: VaultPinRequest,
-    manager: State<'_, VaultManager>,
+    actor: State<'_, DatabaseActorHandle>,
 ) -> Result<VaultStatus, String> {
-    let manager = manager.inner().clone();
     let pin = Zeroizing::new(request.pin);
-    tauri::async_runtime::spawn_blocking(move || manager.create(pin.as_str()))
+    actor
+        .create(pin)
         .await
-        .map_err(|_| "Vault initialization task failed".to_owned())?
+        .map(VaultStatus::from)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 async fn vault_unlock(
     request: VaultPinRequest,
-    manager: State<'_, VaultManager>,
+    actor: State<'_, DatabaseActorHandle>,
 ) -> Result<VaultStatus, String> {
-    let manager = manager.inner().clone();
     let pin = Zeroizing::new(request.pin);
-    tauri::async_runtime::spawn_blocking(move || manager.unlock(pin.as_str()))
+    actor
+        .unlock(pin)
         .await
-        .map_err(|_| "Vault unlock task failed".to_owned())?
+        .map(VaultStatus::from)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 async fn vault_lock(
-    manager: State<'_, VaultManager>,
+    actor: State<'_, DatabaseActorHandle>,
     sessions: State<'_, SessionRegistry>,
 ) -> Result<VaultStatus, String> {
     for session in sessions.drain().await {
         let _ = session.disconnect().await;
     }
-    manager.lock()
+    actor
+        .lock()
+        .await
+        .map(VaultStatus::from)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -544,7 +482,9 @@ pub fn run() {
         .manage(SessionRegistry::default())
         .setup(|app| {
             let vault_root = app.path().app_data_dir()?.join("vault");
-            app.manage(VaultManager::new(vault_root));
+            let actor =
+                DatabaseActorHandle::spawn(vault_root, DatabaseActorConfig::phase0_default())?;
+            app.manage(actor);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

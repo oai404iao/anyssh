@@ -40,7 +40,7 @@ any_ssh/
 |   |-- anyssh-domain/                # Endpoint、TerminalSize 等领域值对象
 |   |-- anyssh-ssh/                   # russh Session、Host Key、PTY、背压
 |   |-- anyssh-vault/                 # VMK、PIN Key Slot、HKDF、Bootstrap
-|   `-- anyssh-storage/               # SQLCipher、Schema、Record AEAD
+|   `-- anyssh-storage/               # DB Actor、SQLCipher、Schema、Record AEAD
 |-- scripts/
 |   |-- build-in-container.sh          # 独立 Linux/Android Build Image 入口
 |   |-- check-android-build.sh         # Android ARM64 APK 与 bundled SQLCipher 构建
@@ -98,6 +98,8 @@ Proposed ADR 是待验证方案，不是不可变事实。若 Phase 0 验证结�
 - Tauri 原生检查使用 `cargo check --package anyssh-client`。
 - Rust Core 不依赖 React/Tauri；Tauri 可以依赖 Core。
 - 不把业务逻辑放进 Tauri command；command 只校验、转换和调用 Core。
+- 应用运行时只通过 `DatabaseActorHandle` 访问 Vault/SQLCipher；不得在 Tauri
+  Command 或其他 Runtime State 中直接持有 `LocalVault`/`rusqlite::Connection`。
 - VMK、KEK、数据库 Key 和解密后的 Credential 不得序列化到前端。
 - Vault Bootstrap 只能包含版本、随机 ID、KDF 参数和加密 Key Slot。
 - 新增依赖时检查其 AGPLv3 兼容性，并更新 lockfile。
@@ -194,6 +196,7 @@ Evidence 复制回仓库。
 `pnpm test:rust` 必须覆盖：
 
 - PIN Slot 创建、正确/错误 PIN、损坏 Slot。
+- DB Actor 有界 Queue、oneshot Response、串行生命周期和 Shutdown。
 - SQLCipher 重启解锁和 Credential 字段 AEAD。
 - 数据库、WAL、Sidecar 与 Bootstrap 明文扫描。
 - Schema migration 中断回滚。
@@ -403,6 +406,7 @@ Clear
 | Terminal Adapter | `apps/client/src/components/TerminalPane.tsx` |
 | Browser/Native Bridge | `apps/client/src/lib/ssh-bridge.ts` |
 | Tauri IPC | `apps/client/src-tauri/src/lib.rs` |
+| DB Actor | `crates/anyssh-storage/src/actor.rs` |
 | SSH Core | `crates/anyssh-ssh/src/lib.rs` |
 | OpenSSH Fixture | `tests/fixtures/openssh/` |
 | Playwright E2E | `apps/client/e2e/connect-preview.spec.ts` |

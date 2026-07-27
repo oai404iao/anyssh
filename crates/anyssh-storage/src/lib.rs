@@ -1,9 +1,16 @@
 #![forbid(unsafe_code)]
 
+mod actor;
+
+pub use actor::{
+    DEFAULT_DATABASE_COMMAND_QUEUE_CAPACITY, DatabaseActorConfig, DatabaseActorError,
+    DatabaseActorHandle, DatabaseActorStartError, VaultState, VaultStatus,
+};
+
 use std::{
     fmt::Write as _,
     fs::{self, File},
-    path::{Path, PathBuf},
+    path::Path,
     time::Duration,
 };
 
@@ -115,8 +122,11 @@ impl HostRecord {
     }
 }
 
+/// Low-level encrypted storage primitive.
+///
+/// Application code should use [`DatabaseActorHandle`] so the SQLCipher
+/// connection and unlocked Vault state stay confined to the database thread.
 pub struct LocalVault {
-    root: PathBuf,
     unlocked: UnlockedVault,
     database: VaultDatabase,
 }
@@ -190,11 +200,7 @@ impl LocalVault {
 
         let keys = unlocked.derive_keys()?;
         let database = VaultDatabase::open(&root.join(DATABASE_FILE_NAME), &keys)?;
-        Ok(Self {
-            root: root.to_owned(),
-            unlocked,
-            database,
-        })
+        Ok(Self { unlocked, database })
     }
 
     pub fn unlock(root: &Path, pin: &str) -> Result<Self, StorageError> {
@@ -208,19 +214,11 @@ impl LocalVault {
         let unlocked = bootstrap.unlock_pin(pin)?;
         let keys = unlocked.derive_keys()?;
         let database = VaultDatabase::open(&root.join(DATABASE_FILE_NAME), &keys)?;
-        Ok(Self {
-            root: root.to_owned(),
-            unlocked,
-            database,
-        })
+        Ok(Self { unlocked, database })
     }
 
     pub fn vault_id(&self) -> &str {
         self.unlocked.vault_id()
-    }
-
-    pub fn root(&self) -> &Path {
-        &self.root
     }
 
     pub fn cipher_version(&self) -> &str {

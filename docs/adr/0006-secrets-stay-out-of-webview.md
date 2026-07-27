@@ -40,6 +40,12 @@ Tauri UI 运行在 WebView 中。前端状态、DevTools、日志、错误序列
 - 前端 Store、日志和错误对象不出现测试密码。
 - Reveal 结果在超时、切页、锁屏和后台时失效。
 
+### 当前证据
+
+- 2026-07-27：Vault PIN 从 Tauri Request 立即移入 `Zeroizing<String>`，再通过
+  私有 DB Actor Command 送入专用线程；Actor State 只长期持有
+  `Option<LocalVault>`，不把 VMK、派生 Key 或解密后的记录返回 Tauri/WebView。
+
 ## 相关文档
 
 - [总体技术设计：分层规则](../design/technical-architecture-2026.md#分层规则)

@@ -104,6 +104,9 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
   Windows、Linux Container 和 Android Container Job。
 - [x] 2026-07-27：远端 Run `30235453657` 的全部九个 CI Job 通过，包括
   原生 X11、Wayland/IBus、Windows、Linux Container 和 Android Container。
+- [x] 2026-07-27：将 Tauri `VaultManager` 迁移到 `anyssh-storage` 专用
+  DB Actor；使用有界 Command Queue、oneshot Response，并由 Actor 独占
+  `Option<LocalVault>`。
 - [ ] Windows 运行证据仍待补充。
 - [ ] iOS Build 因当前没有 macOS/Xcode 环境暂缓。
 - [ ] 根据证据更新 ADR 状态并完成 Phase 0 报告。
@@ -239,8 +242,14 @@ PIN
 - 原生 Xvfb 流程已验证创建、锁定、错误 PIN、重新解锁和后续 SSH Session。
 - 数据库、WAL、Sidecar、Bootstrap 中未检出测试 Host、用户名、密码、PIN 或
   `SQLite format 3` Header。
-- Tauri 当前通过 `spawn_blocking` 和单个 `VaultManager` 串行化解锁状态；
-  完整 DB Actor 与 Repository Command 队列留待 Host 持久化阶段。
+- `anyssh-storage` 专用 DB Actor Thread 现独占 `Option<LocalVault>`；
+  Cloneable Handle 使用容量 16 的有界 Tokio `mpsc` Command Queue 和 oneshot
+  Response。Tauri Vault Command 只做 IPC 转换，不再使用 `spawn_blocking` 或
+  `Mutex<Option<LocalVault>>`。
+- Actor 单元测试覆盖 Queue Backpressure、Create/Lock/Wrong-PIN/Unlock 顺序、
+  Shutdown 和不可用状态。原生 X11 与 Wayland QA 均通过现有 Vault 创建链路；
+  Android ARM64 Debug APK 也已重新构建。正式 Host/Credential Repository IPC
+  仍留在下一步骤。
 
 状态：已完成；跨平台 SQLCipher 构建证据将在 Milestone 5 补充。
 
@@ -468,6 +477,10 @@ ssh-target-internal
 - 2026-07-27：GitHub Runner 会提示部分 `@v4` Action 仍以 Node 20 为目标并被
   强制运行在 Node 24。当前不影响验证结果，但后续应核验并升级到官方
   Node 24 Native Action Major。
+- 2026-07-27：DB Actor Handle 的最后一个 Clone 释放时需要先关闭 Command
+  Sender，再 Join 专用线程；否则 Actor 会在 `blocking_recv` 等待并造成退出
+  Deadlock。实现使用单个 `Arc<Inner>` 显式保证这一销毁顺序，Vault 本身不进入
+  Mutex。
 - 其余发现待执行过程中持续补充。
 
 ## Decision Log
@@ -505,6 +518,10 @@ ssh-target-internal
 - 2026-07-27：Wayland QA 的 Vite Server 直接使用 Workspace 已安装 Binary，
   不在清空宿主环境后的 Session 内重新调用 pnpm；应用进程仍使用隔离的 XDG
   路径，保证 Vault 和 IBus Evidence 不进入宿主用户目录。
+- 2026-07-27：DB Actor 位于 `anyssh-storage`，在专用 OS 线程中顺序处理同步
+  SQLCipher、Argon2id 和文件系统操作。Tauri 只持有 Cloneable Handle；Handle
+  使用有界 Tokio `mpsc` 施加背压，每条 Command 使用 `oneshot` 返回结果。
+  `Option<LocalVault>` 不跨线程或 IPC，只由 Actor State 持有。
 
 ## Outcomes & Retrospective
 

@@ -101,7 +101,6 @@ dependencies = [
  "anyssh-domain",
  "anyssh-ssh",
  "anyssh-storage",
- "anyssh-vault",
  "serde",
  "serde_json",
  "tauri",
@@ -143,6 +142,7 @@ dependencies = [
  "rusqlite",
  "tempfile",
  "thiserror 2.0.19",
+ "tokio",
  "zeroize",
 ]
 

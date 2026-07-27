@@ -131,4 +131,6 @@ anyssh/record/v1|<vault_id>|host|<host_id>|password
 - 正确 PIN、错误 PIN、损坏 Slot、重启解锁和迁移回滚测试通过。
 - 数据库、WAL、Sidecar 和 Bootstrap 的业务明文扫描通过。
 - 原生 Xvfb 流程验证了创建、锁定、错误 PIN 和重新解锁。
-- Windows、Android 和 iOS 构建仍需在 Phase 0 Milestone 5 验证。
+- Vault 生命周期现由专用 DB Actor Thread 串行管理；有界 Command Queue、
+  oneshot Response、Shutdown 和 Thread Join 测试通过。
+- Windows 与 Android 构建已经验证；iOS 仍等待 macOS/Xcode 环境。
