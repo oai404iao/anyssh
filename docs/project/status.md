@@ -73,6 +73,9 @@
 - Host/Jump Route Repository Commit `5e366fd` 的 Run `30245997616` 全部通过。
 - Saved Host 多跳 Runtime Commit `98182b3` 与原生 QA 稳定化 Commit
   `563c09e` 的 Run `30250776234` 全部通过。
+- Host/Credential/Jump Route 配置 UI 与原生 Private Key Import Commit
+  `780059d` 的 Run `30258051366` 全部九个 Job 通过；远端 Artifact 已人工检查
+  X11 Native Picker、4 MiB 输出、Wayland/IBus 中文输入以及桌面/移动配置页面。
 - CI 工作流。
 
 当前仓库尚未完成：

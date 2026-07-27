@@ -70,6 +70,9 @@ Command，Private Key 与文件系统能力都会越过既定安全边界。Key 
   删除，Vault 文件明文扫描未发现 OpenSSH Key Header。
 - 2026-07-27：Linux Container 和 Android ARM64 Container Build 均包含
   `tauri-plugin-dialog` 并通过。
+- 2026-07-27：Commit `780059d` 的 GitHub Actions Run `30258051366` 九个 Job
+  全部通过；远端 X11 Artifact 实际打开 GTK Native File Picker，导入后截图只
+  显示 Metadata，Vault 明文扫描和临时源文件删除检查同时通过。
 
 ## 相关文档
 

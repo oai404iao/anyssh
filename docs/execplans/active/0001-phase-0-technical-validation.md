@@ -376,7 +376,7 @@ React { label, username }
 - Playwright 与 agent-browser 实际完成创建 Credential、Host、Route、重排和
   删除失败提示，并人工检查桌面/移动截图。
 
-状态：已实现并完成本地验证；远端 CI 待提交后确认。
+状态：已实现并完成本地与远端 CI 验证。
 
 ### Milestone 5：平台与图形验证
 
@@ -636,6 +636,23 @@ ssh-target-internal
   最终 Tauri Picker Cancellation Helper 合入后，Host Android 回归
   `artifacts/android-build/build-1785147675-818889` 也通过，APK SHA-256 为
   `becc6d075302b45a401c307b004fdf8e42829a041d7fd695b08de2854bf4cbc5`。
+- 2026-07-27：Configuration UI/Native Key Import Commit `780059d` 的 GitHub
+  Actions Run `30258051366` 九个 Job 全部通过。远端 agent-browser Artifact 为
+  `/tmp/anyssh-ci-30258051366/agent-browser-evidence/smoke-1785148009`；
+  原生 X11 为
+  `/tmp/anyssh-ci-30258051366/native-linux-evidence/native-xvfb/smoke-1785148042-6155`，
+  截图确认 Native Picker 导入后只显示 Credential Metadata，4 MiB 输出继续排空；
+  Wayland 为
+  `/tmp/anyssh-ci-30258051366/native-linux-evidence/native-wayland/smoke-1785148107-7494`，
+  远端路径为 `/tmp/anyssh-ime-中文文`，UTF-8 Byte 为
+  `e4 b8 ad e6 96 87 e6 96 87`。
+- 2026-07-27：同一 Run 的 Android Container Artifact
+  `build-1785148571-1` SHA-256 为
+  `8e4773b2dae72139e97af2bad288264d54df160d0a0dabcb9869bd8a008d2d85`；
+  Linux Container Artifact `build-1785148334-1` SHA-256 为
+  `d74b03450e7d21281e823266698be86169ab40e9f9e7a240a55ddbf55e427bca`；
+  Windows x86-64 PE32+ Debug EXE SHA-256 为
+  `1fc5ac6e49f96817bf90d0de7dfe7501cffcc772c1c4c82e372e6b34fe6ea4f8`。
 - 2026-07-27：Commit `9f14940` 的 GitHub Actions Run `30243415893` 九个 Job
   全部通过。OpenSSH Log 明确执行
   `encrypted_private_key_flows_from_credential_id_to_ssh_core`，Windows、Android、
