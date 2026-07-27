@@ -121,7 +121,8 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
   `ssh_connect_saved_host` IPC 和最多 32 跳的 russh Jump Route Runtime。
 - [x] 2026-07-27：Saved Host Runtime 通过 Workspace、Clippy、两 Jump
   OpenSSH、Playwright、agent-browser、原生 X11、Wayland/IBus 和 Android ARM64
-  本地回归。
+  本地回归；修复原生 WebView Ready 判定后，远端 Run `30250776234` 的九个 CI
+  Job 全部通过。
 - [ ] Windows 运行证据仍待补充。
 - [ ] iOS Build 因当前没有 macOS/Xcode 环境暂缓。
 - [ ] 根据证据更新 ADR 状态并完成 Phase 0 报告。
@@ -549,6 +550,11 @@ ssh-target-internal
   `02-vault-pin-entered.bmp` 仍是逐像素黑屏，约 15 秒后的失败截图才显示 React
   Vault Gate。X11 Driver 的 `probe` 因此增加目标窗口中心像素检查，只有 WebView
   已实际绘制非黑内容才报告 ready；Wayland Vault 输入也同步改用 Tab/Enter。
+- 2026-07-27：Commit `563c09e` 的 GitHub Actions Run `30250776234` 九个 Job
+  全部通过。成功 Artifact 的 X11 首屏已实际绘制 Vault Gate、双 PIN 输入均到达，
+  4 MiB 输出后仍保持连接；Wayland 截图和远端 Byte Evidence 记录
+  `/tmp/anyssh-ime-中文文`。同一 Run 还通过 OpenSSH 两 Jump Saved Host、
+  Rust Core、Frontend、E2E、agent-browser、Windows、Android 和 Linux Container。
 - 2026-07-27：Commit `9f14940` 的 GitHub Actions Run `30243415893` 九个 Job
   全部通过。OpenSSH Log 明确执行
   `encrypted_private_key_flows_from_credential_id_to_ssh_core`，Windows、Android、
