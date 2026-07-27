@@ -72,7 +72,7 @@ async function createVaultAndRepository(targetPage) {
     .getByRole("button", { name: "Create encrypted Vault" })
     .click();
   await assert(
-    targetPage.getByText("Native runtime", { exact: true }),
+    targetPage.getByRole("heading", { level: 1, name: "Local lab" }),
   ).toBeVisible();
   await capture(targetPage, "02-native-ready.png", "02-native-ready.txt");
 
@@ -143,7 +143,7 @@ async function createVaultAndRepository(targetPage) {
   await targetPage.getByLabel("PIN", { exact: true }).fill(pin);
   await targetPage.getByRole("button", { name: "Unlock" }).click();
   await assert(
-    targetPage.getByText("Native runtime", { exact: true }),
+    targetPage.getByRole("heading", { level: 1, name: "Local lab" }),
   ).toBeVisible();
   await capture(
     targetPage,
@@ -160,7 +160,7 @@ async function unlockRestartedVault(targetPage) {
   await targetPage.getByLabel("PIN", { exact: true }).fill(pin);
   await targetPage.getByRole("button", { name: "Unlock" }).click();
   await assert(
-    targetPage.getByText("Native runtime", { exact: true }),
+    targetPage.getByRole("heading", { level: 1, name: "Local lab" }),
   ).toBeVisible();
 
   await targetPage.getByRole("button", { name: /^Credentials \d+$/ }).click();

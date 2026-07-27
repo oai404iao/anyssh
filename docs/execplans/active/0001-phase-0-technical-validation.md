@@ -675,6 +675,12 @@ ssh-target-internal
   `Vault files are incomplete`，原因是 QA 在启动前创建了空 Vault Root；
   Storage 按设计把“目录存在但 Bootstrap/Database 缺失”判为损坏。修复改为确保
   Override Path 不存在，由 Vault Create 流程原子创建。
+- 2026-07-27：Vault Root 修复提交 `41215e6` 的 Run `30269321844` 已在
+  Windows WebView2 中成功创建 Vault 并进入 Workspace。后续等待条件错误地要求
+  Compact Sidebar Footer 中的 `Native runtime` 文本可见；1028 CSS Pixel 宽度下
+  Footer 文本按设计隐藏，但主 Workspace 已正常渲染。截图同时暴露 Compact
+  Sidebar 的裸 Text Node 没有被现有 Child Selector 隐藏；修复改为等待
+  `Local lab` Heading，并在 Compact 模式将 Nav Font Size 设为 0。
 - 2026-07-27：Commit `9f14940` 的 GitHub Actions Run `30243415893` 九个 Job
   全部通过。OpenSSH Log 明确执行
   `encrypted_private_key_flows_from_credential_id_to_ssh_core`，Windows、Android、

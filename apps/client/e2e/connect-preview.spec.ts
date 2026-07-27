@@ -114,4 +114,10 @@ test("manages Credentials, Hosts, and ordered Jump Routes", async ({
   await inUseRoute.getByRole("button", { name: "Delete" }).click();
   await inUseRoute.getByRole("button", { name: "Confirm delete" }).click();
   await expect(page.getByRole("alert")).toContainText("in use");
+
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await expect(page.locator(".primary-nav .nav-item").first()).toHaveCSS(
+    "font-size",
+    "0px",
+  );
 });

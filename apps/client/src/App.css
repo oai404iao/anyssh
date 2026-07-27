@@ -1434,6 +1434,7 @@ select:focus-visible {
     display: grid;
     place-items: center;
     padding: 0;
+    font-size: 0;
   }
 
   .host-card {
@@ -1441,6 +1442,18 @@ select:focus-visible {
     grid-template-columns: 1fr;
     place-items: center;
     padding: 7px;
+  }
+
+  .empty-host-list {
+    min-height: 44px;
+    padding: 0;
+    font-size: 0;
+  }
+
+  .empty-host-list::before {
+    content: "+";
+    color: #77849a;
+    font-size: 18px;
   }
 
   .sidebar-footer {

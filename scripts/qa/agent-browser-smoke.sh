@@ -191,11 +191,17 @@ agent-browser --session "$SESSION" screenshot --full \
 agent-browser --session "$SESSION" snapshot -i \
   >"$OUTPUT_DIR/07-route-snapshot.txt"
 
+agent-browser --session "$SESSION" set viewport 1024 768
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/08-route-compact.png"
+agent-browser --session "$SESSION" snapshot -i \
+  >"$OUTPUT_DIR/08-route-compact-snapshot.txt"
+
 agent-browser --session "$SESSION" set viewport 390 844
 agent-browser --session "$SESSION" screenshot --full \
-  "$OUTPUT_DIR/screenshots/08-route-mobile.png"
+  "$OUTPUT_DIR/screenshots/09-route-mobile.png"
 agent-browser --session "$SESSION" snapshot -i \
-  >"$OUTPUT_DIR/08-route-mobile-snapshot.txt"
+  >"$OUTPUT_DIR/09-route-mobile-snapshot.txt"
 
 BROWSER_ERRORS="$(agent-browser --session "$SESSION" errors)"
 printf '%s\n' "$BROWSER_ERRORS" >"$OUTPUT_DIR/errors.txt"
@@ -221,6 +227,7 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
 - Trust action opened the browser QA terminal session.
 - Real keyboard events reached xterm.js.
 - Unicode/CJK/Nerd Font preview command rendered.
+- Compact 1024x768 layout rendered with an icon-only sidebar.
 - Responsive layout rendered at 390x844.
 - Disconnect returned the UI to the disconnected state.
 - Password Credential creation returned metadata without showing the submitted
@@ -243,7 +250,8 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
 - \`screenshots/05-disconnected.png\`
 - \`screenshots/06-credentials.png\`
 - \`screenshots/07-route-desktop.png\`
-- \`screenshots/08-route-mobile.png\`
+- \`screenshots/08-route-compact.png\`
+- \`screenshots/09-route-mobile.png\`
 EOF
 
 echo "agent-browser smoke passed: $OUTPUT_DIR"
