@@ -34,13 +34,15 @@ label and username; Rust opens the native picker, validates the selected file, a
 the Key without returning its Path or contents to the WebView. The first implementation
 accepts unencrypted OpenSSH Keys only.
 
-Host and Jump Route CRUD is also metadata-only. Hosts persist optional Credential and Route
-IDs; ordered Jump Routes persist Host IDs only. They never copy a username, password,
+Group, Host, and Jump Route CRUD is also metadata-only. Groups form a bounded parent tree.
+Groups and Hosts persist explicit `Inherit`, `Set`, or `Clear` Credential/Route reference
+state; ordered Jump Routes persist Host IDs only. They never copy a username, password,
 Private Key, Passphrase, or endpoint into a Route step.
 
-The configuration workspace exposes Host, Credential, and Jump Route management. Browser
-QA uses metadata-only in-memory fixtures and never reads a file or opens a network
-connection; native mode uses the ApplicationCore and DB Actor.
+The configuration workspace exposes Group, Host, Credential, and Jump Route management.
+Browser QA uses metadata-only in-memory fixtures and never reads a file or opens a network
+connection; native mode uses the ApplicationCore and DB Actor. Effective Host
+Credential/Route references are resolved in Rust, not recursively assembled by React.
 
 Saved Host connections use `ssh_connect_saved_host` and send only a Host ID plus terminal
 size. The DB Actor expands the ordered Route and resolves every Credential in Rust before

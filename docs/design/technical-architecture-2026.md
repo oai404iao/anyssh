@@ -294,11 +294,12 @@ TCP/Proxy -> Jump 1 SSH
 
 Jump Route 使用有序列表存储，并在保存时检测循环引用。
 
-当前 Schema v3 已实现该持久化模型：Route Step 只保存 Host ID，Host 只保存
-可选 Credential/Route ID；Foreign Key 使用 Restrict 删除语义，保存时对完整
-Host -> Route -> Step Host 图执行循环检测。Saved Host IPC 只提交 Target Host
-ID；DB Actor 递归展开 Route 并解析 Credential，SSH Core 使用
-`Vec<SshConnectionConfig>` 执行最多 32 个 Jump Host。
+当前 Schema v4 已实现该持久化模型：Route Step 只保存 Host ID，Host 保存可选
+Group ID 和 Credential/Route 三态引用；Foreign Key 使用 Restrict 删除语义，
+保存时对 Effective Host -> Route -> Step Host 图执行循环检测。Saved Host IPC
+只提交 Target Host ID；DB Actor 先解析最多 32 层 Group，再递归展开 Route 和
+Credential，SSH Core 使用 `Vec<SshConnectionConfig>` 执行最多 32 个 Jump
+Host。
 
 Phase 0 最初验证单个 Jump Host：
 
@@ -415,9 +416,10 @@ KnownHost
 
 Host 只保存对 Credential/Key/Route 的 ID 引用，不复制密码或私钥。
 
-Schema v3 已实现其中的 Credential 与 Jump Route 引用；Group、Key、Proxy 和
-其他三态继承字段仍待后续领域模型实现。当前 React 配置 UI 已能管理 Host、
-Credential 和有序 Jump Route，但不改变这些引用边界。
+Schema v4 已实现 Group Parent Tree，以及 Credential ID 和 Jump Route ID 的
+`Inherit / Set / Clear`。Effective Configuration 在 DB Actor/Rust 内解析；
+React 配置 UI 只读取 Local Override 和 metadata-only Effective Summary。
+Key、Proxy 和其他三态继承字段仍待后续领域模型实现。
 
 ---
 
@@ -602,10 +604,11 @@ SQLCipher 查询均在 Actor Thread 中串行执行，Tauri Command 不再使用
 `spawn_blocking` 或 `Mutex<Option<LocalVault>>`。最后一个 Handle 释放时先关闭
 Queue，再 Join Actor Thread，确保数据库连接按顺序销毁。
 
-当前 Schema v3 Repository 设计见：
+当前 Schema v4 Repository 设计见：
 
 - [Credential Repository v1](credential-repository-v1.md)
 - [Host 与 Jump Route Repository v1](host-jump-route-repository-v1.md)
+- [Group Inheritance v1](group-inheritance-v1.md)
 
 Tauri 只调用 `anyssh-app::ApplicationCore`；它不直接解析 Credential Secret、
 构造 SSH Authentication 或访问 SQLCipher Connection。

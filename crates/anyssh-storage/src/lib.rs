@@ -4,7 +4,9 @@ mod actor;
 mod connection_plan;
 mod credential;
 mod entity_id;
+mod group;
 mod host;
+mod inheritance;
 mod jump_route;
 
 pub use actor::{
@@ -13,7 +15,9 @@ pub use actor::{
 };
 pub use connection_plan::{ResolvedHostConnection, ResolvedHostConnectionPlan};
 pub use credential::{CredentialKind, CredentialSecret, CredentialSummary, ResolvedCredential};
+pub use group::{GroupSummary, MAX_GROUP_DEPTH};
 pub use host::HostSummary;
+pub use inheritance::Override;
 pub use jump_route::{JumpRouteSummary, MAX_JUMP_ROUTE_STEPS};
 
 use std::{
@@ -39,14 +43,16 @@ use zeroize::Zeroizing;
 
 use crate::{
     credential::{CredentialRecord, generate_credential_id, validate_credential_id},
+    group::validate_group_id,
     host::validate_host_id,
+    inheritance::SET_STATE,
     jump_route::validate_jump_route_id,
 };
 
 pub const BOOTSTRAP_FILE_NAME: &str = "vault.bootstrap.json";
 pub const DATABASE_FILE_NAME: &str = "vault.db";
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 const KEY_BYTES: usize = 32;
 const NONCE_BYTES: usize = 24;
 
@@ -72,6 +78,16 @@ pub enum StorageError {
     HostCredentialMissing(String),
     #[error("host is referenced by a Jump Route")]
     HostInUse,
+    #[error("Group record is invalid")]
+    InvalidGroup,
+    #[error("Group was not found")]
+    GroupNotFound,
+    #[error("Group is referenced by a child Group or Host")]
+    GroupInUse,
+    #[error("Group parent references form a cycle")]
+    GroupCycle,
+    #[error("Group hierarchy exceeds the maximum depth of {0}")]
+    GroupTooDeep(usize),
     #[error("Jump Route record is invalid")]
     InvalidJumpRoute,
     #[error("Jump Route was not found")]
@@ -210,6 +226,22 @@ impl LocalVault {
         &self.database.cipher_version
     }
 
+    fn create_group(&mut self, record: &GroupSummary) -> Result<GroupSummary, StorageError> {
+        self.database.create_group(record)
+    }
+
+    fn update_group(&mut self, record: &GroupSummary) -> Result<GroupSummary, StorageError> {
+        self.database.update_group(record)
+    }
+
+    fn list_groups(&self) -> Result<Vec<GroupSummary>, StorageError> {
+        self.database.list_groups()
+    }
+
+    fn delete_group(&mut self, id: &str) -> Result<bool, StorageError> {
+        self.database.delete_group(id)
+    }
+
     fn create_host(&mut self, record: &HostSummary) -> Result<HostSummary, StorageError> {
         self.database.create_host(record)
     }
@@ -303,6 +335,7 @@ impl VaultDatabase {
         let mut database = Self::configure(connection, keys)?;
         initialize_schema(&mut database.connection)?;
         database.migrate_to_v3(false)?;
+        database.migrate_to_v4(false)?;
         database.connection.execute(
             "INSERT INTO vault_meta(key, value) VALUES('vault_id', ?1)",
             [keys.vault_id()],
@@ -379,6 +412,128 @@ impl VaultDatabase {
         })
     }
 
+    fn create_group(&mut self, record: &GroupSummary) -> Result<GroupSummary, StorageError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        validate_group_references(&transaction, record)?;
+        transaction.execute(
+            "
+            INSERT INTO host_groups(id, label, parent_group_id)
+            VALUES(?1, ?2, ?3)
+            ",
+            params![record.id(), record.label(), record.parent_group_id()],
+        )?;
+        transaction.execute(
+            "
+            INSERT INTO group_overrides(
+                group_id, credential_state, credential_id,
+                jump_route_state, jump_route_id
+            )
+            VALUES(?1, ?2, ?3, ?4, ?5)
+            ",
+            params![
+                record.id(),
+                record.credential_override().storage_state(),
+                record.credential_override().value().map(String::as_str),
+                record.jump_route_override().storage_state(),
+                record.jump_route_override().value().map(String::as_str),
+            ],
+        )?;
+        validate_group_graph(&transaction)?;
+        validate_jump_route_graph(&transaction)?;
+        transaction.commit()?;
+        self.load_group(record.id())
+    }
+
+    fn update_group(&mut self, record: &GroupSummary) -> Result<GroupSummary, StorageError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        validate_group_references(&transaction, record)?;
+        let changed = transaction.execute(
+            "
+            UPDATE host_groups
+            SET label = ?2,
+                parent_group_id = ?3
+            WHERE id = ?1
+            ",
+            params![record.id(), record.label(), record.parent_group_id()],
+        )?;
+        if changed != 1 {
+            return Err(StorageError::GroupNotFound);
+        }
+        let changed = transaction.execute(
+            "
+            UPDATE group_overrides
+            SET credential_state = ?2,
+                credential_id = ?3,
+                jump_route_state = ?4,
+                jump_route_id = ?5
+            WHERE group_id = ?1
+            ",
+            params![
+                record.id(),
+                record.credential_override().storage_state(),
+                record.credential_override().value().map(String::as_str),
+                record.jump_route_override().storage_state(),
+                record.jump_route_override().value().map(String::as_str),
+            ],
+        )?;
+        if changed != 1 {
+            return Err(StorageError::RecordIntegrity);
+        }
+        validate_group_graph(&transaction)?;
+        validate_jump_route_graph(&transaction)?;
+        transaction.commit()?;
+        self.load_group(record.id())
+    }
+
+    fn list_groups(&self) -> Result<Vec<GroupSummary>, StorageError> {
+        let stored_groups = {
+            let mut statement = self.connection.prepare(
+                "
+                SELECT g.id, g.label, g.parent_group_id,
+                       o.credential_state, o.credential_id,
+                       o.jump_route_state, o.jump_route_id
+                FROM host_groups AS g
+                JOIN group_overrides AS o ON o.group_id = g.id
+                ORDER BY g.label COLLATE NOCASE, g.id
+                ",
+            )?;
+            let rows = statement.query_map([], stored_group_from_row)?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+
+        stored_groups
+            .into_iter()
+            .map(|stored| group_summary_from_stored(&self.connection, stored))
+            .collect()
+    }
+
+    fn delete_group(&mut self, id: &str) -> Result<bool, StorageError> {
+        validate_group_id(id)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if transaction.query_row(
+            "
+            SELECT EXISTS(
+                SELECT 1 FROM host_groups WHERE parent_group_id = ?1
+                UNION ALL
+                SELECT 1 FROM hosts WHERE group_id = ?1
+            )
+            ",
+            [id],
+            |row| row.get::<_, bool>(0),
+        )? {
+            return Err(StorageError::GroupInUse);
+        }
+        let changed = transaction.execute("DELETE FROM host_groups WHERE id = ?1", [id])?;
+        transaction.commit()?;
+        Ok(changed == 1)
+    }
+
     fn create_host(&mut self, record: &HostSummary) -> Result<HostSummary, StorageError> {
         let transaction = self
             .connection
@@ -387,22 +542,28 @@ impl VaultDatabase {
         transaction.execute(
             "
             INSERT INTO hosts(
-                id, display_name, host, port, credential_id, jump_route_id
+                id, display_name, host, port, group_id,
+                credential_state, credential_id,
+                jump_route_state, jump_route_id
             )
-            VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+            VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
             ",
             params![
                 record.id(),
                 record.display_name(),
                 record.host(),
                 i64::from(record.port()),
-                record.credential_id(),
-                record.jump_route_id(),
+                record.group_id(),
+                record.credential_override().storage_state(),
+                record.credential_override().value().map(String::as_str),
+                record.jump_route_override().storage_state(),
+                record.jump_route_override().value().map(String::as_str),
             ],
         )?;
+        validate_group_graph(&transaction)?;
         validate_jump_route_graph(&transaction)?;
         transaction.commit()?;
-        Ok(record.clone())
+        self.load_host(record.id())
     }
 
     fn update_host(&mut self, record: &HostSummary) -> Result<HostSummary, StorageError> {
@@ -416,8 +577,11 @@ impl VaultDatabase {
             SET display_name = ?2,
                 host = ?3,
                 port = ?4,
-                credential_id = ?5,
-                jump_route_id = ?6
+                group_id = ?5,
+                credential_state = ?6,
+                credential_id = ?7,
+                jump_route_state = ?8,
+                jump_route_id = ?9
             WHERE id = ?1
             ",
             params![
@@ -425,49 +589,41 @@ impl VaultDatabase {
                 record.display_name(),
                 record.host(),
                 i64::from(record.port()),
-                record.credential_id(),
-                record.jump_route_id(),
+                record.group_id(),
+                record.credential_override().storage_state(),
+                record.credential_override().value().map(String::as_str),
+                record.jump_route_override().storage_state(),
+                record.jump_route_override().value().map(String::as_str),
             ],
         )?;
         if changed != 1 {
             return Err(StorageError::HostNotFound);
         }
+        validate_group_graph(&transaction)?;
         validate_jump_route_graph(&transaction)?;
         transaction.commit()?;
-        Ok(record.clone())
+        self.load_host(record.id())
     }
 
     fn list_hosts(&self) -> Result<Vec<HostSummary>, StorageError> {
-        let mut statement = self.connection.prepare(
-            "
-            SELECT id, display_name, host, port, credential_id, jump_route_id
-            FROM hosts
-            ORDER BY display_name COLLATE NOCASE, id
-            ",
-        )?;
-        let rows = statement.query_map([], |row| {
-            Ok(StoredHostSummary {
-                id: row.get(0)?,
-                display_name: row.get(1)?,
-                host: row.get(2)?,
-                port: row.get(3)?,
-                credential_id: row.get(4)?,
-                jump_route_id: row.get(5)?,
-            })
-        })?;
+        let stored_hosts = {
+            let mut statement = self.connection.prepare(
+                "
+                SELECT id, display_name, host, port, group_id,
+                       credential_state, credential_id,
+                       jump_route_state, jump_route_id
+                FROM hosts
+                ORDER BY display_name COLLATE NOCASE, id
+                ",
+            )?;
+            let rows = statement.query_map([], stored_host_from_row)?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
 
-        rows.map(|row| {
-            let row = row?;
-            HostSummary::new(
-                row.id,
-                row.display_name,
-                row.host,
-                u16::try_from(row.port).map_err(|_| StorageError::RecordIntegrity)?,
-                row.credential_id,
-                row.jump_route_id,
-            )
-        })
-        .collect()
+        stored_hosts
+            .into_iter()
+            .map(|stored| host_summary_from_stored(&self.connection, stored))
+            .collect()
     }
 
     fn delete_host(&mut self, id: &str) -> Result<bool, StorageError> {
@@ -569,8 +725,18 @@ impl VaultDatabase {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         if transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM hosts WHERE jump_route_id = ?1)",
-            [id],
+            "
+            SELECT EXISTS(
+                SELECT 1
+                FROM hosts
+                WHERE jump_route_state = ?2 AND jump_route_id = ?1
+                UNION ALL
+                SELECT 1
+                FROM group_overrides
+                WHERE jump_route_state = ?2 AND jump_route_id = ?1
+            )
+            ",
+            params![id, SET_STATE],
             |row| row.get::<_, bool>(0),
         )? {
             return Err(StorageError::JumpRouteInUse);
@@ -655,32 +821,22 @@ impl VaultDatabase {
             .connection
             .query_row(
                 "
-                SELECT id, display_name, host, port, credential_id, jump_route_id
+                SELECT id, display_name, host, port, group_id,
+                       credential_state, credential_id,
+                       jump_route_state, jump_route_id
                 FROM hosts
                 WHERE id = ?1
                 ",
                 [id],
-                |row| {
-                    Ok(StoredHostSummary {
-                        id: row.get(0)?,
-                        display_name: row.get(1)?,
-                        host: row.get(2)?,
-                        port: row.get(3)?,
-                        credential_id: row.get(4)?,
-                        jump_route_id: row.get(5)?,
-                    })
-                },
+                stored_host_from_row,
             )
             .optional()?
             .ok_or(StorageError::HostNotFound)?;
-        HostSummary::new(
-            stored.id,
-            stored.display_name,
-            stored.host,
-            u16::try_from(stored.port).map_err(|_| StorageError::RecordIntegrity)?,
-            stored.credential_id,
-            stored.jump_route_id,
-        )
+        host_summary_from_stored(&self.connection, stored)
+    }
+
+    fn load_group(&self, id: &str) -> Result<GroupSummary, StorageError> {
+        group_summary_from_stored(&self.connection, load_stored_group(&self.connection, id)?)
     }
 
     fn load_jump_route(&self, id: &str) -> Result<JumpRouteSummary, StorageError> {
@@ -820,8 +976,18 @@ impl VaultDatabase {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         if transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM hosts WHERE credential_id = ?1)",
-            [id],
+            "
+            SELECT EXISTS(
+                SELECT 1
+                FROM hosts
+                WHERE credential_state = ?2 AND credential_id = ?1
+                UNION ALL
+                SELECT 1
+                FROM group_overrides
+                WHERE credential_state = ?2 AND credential_id = ?1
+            )
+            ",
+            params![id, SET_STATE],
             |row| row.get::<_, bool>(0),
         )? {
             return Err(StorageError::CredentialInUse);
@@ -1005,9 +1171,14 @@ impl VaultDatabase {
             SCHEMA_VERSION => Ok(()),
             1 => {
                 migrate_to_v2(&mut self.connection, false)?;
-                self.migrate_to_v3(false)
+                self.migrate_to_v3(false)?;
+                self.migrate_to_v4(false)
             }
-            2 => self.migrate_to_v3(false),
+            2 => {
+                self.migrate_to_v3(false)?;
+                self.migrate_to_v4(false)
+            }
+            3 => self.migrate_to_v4(false),
             version => Err(StorageError::UnsupportedSchema(version)),
         }
     }
@@ -1096,6 +1267,135 @@ impl VaultDatabase {
         }
 
         transaction.execute_batch("DROP TABLE legacy_hosts_v2;")?;
+        transaction.pragma_update(None, "user_version", 3_i64)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    fn migrate_to_v4(&mut self, simulate_interruption: bool) -> Result<(), StorageError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute_batch(
+            "
+            DROP INDEX hosts_credential_id_idx;
+            DROP INDEX hosts_jump_route_id_idx;
+            DROP INDEX jump_route_steps_host_id_idx;
+
+            ALTER TABLE jump_route_steps RENAME TO legacy_jump_route_steps_v3;
+            ALTER TABLE hosts RENAME TO legacy_hosts_v3;
+
+            CREATE TABLE host_groups(
+                id TEXT PRIMARY KEY NOT NULL,
+                label TEXT NOT NULL,
+                parent_group_id TEXT,
+                FOREIGN KEY(parent_group_id)
+                    REFERENCES host_groups(id) ON DELETE RESTRICT
+            ) WITHOUT ROWID;
+
+            CREATE TABLE group_overrides(
+                group_id TEXT PRIMARY KEY NOT NULL,
+                credential_state INTEGER NOT NULL CHECK(credential_state IN (0, 1, 2)),
+                credential_id TEXT,
+                jump_route_state INTEGER NOT NULL CHECK(jump_route_state IN (0, 1, 2)),
+                jump_route_id TEXT,
+                CHECK(
+                    (credential_state = 0 AND credential_id IS NULL)
+                    OR (credential_state = 1 AND credential_id IS NOT NULL)
+                    OR (credential_state = 2 AND credential_id IS NULL)
+                ),
+                CHECK(
+                    (jump_route_state = 0 AND jump_route_id IS NULL)
+                    OR (jump_route_state = 1 AND jump_route_id IS NOT NULL)
+                    OR (jump_route_state = 2 AND jump_route_id IS NULL)
+                ),
+                FOREIGN KEY(group_id)
+                    REFERENCES host_groups(id) ON DELETE CASCADE,
+                FOREIGN KEY(credential_id)
+                    REFERENCES credentials(id) ON DELETE RESTRICT,
+                FOREIGN KEY(jump_route_id)
+                    REFERENCES jump_routes(id) ON DELETE RESTRICT
+            ) WITHOUT ROWID;
+
+            CREATE TABLE hosts(
+                id TEXT PRIMARY KEY NOT NULL,
+                display_name TEXT NOT NULL,
+                host TEXT NOT NULL,
+                port INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),
+                group_id TEXT,
+                credential_state INTEGER NOT NULL CHECK(credential_state IN (0, 1, 2)),
+                credential_id TEXT,
+                jump_route_state INTEGER NOT NULL CHECK(jump_route_state IN (0, 1, 2)),
+                jump_route_id TEXT,
+                CHECK(
+                    (credential_state = 0 AND credential_id IS NULL)
+                    OR (credential_state = 1 AND credential_id IS NOT NULL)
+                    OR (credential_state = 2 AND credential_id IS NULL)
+                ),
+                CHECK(
+                    (jump_route_state = 0 AND jump_route_id IS NULL)
+                    OR (jump_route_state = 1 AND jump_route_id IS NOT NULL)
+                    OR (jump_route_state = 2 AND jump_route_id IS NULL)
+                ),
+                FOREIGN KEY(group_id)
+                    REFERENCES host_groups(id) ON DELETE RESTRICT,
+                FOREIGN KEY(credential_id)
+                    REFERENCES credentials(id) ON DELETE RESTRICT,
+                FOREIGN KEY(jump_route_id)
+                    REFERENCES jump_routes(id) ON DELETE RESTRICT
+            ) WITHOUT ROWID;
+
+            CREATE TABLE jump_route_steps(
+                route_id TEXT NOT NULL,
+                position INTEGER NOT NULL CHECK(position >= 0),
+                host_id TEXT NOT NULL,
+                PRIMARY KEY(route_id, position),
+                UNIQUE(route_id, host_id),
+                FOREIGN KEY(route_id)
+                    REFERENCES jump_routes(id) ON DELETE CASCADE,
+                FOREIGN KEY(host_id)
+                    REFERENCES hosts(id) ON DELETE RESTRICT
+            ) WITHOUT ROWID;
+
+            INSERT INTO hosts(
+                id, display_name, host, port, group_id,
+                credential_state, credential_id,
+                jump_route_state, jump_route_id
+            )
+            SELECT id, display_name, host, port, NULL,
+                   CASE WHEN credential_id IS NULL THEN 0 ELSE 1 END,
+                   credential_id,
+                   CASE WHEN jump_route_id IS NULL THEN 0 ELSE 1 END,
+                   jump_route_id
+            FROM legacy_hosts_v3;
+
+            INSERT INTO jump_route_steps(route_id, position, host_id)
+            SELECT route_id, position, host_id
+            FROM legacy_jump_route_steps_v3;
+
+            CREATE INDEX host_groups_parent_group_id_idx
+                ON host_groups(parent_group_id);
+            CREATE INDEX group_overrides_credential_id_idx
+                ON group_overrides(credential_id);
+            CREATE INDEX group_overrides_jump_route_id_idx
+                ON group_overrides(jump_route_id);
+            CREATE INDEX hosts_group_id_idx ON hosts(group_id);
+            CREATE INDEX hosts_credential_id_idx ON hosts(credential_id);
+            CREATE INDEX hosts_jump_route_id_idx ON hosts(jump_route_id);
+            CREATE INDEX jump_route_steps_host_id_idx ON jump_route_steps(host_id);
+            ",
+        )?;
+
+        if simulate_interruption {
+            return Err(StorageError::MigrationInterrupted);
+        }
+
+        transaction.execute_batch(
+            "
+            DROP TABLE legacy_jump_route_steps_v3;
+            DROP TABLE legacy_hosts_v3;
+            ",
+        )?;
         transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         transaction.commit()?;
         Ok(())
@@ -1226,8 +1526,167 @@ struct StoredHostSummary {
     display_name: String,
     host: String,
     port: i64,
+    group_id: Option<String>,
+    credential_state: i64,
     credential_id: Option<String>,
+    jump_route_state: i64,
     jump_route_id: Option<String>,
+}
+
+struct StoredGroupSummary {
+    id: String,
+    label: String,
+    parent_group_id: Option<String>,
+    credential_state: i64,
+    credential_id: Option<String>,
+    jump_route_state: i64,
+    jump_route_id: Option<String>,
+}
+
+fn stored_host_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredHostSummary> {
+    Ok(StoredHostSummary {
+        id: row.get(0)?,
+        display_name: row.get(1)?,
+        host: row.get(2)?,
+        port: row.get(3)?,
+        group_id: row.get(4)?,
+        credential_state: row.get(5)?,
+        credential_id: row.get(6)?,
+        jump_route_state: row.get(7)?,
+        jump_route_id: row.get(8)?,
+    })
+}
+
+fn stored_group_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredGroupSummary> {
+    Ok(StoredGroupSummary {
+        id: row.get(0)?,
+        label: row.get(1)?,
+        parent_group_id: row.get(2)?,
+        credential_state: row.get(3)?,
+        credential_id: row.get(4)?,
+        jump_route_state: row.get(5)?,
+        jump_route_id: row.get(6)?,
+    })
+}
+
+fn load_stored_group(
+    connection: &Connection,
+    id: &str,
+) -> Result<StoredGroupSummary, StorageError> {
+    validate_group_id(id)?;
+    connection
+        .query_row(
+            "
+            SELECT g.id, g.label, g.parent_group_id,
+                   o.credential_state, o.credential_id,
+                   o.jump_route_state, o.jump_route_id
+            FROM host_groups AS g
+            JOIN group_overrides AS o ON o.group_id = g.id
+            WHERE g.id = ?1
+            ",
+            [id],
+            stored_group_from_row,
+        )
+        .optional()?
+        .ok_or(StorageError::GroupNotFound)
+}
+
+fn host_summary_from_stored(
+    connection: &Connection,
+    stored: StoredHostSummary,
+) -> Result<HostSummary, StorageError> {
+    let credential_override =
+        Override::from_storage(stored.credential_state, stored.credential_id)?;
+    let jump_route_override =
+        Override::from_storage(stored.jump_route_state, stored.jump_route_id)?;
+    let (effective_credential_id, effective_jump_route_id) = resolve_effective_references(
+        connection,
+        stored.group_id.as_deref(),
+        &credential_override,
+        &jump_route_override,
+    )?;
+
+    HostSummary::from_stored(
+        stored.id,
+        stored.display_name,
+        stored.host,
+        u16::try_from(stored.port).map_err(|_| StorageError::RecordIntegrity)?,
+        stored.group_id,
+        credential_override,
+        jump_route_override,
+        effective_credential_id,
+        effective_jump_route_id,
+    )
+}
+
+fn group_summary_from_stored(
+    connection: &Connection,
+    stored: StoredGroupSummary,
+) -> Result<GroupSummary, StorageError> {
+    let credential_override =
+        Override::from_storage(stored.credential_state, stored.credential_id)?;
+    let jump_route_override =
+        Override::from_storage(stored.jump_route_state, stored.jump_route_id)?;
+    let (effective_credential_id, effective_jump_route_id) = resolve_effective_references(
+        connection,
+        stored.parent_group_id.as_deref(),
+        &credential_override,
+        &jump_route_override,
+    )?;
+
+    GroupSummary::from_stored(
+        stored.id,
+        stored.label,
+        stored.parent_group_id,
+        credential_override,
+        jump_route_override,
+        effective_credential_id,
+        effective_jump_route_id,
+    )
+}
+
+fn resolve_effective_references(
+    connection: &Connection,
+    group_id: Option<&str>,
+    credential_override: &Override<String>,
+    jump_route_override: &Override<String>,
+) -> Result<(Option<String>, Option<String>), StorageError> {
+    let mut credential = resolved_override(credential_override);
+    let mut jump_route = resolved_override(jump_route_override);
+    let mut current_group_id = group_id.map(str::to_owned);
+    let mut visited = HashSet::new();
+    let mut depth = 0usize;
+
+    while let Some(group_id) = current_group_id {
+        if !visited.insert(group_id.clone()) {
+            return Err(StorageError::GroupCycle);
+        }
+        depth += 1;
+        if depth > MAX_GROUP_DEPTH {
+            return Err(StorageError::GroupTooDeep(MAX_GROUP_DEPTH));
+        }
+
+        let group = load_stored_group(connection, &group_id)?;
+        let group_credential = Override::from_storage(group.credential_state, group.credential_id)?;
+        let group_jump_route = Override::from_storage(group.jump_route_state, group.jump_route_id)?;
+        if credential.is_none() {
+            credential = resolved_override(&group_credential);
+        }
+        if jump_route.is_none() {
+            jump_route = resolved_override(&group_jump_route);
+        }
+        current_group_id = group.parent_group_id;
+    }
+
+    Ok((credential.unwrap_or(None), jump_route.unwrap_or(None)))
+}
+
+fn resolved_override(value: &Override<String>) -> Option<Option<String>> {
+    match value {
+        Override::Inherit => None,
+        Override::Set(value) => Some(Some(value.clone())),
+        Override::Clear => Some(None),
+    }
 }
 
 struct StoredCredentialSummary {
@@ -1265,11 +1724,20 @@ struct MigratedLegacyHost {
     encrypted: EncryptedCredential,
 }
 
-fn validate_host_references(
+fn validate_group_references(
     transaction: &Transaction<'_>,
-    host: &HostSummary,
+    group: &GroupSummary,
 ) -> Result<(), StorageError> {
-    if let Some(credential_id) = host.credential_id()
+    if let Some(parent_group_id) = group.parent_group_id()
+        && !transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM host_groups WHERE id = ?1)",
+            [parent_group_id],
+            |row| row.get::<_, bool>(0),
+        )?
+    {
+        return Err(StorageError::GroupNotFound);
+    }
+    if let Some(credential_id) = group.credential_override().value()
         && !transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM credentials WHERE id = ?1)",
             [credential_id],
@@ -1278,7 +1746,7 @@ fn validate_host_references(
     {
         return Err(StorageError::CredentialNotFound);
     }
-    if let Some(route_id) = host.jump_route_id()
+    if let Some(route_id) = group.jump_route_override().value()
         && !transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM jump_routes WHERE id = ?1)",
             [route_id],
@@ -1286,6 +1754,77 @@ fn validate_host_references(
         )?
     {
         return Err(StorageError::JumpRouteNotFound);
+    }
+    Ok(())
+}
+
+fn validate_host_references(
+    transaction: &Transaction<'_>,
+    host: &HostSummary,
+) -> Result<(), StorageError> {
+    if let Some(group_id) = host.group_id()
+        && !transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM host_groups WHERE id = ?1)",
+            [group_id],
+            |row| row.get::<_, bool>(0),
+        )?
+    {
+        return Err(StorageError::GroupNotFound);
+    }
+    if let Some(credential_id) = host.credential_override().value()
+        && !transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM credentials WHERE id = ?1)",
+            [credential_id],
+            |row| row.get::<_, bool>(0),
+        )?
+    {
+        return Err(StorageError::CredentialNotFound);
+    }
+    if let Some(route_id) = host.jump_route_override().value()
+        && !transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM jump_routes WHERE id = ?1)",
+            [route_id],
+            |row| row.get::<_, bool>(0),
+        )?
+    {
+        return Err(StorageError::JumpRouteNotFound);
+    }
+    Ok(())
+}
+
+fn validate_group_graph(connection: &Connection) -> Result<(), StorageError> {
+    let parents = {
+        let mut statement = connection.prepare(
+            "
+            SELECT id, parent_group_id
+            FROM host_groups
+            ORDER BY id
+            ",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })?;
+        rows.collect::<Result<HashMap<_, _>, _>>()?
+    };
+
+    for group_id in parents.keys() {
+        let mut visited = HashSet::new();
+        let mut current = Some(group_id.as_str());
+        let mut depth = 0usize;
+
+        while let Some(id) = current {
+            if !visited.insert(id) {
+                return Err(StorageError::GroupCycle);
+            }
+            depth += 1;
+            if depth > MAX_GROUP_DEPTH {
+                return Err(StorageError::GroupTooDeep(MAX_GROUP_DEPTH));
+            }
+            current = parents
+                .get(id)
+                .ok_or(StorageError::RecordIntegrity)?
+                .as_deref();
+        }
     }
     Ok(())
 }
@@ -1349,19 +1888,41 @@ fn validate_jump_route_graph(connection: &Connection) -> Result<(), StorageError
     let host_routes = {
         let mut statement = connection.prepare(
             "
-            SELECT id, jump_route_id
+            SELECT id, group_id,
+                   credential_state, credential_id,
+                   jump_route_state, jump_route_id
             FROM hosts
-            WHERE jump_route_id IS NOT NULL
+            ORDER BY id
             ",
         )?;
         let rows = statement.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, Option<String>>(5)?,
+            ))
         })?;
         rows.collect::<Result<Vec<_>, _>>()?
     };
 
     let mut graph = HashMap::with_capacity(host_routes.len());
-    for (host_id, route_id) in host_routes {
+    for (host_id, group_id, credential_state, credential_id, jump_route_state, jump_route_id) in
+        host_routes
+    {
+        let credential_override = Override::from_storage(credential_state, credential_id)?;
+        let jump_route_override = Override::from_storage(jump_route_state, jump_route_id)?;
+        let (_, effective_route_id) = resolve_effective_references(
+            connection,
+            group_id.as_deref(),
+            &credential_override,
+            &jump_route_override,
+        )?;
+        let Some(route_id) = effective_route_id else {
+            continue;
+        };
         let steps = route_steps
             .get(&route_id)
             .ok_or(StorageError::RecordIntegrity)?;
@@ -1490,7 +2051,7 @@ fn migrate_to_v2(
     if simulate_interruption {
         return Err(StorageError::MigrationInterrupted);
     }
-    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    transaction.pragma_update(None, "user_version", 2_i64)?;
     transaction.commit()?;
     Ok(())
 }
@@ -1555,6 +2116,7 @@ fn is_regular_file_without_symlink(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inheritance::{CLEAR_STATE, INHERIT_STATE, SET_STATE};
 
     fn test_parameters() -> PinKdfParameters {
         PinKdfParameters::new(8 * 1024, 1, 1).expect("test parameters")
@@ -1585,6 +2147,44 @@ mod tests {
             host_ids.iter().map(|id| (*id).to_owned()).collect(),
         )
         .expect("Jump Route")
+    }
+
+    fn fixture_group(
+        id: &str,
+        label: &str,
+        parent_group_id: Option<&str>,
+        credential_override: Override<String>,
+        jump_route_override: Override<String>,
+    ) -> GroupSummary {
+        GroupSummary::new(
+            id,
+            label,
+            parent_group_id.map(str::to_owned),
+            credential_override,
+            jump_route_override,
+        )
+        .expect("Group")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn fixture_host_with_overrides(
+        id: &str,
+        display_name: &str,
+        host: &str,
+        group_id: Option<&str>,
+        credential_override: Override<String>,
+        jump_route_override: Override<String>,
+    ) -> HostSummary {
+        HostSummary::new_with_overrides(
+            id,
+            display_name,
+            host,
+            2222,
+            group_id.map(str::to_owned),
+            credential_override,
+            jump_route_override,
+        )
+        .expect("Host")
     }
 
     fn password_credential(id: &str, password: &str) -> CredentialRecord {
@@ -1675,6 +2275,14 @@ mod tests {
             &["host-jump-two", "host-jump-one"],
         );
         vault.create_jump_route(&route).expect("create Jump Route");
+        let group = fixture_group(
+            "group-production",
+            "Secret production group",
+            None,
+            Override::Set("cred-shared-password".to_owned()),
+            Override::Set("route-production".to_owned()),
+        );
+        vault.create_group(&group).expect("create Group");
         let target = fixture_host(
             "host-target",
             "Secret production target",
@@ -1692,6 +2300,7 @@ mod tests {
                 jump_two.display_name().as_bytes(),
                 jump_two.host().as_bytes(),
                 route.label().as_bytes(),
+                group.label().as_bytes(),
                 target.display_name().as_bytes(),
                 target.host().as_bytes(),
                 b"credential-user",
@@ -1708,6 +2317,7 @@ mod tests {
             reopened.list_jump_routes().expect("list Jump Routes"),
             vec![route]
         );
+        assert_eq!(reopened.list_groups().expect("list Groups"), vec![group]);
         let (username, secret) = reopened
             .resolve_credential("cred-shared-password")
             .expect("resolve shared credential")
@@ -1960,6 +2570,265 @@ mod tests {
             vault.delete_jump_route("route-for-b"),
             Err(StorageError::JumpRouteInUse)
         ));
+    }
+
+    #[test]
+    fn group_repository_resolves_three_state_inheritance_and_restricts_deletion() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let mut vault =
+            LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+        vault
+            .create_credential(&password_credential("cred-root", "root-secret"))
+            .expect("create root credential");
+        vault
+            .create_credential(&password_credential("cred-child", "child-secret"))
+            .expect("create child credential");
+
+        assert!(matches!(
+            vault.create_group(&fixture_group(
+                "group-missing-parent",
+                "Missing parent",
+                Some("group-missing"),
+                Override::Inherit,
+                Override::Inherit,
+            )),
+            Err(StorageError::GroupNotFound)
+        ));
+        assert!(matches!(
+            vault.create_group(&fixture_group(
+                "group-missing-credential",
+                "Missing Credential",
+                None,
+                Override::Set("cred-missing".to_owned()),
+                Override::Inherit,
+            )),
+            Err(StorageError::CredentialNotFound)
+        ));
+        assert!(matches!(
+            vault.create_group(&fixture_group(
+                "group-missing-route",
+                "Missing Route",
+                None,
+                Override::Inherit,
+                Override::Set("route-missing".to_owned()),
+            )),
+            Err(StorageError::JumpRouteNotFound)
+        ));
+
+        let root_group = fixture_group(
+            "group-root",
+            "Root",
+            None,
+            Override::Set("cred-root".to_owned()),
+            Override::Inherit,
+        );
+        vault.create_group(&root_group).expect("create root Group");
+        let child_group = fixture_group(
+            "group-child",
+            "Child",
+            Some("group-root"),
+            Override::Inherit,
+            Override::Clear,
+        );
+        vault
+            .create_group(&child_group)
+            .expect("create child Group");
+        assert!(matches!(
+            vault.create_host(&fixture_host_with_overrides(
+                "host-missing-group",
+                "Missing Group",
+                "missing-group.internal",
+                Some("group-missing"),
+                Override::Inherit,
+                Override::Inherit,
+            )),
+            Err(StorageError::GroupNotFound)
+        ));
+
+        let groups = vault.list_groups().expect("list Groups");
+        let child = groups
+            .iter()
+            .find(|group| group.id() == "group-child")
+            .expect("child Group");
+        assert_eq!(child.effective_credential_id(), Some("cred-root"));
+        assert_eq!(child.effective_jump_route_id(), None);
+
+        let host = fixture_host_with_overrides(
+            "host-inherited",
+            "Inherited",
+            "inherited.internal",
+            Some("group-child"),
+            Override::Inherit,
+            Override::Inherit,
+        );
+        let host = vault.create_host(&host).expect("create inherited Host");
+        assert_eq!(host.credential_id(), Some("cred-root"));
+        assert_eq!(host.jump_route_id(), None);
+
+        let child_override = fixture_group(
+            "group-child",
+            "Child",
+            Some("group-root"),
+            Override::Set("cred-child".to_owned()),
+            Override::Clear,
+        );
+        vault
+            .update_group(&child_override)
+            .expect("override child credential");
+        let host = vault
+            .list_hosts()
+            .expect("list Hosts")
+            .into_iter()
+            .find(|host| host.id() == "host-inherited")
+            .expect("inherited Host");
+        assert_eq!(host.credential_id(), Some("cred-child"));
+
+        let cleared_host = fixture_host_with_overrides(
+            "host-inherited",
+            "Inherited",
+            "inherited.internal",
+            Some("group-child"),
+            Override::Clear,
+            Override::Inherit,
+        );
+        let cleared_host = vault
+            .update_host(&cleared_host)
+            .expect("clear inherited credential");
+        assert_eq!(cleared_host.credential_id(), None);
+        assert_eq!(cleared_host.credential_override(), &Override::Clear);
+
+        assert!(matches!(
+            vault.delete_group("group-root"),
+            Err(StorageError::GroupInUse)
+        ));
+        assert!(matches!(
+            vault.delete_group("group-child"),
+            Err(StorageError::GroupInUse)
+        ));
+        assert!(matches!(
+            vault.delete_credential("cred-child"),
+            Err(StorageError::CredentialInUse)
+        ));
+
+        assert!(vault.delete_host("host-inherited").expect("delete Host"));
+        assert!(vault.delete_group("group-child").expect("delete child"));
+        assert!(vault.delete_group("group-root").expect("delete root"));
+        assert!(
+            vault
+                .delete_credential("cred-child")
+                .expect("delete child credential")
+        );
+    }
+
+    #[test]
+    fn group_repository_rejects_cycles_depth_and_effective_jump_route_cycles() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let mut vault =
+            LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+        vault
+            .create_credential(&password_credential("cred-shared", "shared-secret"))
+            .expect("create credential");
+
+        let mut parent_id = None;
+        let mut group_ids = Vec::new();
+        for index in 0..MAX_GROUP_DEPTH {
+            let id = format!("group-depth-{index}");
+            let group = fixture_group(
+                &id,
+                &format!("Depth {index}"),
+                parent_id.as_deref(),
+                Override::Inherit,
+                Override::Inherit,
+            );
+            vault.create_group(&group).expect("create allowed depth");
+            parent_id = Some(id.clone());
+            group_ids.push(id);
+        }
+        let too_deep = fixture_group(
+            "group-too-deep",
+            "Too deep",
+            parent_id.as_deref(),
+            Override::Inherit,
+            Override::Inherit,
+        );
+        assert!(matches!(
+            vault.create_group(&too_deep),
+            Err(StorageError::GroupTooDeep(MAX_GROUP_DEPTH))
+        ));
+        assert_eq!(
+            vault
+                .list_groups()
+                .expect("list after depth rejection")
+                .len(),
+            MAX_GROUP_DEPTH
+        );
+
+        let root_cycle = fixture_group(
+            &group_ids[0],
+            "Depth 0",
+            group_ids.last().map(String::as_str),
+            Override::Inherit,
+            Override::Inherit,
+        );
+        assert!(matches!(
+            vault.update_group(&root_cycle),
+            Err(StorageError::GroupCycle)
+        ));
+        assert_eq!(
+            vault
+                .list_groups()
+                .expect("list after cycle rejection")
+                .into_iter()
+                .find(|group| group.id() == group_ids[0])
+                .expect("root Group")
+                .parent_group_id(),
+            None
+        );
+
+        let route_group = fixture_group(
+            "group-route-cycle",
+            "Route cycle",
+            None,
+            Override::Set("cred-shared".to_owned()),
+            Override::Inherit,
+        );
+        vault
+            .create_group(&route_group)
+            .expect("create route Group");
+        let host = fixture_host_with_overrides(
+            "host-route-cycle",
+            "Route cycle",
+            "route-cycle.internal",
+            Some("group-route-cycle"),
+            Override::Inherit,
+            Override::Inherit,
+        );
+        vault.create_host(&host).expect("create grouped Host");
+        let route = fixture_route("route-group-cycle", "Group cycle", &["host-route-cycle"]);
+        vault.create_jump_route(&route).expect("create Route");
+        let cyclic_group = fixture_group(
+            "group-route-cycle",
+            "Route cycle",
+            None,
+            Override::Set("cred-shared".to_owned()),
+            Override::Set("route-group-cycle".to_owned()),
+        );
+        assert!(matches!(
+            vault.update_group(&cyclic_group),
+            Err(StorageError::JumpRouteCycle)
+        ));
+        assert_eq!(
+            vault
+                .list_groups()
+                .expect("list after Route cycle rejection")
+                .into_iter()
+                .find(|group| group.id() == "group-route-cycle")
+                .expect("route Group")
+                .jump_route_override(),
+            &Override::Inherit
+        );
     }
 
     #[test]
@@ -2298,6 +3167,172 @@ mod tests {
     }
 
     #[test]
+    fn interrupted_v4_migration_preserves_complete_v3_schema() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let mut vault =
+            LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+        downgrade_to_v3_schema(&vault);
+        vault
+            .database
+            .connection
+            .execute(
+                "
+                INSERT INTO hosts(
+                    id, display_name, host, port, credential_id, jump_route_id
+                )
+                VALUES('host-v3', 'V3 Host', 'v3.internal', 22, NULL, NULL)
+                ",
+                [],
+            )
+            .expect("insert v3 Host");
+
+        let error = vault
+            .database
+            .migrate_to_v4(true)
+            .expect_err("migration must fail");
+        assert!(matches!(error, StorageError::MigrationInterrupted));
+
+        let version: i64 = vault
+            .database
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("schema version");
+        let groups_table: Option<String> = vault
+            .database
+            .connection
+            .query_row(
+                "SELECT name FROM sqlite_schema WHERE type='table' AND name='host_groups'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("query Group schema");
+        let host_columns = table_columns(&vault.database.connection, "hosts");
+        let host_count: i64 = vault
+            .database
+            .connection
+            .query_row("SELECT count(*) FROM hosts", [], |row| row.get(0))
+            .expect("count v3 Hosts");
+
+        assert_eq!(version, 3);
+        assert!(groups_table.is_none());
+        assert_eq!(host_count, 1);
+        assert_eq!(
+            host_columns,
+            vec![
+                "id",
+                "display_name",
+                "host",
+                "port",
+                "credential_id",
+                "jump_route_id",
+            ]
+        );
+    }
+
+    #[test]
+    fn schema_v4_rejects_invalid_override_state_value_pairs() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let vault = LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+
+        for (id, credential_state, credential_id, jump_route_state) in [
+            ("host-set-without-value", SET_STATE, None, INHERIT_STATE),
+            (
+                "host-inherit-with-value",
+                INHERIT_STATE,
+                Some("cred-unreachable"),
+                INHERIT_STATE,
+            ),
+            ("host-invalid-state", 99_i64, None, INHERIT_STATE),
+            (
+                "host-clear-route-with-value",
+                INHERIT_STATE,
+                None,
+                CLEAR_STATE,
+            ),
+        ] {
+            let jump_route_id =
+                (id == "host-clear-route-with-value").then_some("route-unreachable");
+            let result = vault.database.connection.execute(
+                "
+                INSERT INTO hosts(
+                    id, display_name, host, port, group_id,
+                    credential_state, credential_id,
+                    jump_route_state, jump_route_id
+                )
+                VALUES(?1, 'Invalid override', 'invalid.internal', 22, NULL,
+                       ?2, ?3, ?4, ?5)
+                ",
+                params![
+                    id,
+                    credential_state,
+                    credential_id,
+                    jump_route_state,
+                    jump_route_id,
+                ],
+            );
+            assert!(result.is_err(), "{id} must violate a Schema v4 CHECK");
+        }
+    }
+
+    #[test]
+    fn unlocking_a_v3_vault_migrates_reference_state_without_changing_effective_values() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let mut vault =
+            LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+        let credential = password_credential("cred-v3", "v3-secret");
+        vault
+            .create_credential(&credential)
+            .expect("create v3 credential fixture");
+        downgrade_to_v3_schema(&vault);
+        vault
+            .database
+            .connection
+            .execute(
+                "
+                INSERT INTO hosts(
+                    id, display_name, host, port, credential_id, jump_route_id
+                )
+                VALUES('host-v3-set', 'V3 Set', 'set.internal', 22, 'cred-v3', NULL),
+                      ('host-v3-empty', 'V3 Empty', 'empty.internal', 22, NULL, NULL)
+                ",
+                [],
+            )
+            .expect("insert v3 Hosts");
+        drop(vault);
+
+        let migrated = LocalVault::unlock(&root, "123456").expect("unlock and migrate");
+        let hosts = migrated.list_hosts().expect("list migrated Hosts");
+        let set_host = hosts
+            .iter()
+            .find(|host| host.id() == "host-v3-set")
+            .expect("set Host");
+        assert_eq!(
+            set_host.credential_override(),
+            &Override::Set("cred-v3".to_owned())
+        );
+        assert_eq!(set_host.credential_id(), Some("cred-v3"));
+        assert_eq!(set_host.jump_route_override(), &Override::Inherit);
+        let empty_host = hosts
+            .iter()
+            .find(|host| host.id() == "host-v3-empty")
+            .expect("empty Host");
+        assert_eq!(empty_host.credential_override(), &Override::Inherit);
+        assert_eq!(empty_host.credential_id(), None);
+        assert_eq!(empty_host.group_id(), None);
+
+        let version: i64 = migrated
+            .database
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("schema version");
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
     fn unlocking_a_v2_vault_migrates_embedded_host_password_to_credential_reference() {
         let directory = tempfile::tempdir().expect("tempdir");
         let root = directory.path().join("vault");
@@ -2321,11 +3356,17 @@ mod tests {
         assert_eq!(hosts[0].display_name(), "Legacy host");
         assert_eq!(hosts[0].host(), "legacy.internal");
         assert_eq!(hosts[0].port(), 2222);
+        assert_eq!(hosts[0].group_id(), None);
         assert_eq!(hosts[0].jump_route_id(), None);
+        assert_eq!(hosts[0].jump_route_override(), &Override::Inherit);
         let credential_id = hosts[0]
             .credential_id()
             .expect("migrated Credential reference");
         assert!(credential_id.starts_with("cred-"));
+        assert_eq!(
+            hosts[0].credential_override(),
+            &Override::Set(credential_id.to_owned())
+        );
 
         let (username, secret) = migrated
             .resolve_credential(credential_id)
@@ -2345,7 +3386,10 @@ mod tests {
                 "display_name",
                 "host",
                 "port",
+                "group_id",
+                "credential_state",
                 "credential_id",
+                "jump_route_state",
                 "jump_route_id",
             ]
         );
@@ -2361,7 +3405,7 @@ mod tests {
     }
 
     #[test]
-    fn unlocking_a_v1_vault_migrates_it_to_v3() {
+    fn unlocking_a_v1_vault_migrates_it_to_v4() {
         let directory = tempfile::tempdir().expect("tempdir");
         let root = directory.path().join("vault");
         let vault = LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
@@ -2423,6 +3467,8 @@ mod tests {
                 "
                 DROP TABLE jump_route_steps;
                 DROP TABLE hosts;
+                DROP TABLE group_overrides;
+                DROP TABLE host_groups;
                 DROP TABLE jump_routes;
                 CREATE TABLE hosts(
                     id TEXT PRIMARY KEY NOT NULL,
@@ -2437,6 +3483,51 @@ mod tests {
                 ",
             )
             .expect("downgrade fixture to v2");
+    }
+
+    fn downgrade_to_v3_schema(vault: &LocalVault) {
+        vault
+            .database
+            .connection
+            .execute_batch(
+                "
+                DROP TABLE jump_route_steps;
+                DROP TABLE hosts;
+                DROP TABLE group_overrides;
+                DROP TABLE host_groups;
+
+                CREATE TABLE hosts(
+                    id TEXT PRIMARY KEY NOT NULL,
+                    display_name TEXT NOT NULL,
+                    host TEXT NOT NULL,
+                    port INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),
+                    credential_id TEXT,
+                    jump_route_id TEXT,
+                    FOREIGN KEY(credential_id)
+                        REFERENCES credentials(id) ON DELETE RESTRICT,
+                    FOREIGN KEY(jump_route_id)
+                        REFERENCES jump_routes(id) ON DELETE RESTRICT
+                ) WITHOUT ROWID;
+
+                CREATE TABLE jump_route_steps(
+                    route_id TEXT NOT NULL,
+                    position INTEGER NOT NULL CHECK(position >= 0),
+                    host_id TEXT NOT NULL,
+                    PRIMARY KEY(route_id, position),
+                    UNIQUE(route_id, host_id),
+                    FOREIGN KEY(route_id)
+                        REFERENCES jump_routes(id) ON DELETE CASCADE,
+                    FOREIGN KEY(host_id)
+                        REFERENCES hosts(id) ON DELETE RESTRICT
+                ) WITHOUT ROWID;
+
+                CREATE INDEX hosts_credential_id_idx ON hosts(credential_id);
+                CREATE INDEX hosts_jump_route_id_idx ON hosts(jump_route_id);
+                CREATE INDEX jump_route_steps_host_id_idx ON jump_route_steps(host_id);
+                PRAGMA user_version = 3;
+                ",
+            )
+            .expect("downgrade fixture to v3");
     }
 
     fn downgrade_to_v1_schema(vault: &LocalVault) {

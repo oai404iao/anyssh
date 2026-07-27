@@ -59,6 +59,8 @@
 - 2026-07-27：Schema v3 已把旧 Host 内嵌 Password 原子迁移为 Password
   Credential；新 Host/Jump Route 只保存 ID 引用。v2 -> v3 中断回滚、重启恢复、
   引用占用和循环检测通过。
+- 2026-07-27：Schema v4 已新增 Group 与三态 Override。v3 -> v4 语义保持、
+  State/Value CHECK、中断回滚、重启和 Group 元数据明文扫描通过。
 - Linux WebKitGTK 同时引入系统 SQLite；当前 X11/Wayland 长流程已在同一进程
   持续执行 Vault 与 SSH，未观察到 bundled SQLCipher 符号冲突。
 - Windows Run `30270414706` 已通过真实 SQLCipher Vault 创建、错误 PIN、

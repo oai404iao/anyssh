@@ -3,16 +3,17 @@
 > 状态：已实现
 > 日期：2026-07-27
 
-本文定义 Vault-backed Host/Jump Route Repository 和 SQLCipher Schema v3。
-当前已实现 metadata-only 产品配置 UI；本阶段仍不包含 Group 继承或 Known
-Host。任意长度 Jump Route 的 Rust-only 执行见
+本文定义在 SQLCipher Schema v3 引入的 Vault-backed Host/Jump Route
+Repository。当前 Schema v4 已通过 Group/三态继承扩展 Host 引用列，完整定义见
+[Group Inheritance v1](group-inheritance-v1.md)。Known Host 仍不在本文范围。
+任意长度 Jump Route 的 Rust-only 执行见
 [Saved Host Connection Plan v1](saved-host-connection-plan-v1.md)。
 
 ## 安全边界
 
 - Host 不保存 Username、Password、Private Key 或 Passphrase。
-- Host 只保存可选 Credential ID；Credential Secret 仍由 Credential Repository
-  独占。
+- Host 只保存 Group ID 和 Credential/Route 的三态引用；Credential Secret 仍由
+  Credential Repository 独占。
 - Jump Route 只保存有序 Host ID，不复制 endpoint 或 Credential。
 - Tauri CRUD 只返回 SQLCipher 保护的非敏感元数据和不透明 ID。
 - Vault Locked 时所有 Host/Route Repository Command 必须失败。
@@ -63,9 +64,9 @@ Host -> optional Jump Route -> ordered Step Hosts
 
 删除采用 Restrict 语义：
 
-- Credential 被 Host 引用时不能删除。
+- Credential 被 Group/Host 的 `Set` Override 引用时不能删除。
 - Host 被 Route Step 引用时不能删除。
-- Jump Route 被 Host 引用时不能删除。
+- Jump Route 被 Group/Host 的 `Set` Override 引用时不能删除。
 
 ## Schema v2 到 v3
 
@@ -85,6 +86,7 @@ Host -> optional Jump Route -> ordered Step Hosts
 
 DB Actor 顺序处理：
 
+- Group Commands 见 [Group Inheritance v1](group-inheritance-v1.md)。
 - `CreateHost` / `UpdateHost` / `ListHosts` / `DeleteHost`
 - `CreateJumpRoute` / `UpdateJumpRoute` / `ListJumpRoutes` /
   `DeleteJumpRoute`

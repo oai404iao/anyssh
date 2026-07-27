@@ -12,7 +12,8 @@ use std::{
 use anyssh_app::{
     ApplicationCore, AuthenticationSource, CredentialKind as StorageCredentialKind,
     CredentialSummary as StorageCredentialSummary, DatabaseActorConfig,
-    HostSummary as StorageHostSummary, JumpRouteSummary as StorageJumpRouteSummary, SshHopRequest,
+    GroupSummary as StorageGroupSummary, HostSummary as StorageHostSummary,
+    JumpRouteSummary as StorageJumpRouteSummary, Override as StorageOverride, SshHopRequest,
     SshSessionRequest, VaultState as StorageVaultState, VaultStatus as StorageVaultStatus,
 };
 use anyssh_domain::{SshEndpoint, TerminalSize};
@@ -135,6 +136,81 @@ struct ImportPrivateKeyCredentialRequest {
     username: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+enum ReferenceOverride {
+    Inherit,
+    Set { value: String },
+    Clear,
+}
+
+impl From<ReferenceOverride> for StorageOverride<String> {
+    fn from(value: ReferenceOverride) -> Self {
+        match value {
+            ReferenceOverride::Inherit => Self::Inherit,
+            ReferenceOverride::Set { value } => Self::Set(value),
+            ReferenceOverride::Clear => Self::Clear,
+        }
+    }
+}
+
+impl From<&StorageOverride<String>> for ReferenceOverride {
+    fn from(value: &StorageOverride<String>) -> Self {
+        match value {
+            StorageOverride::Inherit => Self::Inherit,
+            StorageOverride::Set(value) => Self::Set {
+                value: value.clone(),
+            },
+            StorageOverride::Clear => Self::Clear,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GroupSummary {
+    id: String,
+    label: String,
+    parent_group_id: Option<String>,
+    credential_override: ReferenceOverride,
+    jump_route_override: ReferenceOverride,
+    effective_credential_id: Option<String>,
+    effective_jump_route_id: Option<String>,
+}
+
+impl From<StorageGroupSummary> for GroupSummary {
+    fn from(summary: StorageGroupSummary) -> Self {
+        Self {
+            id: summary.id().to_owned(),
+            label: summary.label().to_owned(),
+            parent_group_id: summary.parent_group_id().map(str::to_owned),
+            credential_override: summary.credential_override().into(),
+            jump_route_override: summary.jump_route_override().into(),
+            effective_credential_id: summary.effective_credential_id().map(str::to_owned),
+            effective_jump_route_id: summary.effective_jump_route_id().map(str::to_owned),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateGroupRequest {
+    label: String,
+    parent_group_id: Option<String>,
+    credential_override: ReferenceOverride,
+    jump_route_override: ReferenceOverride,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UpdateGroupRequest {
+    group_id: String,
+    label: String,
+    parent_group_id: Option<String>,
+    credential_override: ReferenceOverride,
+    jump_route_override: ReferenceOverride,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HostSummary {
@@ -142,8 +218,11 @@ struct HostSummary {
     display_name: String,
     host: String,
     port: u16,
-    credential_id: Option<String>,
-    jump_route_id: Option<String>,
+    group_id: Option<String>,
+    credential_override: ReferenceOverride,
+    jump_route_override: ReferenceOverride,
+    effective_credential_id: Option<String>,
+    effective_jump_route_id: Option<String>,
 }
 
 impl From<StorageHostSummary> for HostSummary {
@@ -153,8 +232,11 @@ impl From<StorageHostSummary> for HostSummary {
             display_name: summary.display_name().to_owned(),
             host: summary.host().to_owned(),
             port: summary.port(),
-            credential_id: summary.credential_id().map(str::to_owned),
-            jump_route_id: summary.jump_route_id().map(str::to_owned),
+            group_id: summary.group_id().map(str::to_owned),
+            credential_override: summary.credential_override().into(),
+            jump_route_override: summary.jump_route_override().into(),
+            effective_credential_id: summary.effective_credential_id().map(str::to_owned),
+            effective_jump_route_id: summary.effective_jump_route_id().map(str::to_owned),
         }
     }
 }
@@ -165,8 +247,9 @@ struct CreateHostRequest {
     display_name: String,
     host: String,
     port: u16,
-    credential_id: Option<String>,
-    jump_route_id: Option<String>,
+    group_id: Option<String>,
+    credential_override: ReferenceOverride,
+    jump_route_override: ReferenceOverride,
 }
 
 #[derive(Deserialize)]
@@ -176,8 +259,9 @@ struct UpdateHostRequest {
     display_name: String,
     host: String,
     port: u16,
-    credential_id: Option<String>,
-    jump_route_id: Option<String>,
+    group_id: Option<String>,
+    credential_override: ReferenceOverride,
+    jump_route_override: ReferenceOverride,
 }
 
 #[derive(Debug, Serialize)]
@@ -556,16 +640,65 @@ async fn credential_delete(
 }
 
 #[tauri::command]
+async fn group_create(
+    request: CreateGroupRequest,
+    core: State<'_, ApplicationCore>,
+) -> Result<GroupSummary, String> {
+    core.create_group(
+        request.label,
+        request.parent_group_id,
+        request.credential_override.into(),
+        request.jump_route_override.into(),
+    )
+    .await
+    .map(GroupSummary::from)
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn group_update(
+    request: UpdateGroupRequest,
+    core: State<'_, ApplicationCore>,
+) -> Result<GroupSummary, String> {
+    core.update_group(
+        request.group_id,
+        request.label,
+        request.parent_group_id,
+        request.credential_override.into(),
+        request.jump_route_override.into(),
+    )
+    .await
+    .map(GroupSummary::from)
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn group_list(core: State<'_, ApplicationCore>) -> Result<Vec<GroupSummary>, String> {
+    core.list_groups()
+        .await
+        .map(|groups| groups.into_iter().map(GroupSummary::from).collect())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn group_delete(group_id: String, core: State<'_, ApplicationCore>) -> Result<bool, String> {
+    core.delete_group(group_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn host_create(
     request: CreateHostRequest,
     core: State<'_, ApplicationCore>,
 ) -> Result<HostSummary, String> {
-    core.create_host(
+    core.create_host_with_overrides(
         request.display_name,
         request.host,
         request.port,
-        request.credential_id,
-        request.jump_route_id,
+        request.group_id,
+        request.credential_override.into(),
+        request.jump_route_override.into(),
     )
     .await
     .map(HostSummary::from)
@@ -577,13 +710,14 @@ async fn host_update(
     request: UpdateHostRequest,
     core: State<'_, ApplicationCore>,
 ) -> Result<HostSummary, String> {
-    core.update_host(
+    core.update_host_with_overrides(
         request.host_id,
         request.display_name,
         request.host,
         request.port,
-        request.credential_id,
-        request.jump_route_id,
+        request.group_id,
+        request.credential_override.into(),
+        request.jump_route_override.into(),
     )
     .await
     .map(HostSummary::from)
@@ -866,6 +1000,10 @@ pub fn run() {
             credential_import_private_key,
             credential_list,
             credential_delete,
+            group_create,
+            group_update,
+            group_list,
+            group_delete,
             host_create,
             host_update,
             host_list,
@@ -1043,10 +1181,27 @@ mod tests {
             display_name: "Target".to_owned(),
             host: "target.internal".to_owned(),
             port: 22,
-            credential_id: Some("cred-target".to_owned()),
-            jump_route_id: Some("route-production".to_owned()),
+            group_id: Some("group-production".to_owned()),
+            credential_override: ReferenceOverride::Inherit,
+            jump_route_override: ReferenceOverride::Set {
+                value: "route-production".to_owned(),
+            },
+            effective_credential_id: Some("cred-target".to_owned()),
+            effective_jump_route_id: Some("route-production".to_owned()),
         })
         .expect("host summary should serialize");
+        let group = serde_json::to_value(GroupSummary {
+            id: "group-production".to_owned(),
+            label: "Production".to_owned(),
+            parent_group_id: None,
+            credential_override: ReferenceOverride::Set {
+                value: "cred-target".to_owned(),
+            },
+            jump_route_override: ReferenceOverride::Clear,
+            effective_credential_id: Some("cred-target".to_owned()),
+            effective_jump_route_id: None,
+        })
+        .expect("Group summary should serialize");
         let route = serde_json::to_value(JumpRouteSummary {
             id: "route-production".to_owned(),
             label: "Production".to_owned(),
@@ -1054,11 +1209,20 @@ mod tests {
         })
         .expect("route summary should serialize");
 
-        assert_eq!(host["credentialId"], "cred-target");
-        assert_eq!(host["jumpRouteId"], "route-production");
+        assert_eq!(host["groupId"], "group-production");
+        assert_eq!(host["credentialOverride"]["kind"], "inherit");
+        assert_eq!(host["jumpRouteOverride"]["kind"], "set");
+        assert_eq!(host["jumpRouteOverride"]["value"], "route-production");
+        assert_eq!(host["effectiveCredentialId"], "cred-target");
+        assert_eq!(host["effectiveJumpRouteId"], "route-production");
         assert!(host.get("username").is_none());
         assert!(host.get("password").is_none());
         assert!(host.get("privateKey").is_none());
+        assert_eq!(group["credentialOverride"]["kind"], "set");
+        assert_eq!(group["credentialOverride"]["value"], "cred-target");
+        assert_eq!(group["jumpRouteOverride"]["kind"], "clear");
+        assert_eq!(group["effectiveCredentialId"], "cred-target");
+        assert!(group.get("password").is_none());
         assert_eq!(
             route["hostIds"],
             serde_json::json!(["host-jump-one", "host-jump-two"])
@@ -1069,11 +1233,41 @@ mod tests {
 
     #[test]
     fn host_request_rejects_embedded_credentials() {
+        let valid: CreateHostRequest = serde_json::from_value(serde_json::json!({
+            "displayName": "Target",
+            "host": "target.internal",
+            "port": 22,
+            "groupId": "group-production",
+            "credentialOverride": {
+                "kind": "inherit"
+            },
+            "jumpRouteOverride": {
+                "kind": "clear"
+            }
+        }))
+        .expect("three-state Host request should deserialize");
+        assert_eq!(valid.group_id.as_deref(), Some("group-production"));
+        assert!(matches!(
+            valid.credential_override,
+            ReferenceOverride::Inherit
+        ));
+        assert!(matches!(
+            valid.jump_route_override,
+            ReferenceOverride::Clear
+        ));
+
         let request = serde_json::from_value::<CreateHostRequest>(serde_json::json!({
             "displayName": "Target",
             "host": "target.internal",
             "port": 22,
-            "credentialId": "cred-target",
+            "groupId": "group-production",
+            "credentialOverride": {
+                "kind": "set",
+                "value": "cred-target"
+            },
+            "jumpRouteOverride": {
+                "kind": "inherit"
+            },
             "password": "must-not-enter-host-ipc"
         }));
 
@@ -1085,6 +1279,20 @@ mod tests {
             "credentialId": "cred-must-not-be-copied"
         }));
         assert!(route.is_err());
+
+        let group = serde_json::from_value::<CreateGroupRequest>(serde_json::json!({
+            "label": "Production",
+            "parentGroupId": null,
+            "credentialOverride": {
+                "kind": "set",
+                "value": "cred-target",
+                "password": "must-not-enter-group-ipc"
+            },
+            "jumpRouteOverride": {
+                "kind": "inherit"
+            }
+        }));
+        assert!(group.is_err());
     }
 
     #[test]

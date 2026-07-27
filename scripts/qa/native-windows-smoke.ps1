@@ -278,8 +278,11 @@ function Assert-VaultFilesAreEncrypted {
     "000000",
     "windows-fixture-password",
     "Windows QA password",
-    "Windows QA host",
+    "Windows QA jump",
+    "Windows QA target",
+    "Windows QA group",
     "Windows QA route",
+    "target.internal",
     "windows-user"
   )
   foreach ($File in Get-ChildItem -LiteralPath $VaultRoot -Recurse -File) {
@@ -341,8 +344,9 @@ try {
   Debug build; the canonical Tauri config and Release builds do not expose it.
 - Native Tauri IPC created a PIN Slot and SQLCipher Vault.
 - Wrong PIN, Lock, Unlock, process termination, relaunch, and restart recovery passed.
-- Password Credential, Host, and Jump Route metadata persisted across process restart.
-- PIN, Password, Host, Username, and Route markers were absent from Vault files.
+- Password Credential, Group, inherited Host, and Jump Route metadata persisted
+  across process restart.
+- PIN, Password, Group, Host, Username, and Route markers were absent from Vault files.
 - The SQLCipher database did not expose the plaintext SQLite header.
 - Browser error logs were empty.
 

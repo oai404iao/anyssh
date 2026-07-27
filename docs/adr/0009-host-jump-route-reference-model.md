@@ -25,6 +25,8 @@ Passphrase，会造成更新不一致并扩大秘密暴露面。旧 Schema v1/v2
 - Schema v2 到 v3 在单个 `IMMEDIATE` Transaction 中把旧 Host Password
   解密、重新加密为 Password Credential，并让迁移后的 Host 引用该 Credential。
 - Tauri CRUD 只返回非敏感 Host/Route DTO，不提供 Secret 字段。
+- Schema v4 允许 Group/Host 使用 `Inherit / Set / Clear` 包装上述引用；`Set`
+  仍只保存 ID，不复制 Credential 或 Route 内容。
 
 ## 备选方案
 
@@ -72,6 +74,8 @@ Passphrase，会造成更新不一致并扩大秘密暴露面。旧 Schema v1/v2
   OpenSSH、浏览器和 Rust Core。
 - 2026-07-27：后续 Saved Host Runtime 直接使用本 ADR 的 Host/Route ID 图，
   WebView 不读取 Route Step 或 Credential。
+- 2026-07-27：ADR-0012/Schema v4 已把 Host 的可选引用扩展为 Group/Host
+  三态引用，同时保持本 ADR 的单一 Secret 所有权和 Route Step ID-only 边界。
 
 ## 相关文档
 

@@ -42,7 +42,7 @@ any_ssh/
 |   |-- anyssh-domain/                # Endpoint、TerminalSize 等领域值对象
 |   |-- anyssh-ssh/                   # russh Session、Host Key、PTY、背压
 |   |-- anyssh-vault/                 # VMK、PIN Key Slot、HKDF、Bootstrap
-|   `-- anyssh-storage/               # DB Actor、Schema v3、Repository、Record AEAD
+|   `-- anyssh-storage/               # DB Actor、Schema v4、Repository、Record AEAD
 |-- scripts/
 |   |-- build-in-container.sh          # 独立 Linux/Android Build Image 入口
 |   |-- check-android-build.sh         # Android ARM64 APK 与 bundled SQLCipher 构建
@@ -217,8 +217,9 @@ Evidence 复制回仓库。
 
 - PIN Slot 创建、正确/错误 PIN、损坏 Slot。
 - DB Actor 有界 Queue、oneshot Response、串行生命周期和 Shutdown。
-- Schema v1 -> v2 Credential Migration、Schema v2 -> v3 旧 Host Password
-  转 Credential Migration，以及中断回滚。
+- Schema v1 -> v2 Credential、Schema v2 -> v3 旧 Host Password 转
+  Credential，以及 Schema v3 -> v4 Group/三态 Override Migration 的成功、
+  重启和中断回滚。
 - Host/Jump Route 引用占用、顺序恢复、直接/间接循环和 Locked Repository 拒绝。
 - SQLCipher 重启解锁和 Credential 字段 AEAD。
 - 数据库、WAL、Sidecar 与 Bootstrap 明文扫描。
@@ -430,8 +431,8 @@ Clear
 
 - [`0002-group-persistence-and-inheritance.md`](docs/execplans/active/0002-group-persistence-and-inheritance.md)
 
-除非用户明确改变优先级，应先完成 Group Schema v4、三态继承和 Rust-only
-Effective Connection Plan，而不是直接开发 WebDAV 或高级脚本系统。
+除非用户明确改变优先级，应先完成 Group Schema v4 的全平台回归、ADR-0012
+状态评审和 ExecPlan 收尾，而不是直接开发 WebDAV 或高级脚本系统。
 
 ## 关键文件
 
@@ -450,6 +451,8 @@ Effective Connection Plan，而不是直接开发 WebDAV 或高级脚本系统�
 | DB Actor | `crates/anyssh-storage/src/actor.rs` |
 | Credential Model | `crates/anyssh-storage/src/credential.rs` |
 | Host Model | `crates/anyssh-storage/src/host.rs` |
+| Group Model | `crates/anyssh-storage/src/group.rs` |
+| 三态 Override | `crates/anyssh-storage/src/inheritance.rs` |
 | Jump Route Model | `crates/anyssh-storage/src/jump_route.rs` |
 | Connection Plan | `crates/anyssh-storage/src/connection_plan.rs` |
 | Native Key Import Design | `docs/design/native-private-key-import-v1.md` |

@@ -7,10 +7,12 @@ import {
   resetBrowserCredentialsForTests,
   updatePasswordCredential,
 } from "./credential-bridge";
+import { resetBrowserHostsAndRoutesForTests } from "./host-bridge";
 
 describe("browser preview credential bridge", () => {
   beforeEach(() => {
     resetBrowserCredentialsForTests();
+    resetBrowserHostsAndRoutesForTests();
   });
 
   it("returns metadata without retaining or echoing the password", async () => {

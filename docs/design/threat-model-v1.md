@@ -3,7 +3,8 @@
 > 状态：Phase 0 Baseline
 > 日期：2026-07-27
 > 范围：当前 Tauri/React Client、Rust Core、Vault、SQLCipher Repository、
-> russh Session、Native Private Key Import 和 QA/Build Evidence。
+> Group Inheritance、russh Session、Native Private Key Import 和 QA/Build
+> Evidence。
 
 ## 1. 安全目标
 
@@ -12,7 +13,7 @@ AnySSH 当前必须保持以下不变量：
 1. VMK、KEK、SQLCipher Key、Record Key、Private Key 和 Passphrase 不返回
    WebView。
 2. 保存的 SSH 认证通过不透明 Credential ID 在 Rust 内解析。
-3. Host 和 Jump Route 只保存 ID 引用，不复制 Credential Secret。
+3. Group、Host 和 Jump Route 只保存 ID 引用，不复制 Credential Secret。
 4. 锁定 Vault 后，DB Actor 不继续持有解锁后的 `LocalVault`。
 5. 未确认或变化的 Host Key 不得静默放行。
 6. 大量远端输出、Route 展开和 DB Command 必须有明确上限。
@@ -26,7 +27,7 @@ AnySSH 当前必须保持以下不变量：
 | VMK、KEK、数据库 Key、Record Key | 机密性、完整性、最短可用生命周期 |
 | Password、Private Key、Passphrase | 不持久进入 WebView、日志或明文文件 |
 | Host Key Fingerprint | 防止 MITM 和静默信任变化 |
-| Host/Route/Credential 图 | 引用完整性、确定顺序、无循环 |
+| Group/Host/Route/Credential 图 | 引用完整性、确定顺序、无循环 |
 | Vault Bootstrap 和 Schema | 版本完整性、可恢复迁移、拒绝静默覆盖 |
 | Terminal 输入输出 | 有界内存、正确 Session 归属、无跨 Session 注入 |
 | QA/CI Artifact | 不包含宿主 Secret、测试 Secret 或不必要环境信息 |
@@ -86,7 +87,7 @@ Native Picker
 | T-05 | Migration 中断损坏或丢失数据 | `IMMEDIATE` Transaction、中断回滚、旧数据恢复测试 | 后续每次 Schema 变更必须继续提供版本和恢复测试 |
 | T-06 | Host Key MITM/轮换被静默接受 | TOFU Request ID、SHA-256、保存匹配、变化硬阻断 | Known Host Repository 和导入/导出尚未产品化 |
 | T-07 | 延迟 Host Key 决策应用到错误 Hop | Request ID + Hop + Endpoint 绑定；过期 Request 拒绝 | UI 必须继续展示准确 Hop |
-| T-08 | Jump Route 循环/膨胀导致 DoS | 全图循环检测、唯一 Host、最多 32 Jump、Runtime 重验 | 深层故障归属仍需保持逐 Hop 测试 |
+| T-08 | Group/Jump Route 循环或膨胀导致 DoS | Group Parent 与 Effective Host Route 全图检测、最多 32 层 Group/32 Jump、Runtime 重验 | 深层故障归属仍需保持逐 Hop 测试 |
 | T-09 | 大输出耗尽内存 | 64 项 Core Queue、8 Chunk WebView Credit、xterm Ack、SSH Window Flow Control | Scrollback 与未来多 Tab 需要全局预算 |
 | T-10 | DB 并发和关闭死锁 | 单 OS Thread、16 项有界 Queue、oneshot、关闭 Sender 后 Join | 长操作仍会串行阻塞，需继续监控可取消性 |
 | T-11 | WebView 指定任意文件或读取 Key | Native Picker 在 Rust 内发起；IPC 无 Path/Key/Passphrase | Windows Native Picker 尚无真实交互 Evidence；移动 Content URI 未实现 |
@@ -127,7 +128,7 @@ pnpm check:container:android
 关键测试包括：
 
 - Vault PIN/损坏 Slot/重启/明文扫描和 Migration 回滚。
-- Credential/Host/Route Summary 脱敏、引用完整性和循环检测。
+- Credential/Group/Host/Route Summary 脱敏、三态解析、引用完整性和循环检测。
 - Private Key Import 文件类型、大小、编码、Symlink 和加密 Key 拒绝。
 - Host Key 变化、两 Jump Route、取消、超时和 4 MiB 背压。
 - Browser、X11、Wayland/IME、Windows WebView2 和 Android Build Evidence。

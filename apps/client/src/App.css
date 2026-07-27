@@ -1134,6 +1134,15 @@ select:focus-visible {
   background: rgba(255, 198, 109, 0.11);
 }
 
+.group-resource-icon {
+  color: #b9adff;
+  background: rgba(156, 140, 255, 0.11);
+}
+
+.group-tree {
+  padding-inline-end: 48px;
+}
+
 .resource-main {
   min-width: 0;
 }
@@ -1289,6 +1298,26 @@ select:focus-visible {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 92px;
   gap: 10px;
+}
+
+.override-editor {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(4, 7, 13, 0.24);
+}
+
+.override-editor legend {
+  padding: 0 5px;
+  color: #98a4b8;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .editor-actions {
@@ -1481,7 +1510,7 @@ select:focus-visible {
 
   .mobile-primary-nav {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 5px;
     padding: 8px 12px 0;
   }
@@ -1492,7 +1521,7 @@ select:focus-visible {
     border-radius: 8px;
     color: #7d899e;
     background: rgba(255, 255, 255, 0.025);
-    font-size: 9px;
+    font-size: 8px;
   }
 
   .mobile-primary-nav button.active {
@@ -1527,6 +1556,14 @@ select:focus-visible {
     grid-template-columns: 1fr 1fr;
   }
 
+  .group-tree {
+    padding-inline-end: 0;
+  }
+
+  .group-card {
+    margin-inline-start: 0 !important;
+  }
+
   .resource-card {
     grid-template-columns: 40px minmax(0, 1fr);
   }
@@ -1544,6 +1581,10 @@ select:focus-visible {
 
   .resource-dialog {
     padding: 19px;
+  }
+
+  .override-editor {
+    grid-template-columns: 1fr;
   }
 
   .route-builder-row {

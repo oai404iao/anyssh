@@ -3,7 +3,7 @@
 > 状态：已实现
 > 日期：2026-07-27
 
-本文定义在 SQLCipher Schema v2 引入、并由当前 Schema v3 继续使用的
+本文定义在 SQLCipher Schema v2 引入、并由当前 Schema v4 继续使用的
 Vault-backed Credential Repository，以及 SSH Credential ID 解析边界。当前产品
 已实现 metadata-only Credential 管理 UI 和 Rust-owned Native File Picker；本文
 仍不定义 Secret Reveal/Export 或加密 Key Passphrase Prompt。
@@ -69,6 +69,7 @@ CREATE TABLE credentials(
 
 Credential ID 由 Rust CSPRNG 生成 128-bit 随机值，不由 WebView 指定。
 Schema v3 保留该表和 Record AAD 不变；Host 改为只引用 Credential ID。
+Schema v4 继续保留该表，并允许 Group/Host 的 `Set` Override 引用 Credential。
 
 ## Record AEAD
 
@@ -94,8 +95,9 @@ DB Actor 顺序处理：
 - `ResolveCredential`
 
 `ListCredentials` 永不解密 Secret。`ResolveCredential` 返回的 Rust-only 类型不
-实现 Serialize，Debug 始终脱敏。Schema v3 中，Credential 被 Host 引用时
-`DeleteCredential` 返回占用错误，不自动清空 Host。
+实现 Serialize，Debug 始终脱敏。当前 Schema v4 中，Credential 被 Group 或
+Host 的 `Set` Override 引用时，`DeleteCredential` 返回占用错误，不自动清空
+引用。
 
 ## Schema v1 到 v2
 
@@ -104,7 +106,8 @@ DB Actor 顺序处理：
 - Migration 中断必须回滚到完整 Schema v1；下次解锁可安全重试。
 - Schema `0` 只允许用于新 Vault 初始化，不在已有 Vault 解锁时自动初始化。
 - 迁移不修改现有 Bootstrap、VMK、Key Slot 或 `hosts` 记录。
-- 当前解锁流程会在完成 v1 -> v2 后继续执行 v2 -> v3 Host Migration。
+- 当前解锁流程会在完成 v1 -> v2 后继续执行 v2 -> v3 Host Migration 和
+  v3 -> v4 Group/Override Migration。
 
 ## 验证
 

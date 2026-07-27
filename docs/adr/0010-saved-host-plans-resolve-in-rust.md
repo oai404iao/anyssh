@@ -17,6 +17,8 @@ Route。
 - Saved Host 连接 IPC 只接受 Host ID 和 Terminal Size。
 - DB Actor 在单条命令中读取目标 Host、递归展开 Jump Route，并解析每一跳的
   Credential。
+- Schema v4 Host 使用 Group/三态引用时，DB Actor 先解析 Parent Chain 和
+  Effective Credential/Route，再执行相同的 Route 展开。
 - Actor 返回的 Connection Plan 是 Rust-only 类型，不实现 Serialize，Debug 不
   展示 Credential 内容。
 - Route 展开保持持久化顺序，最多允许 32 个 Jump Host；循环、重复 Host、
@@ -68,6 +70,8 @@ Route。
   `Client -> Jump 1 -> Jump 2 -> Target`，其中 Jump 1 无法直接访问 Target。
   Vault Lock/Unlock 后只使用 Target Host ID，三跳 Host Key 顺序正确，Target
   Private Key 认证成功，Jump 2 错误密码被归属为 `jump host 2`。
+- 2026-07-27：同一 OpenSSH 拓扑已改为由 Group 继承 Jump 2/Target 的
+  Credential 和 Route；连接请求仍只提交 Target Host ID。
 
 ## 相关文档
 

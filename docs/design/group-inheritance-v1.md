@@ -1,6 +1,6 @@
 # Group Persistence and Three-State Inheritance v1
 
-> 状态：设计中
+> 状态：已实现，平台回归中
 > 日期：2026-07-27
 
 ## 目标
@@ -54,13 +54,13 @@ struct Host {
 ## Schema v4 草案
 
 ```text
-groups
+host_groups
   id TEXT PRIMARY KEY
   label TEXT NOT NULL
-  parent_group_id TEXT NULL REFERENCES groups(id) RESTRICT
+  parent_group_id TEXT NULL REFERENCES host_groups(id) RESTRICT
 
 group_overrides
-  group_id TEXT PRIMARY KEY REFERENCES groups(id) ON DELETE CASCADE
+  group_id TEXT PRIMARY KEY REFERENCES host_groups(id) ON DELETE CASCADE
   credential_state INTEGER NOT NULL
   credential_id TEXT NULL REFERENCES credentials(id) RESTRICT
   jump_route_state INTEGER NOT NULL
@@ -85,6 +85,9 @@ State 编码：
 
 数据库使用 CHECK Constraint 保证 State/Value 一致。
 
+实现使用 `host_groups` 而不是 `groups`，避免与 SQLite `GROUPS` Window Frame
+关键字产生可读性和工具兼容问题。
+
 ## Migration v3 -> v4
 
 - 在单个 `IMMEDIATE` Transaction 内创建 Group/Override 结构。
@@ -93,6 +96,8 @@ State 编码：
 - Jump Route 同理。
 - 现有 Host `group_id` 为 NULL，因此 Effective Value 与 v3 完全一致。
 - 中断时 `user_version` 和旧表必须保持 v3 完整状态。
+- 每个 Migration 显式写入自己的版本号；v2 Migration 不再引用“当前最新”
+  `SCHEMA_VERSION`，避免在 v2 -> v3 之间中断时把旧结构误标为最新版本。
 
 ## 完整性
 
@@ -110,6 +115,17 @@ State 编码：
   Serialize。
 - Tauri Saved Host Connect Request 继续只包含 Host ID 与 Terminal Size。
 - WebView 不递归加载 Group 后自行解析连接配置。
+
+实现路径：
+
+- `crates/anyssh-storage/src/inheritance.rs`
+- `crates/anyssh-storage/src/group.rs`
+- `crates/anyssh-storage/src/lib.rs`
+- `crates/anyssh-storage/src/actor.rs`
+- `crates/anyssh-app/src/lib.rs`
+- `apps/client/src-tauri/src/lib.rs`
+- `apps/client/src/lib/host-bridge.ts`
+- `apps/client/src/components/ConfigurationWorkspace.tsx`
 
 ## UI
 
@@ -139,3 +155,7 @@ Phase 1 不实现 WebDAV，但未来 Operation 必须同步：
 - Actor CRUD、Restrict 删除、循环和最大深度。
 - Saved Host OpenSSH Smoke 验证 Group 继承 Credential/Route。
 - Vitest、Playwright、agent-browser、X11、Wayland、Windows 和 Android 回归。
+
+本地已完成全部可用验证，包括 Browser/X11/Wayland、OpenSSH、Android Host
+Build 和 Linux/Android Container。Windows Native 以及全部同 Commit CI
+Evidence 等待远端 Runner。

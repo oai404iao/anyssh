@@ -76,7 +76,7 @@ async function createVaultAndRepository(targetPage) {
   ).toBeVisible();
   await capture(targetPage, "02-native-ready.png", "02-native-ready.txt");
 
-  await targetPage.locator(".primary-nav .nav-item").nth(2).click();
+  await targetPage.locator(".primary-nav .nav-item").nth(3).click();
   await targetPage.getByRole("button", { name: "New password" }).click();
   const credentialDialog = targetPage.getByRole("dialog", {
     name: "New Password Credential",
@@ -95,21 +95,22 @@ async function createVaultAndRepository(targetPage) {
       .filter({ hasText: "Windows QA password" }),
   ).toBeVisible();
 
-  await targetPage.locator(".primary-nav .nav-item").nth(1).click();
+  await targetPage.locator(".primary-nav .nav-item").nth(2).click();
   await targetPage.getByRole("button", { name: "New host" }).click();
   const hostDialog = targetPage.getByRole("dialog", { name: "New Host" });
-  await hostDialog.getByLabel("Display name").fill("Windows QA host");
+  await hostDialog.getByLabel("Display name").fill("Windows QA jump");
   await hostDialog.getByLabel("Host", { exact: true }).fill("127.0.0.1");
   await hostDialog.getByRole("spinbutton", { name: "Port" }).fill("2222");
+  await hostDialog.getByLabel("Credential behavior").selectOption("set");
   await hostDialog
-    .getByLabel("Credential")
+    .getByLabel("Credential reference")
     .selectOption({ label: "Windows QA password · windows-user" });
   await hostDialog.getByRole("button", { name: "Save Host" }).click();
   await assert(
-    targetPage.locator(".resource-card").filter({ hasText: "Windows QA host" }),
+    targetPage.locator(".resource-card").filter({ hasText: "Windows QA jump" }),
   ).toBeVisible();
 
-  await targetPage.locator(".primary-nav .nav-item").nth(3).click();
+  await targetPage.locator(".primary-nav .nav-item").nth(4).click();
   await targetPage.getByRole("button", { name: "New route" }).click();
   const routeDialog = targetPage.getByRole("dialog", {
     name: "New Jump Route",
@@ -117,7 +118,7 @@ async function createVaultAndRepository(targetPage) {
   await routeDialog.getByLabel("Route label").fill("Windows QA route");
   await routeDialog
     .getByLabel("Add Host")
-    .selectOption({ label: "Windows QA host · 127.0.0.1:2222" });
+    .selectOption({ label: "Windows QA jump · 127.0.0.1:2222" });
   await routeDialog.getByRole("button", { name: "Add", exact: true }).click();
   await routeDialog.getByRole("button", { name: "Save Jump Route" }).click();
   await assert(
@@ -125,6 +126,43 @@ async function createVaultAndRepository(targetPage) {
       .locator(".resource-card")
       .filter({ hasText: "Windows QA route" }),
   ).toBeVisible();
+
+  await targetPage.locator(".primary-nav .nav-item").nth(1).click();
+  await targetPage.getByRole("button", { name: "New group" }).click();
+  const groupDialog = targetPage.getByRole("dialog", { name: "New Group" });
+  await groupDialog.getByLabel("Group label").fill("Windows QA group");
+  await groupDialog.getByLabel("Credential behavior").selectOption("set");
+  await groupDialog
+    .getByLabel("Credential reference")
+    .selectOption({ label: "Windows QA password · windows-user" });
+  await groupDialog.getByLabel("Jump Route behavior").selectOption("set");
+  await groupDialog
+    .getByLabel("Jump Route reference")
+    .selectOption({ label: "Windows QA route" });
+  await groupDialog.getByRole("button", { name: "Save Group" }).click();
+  await assert(
+    targetPage
+      .locator(".resource-card")
+      .filter({ hasText: "Windows QA group" }),
+  ).toBeVisible();
+
+  await targetPage.locator(".primary-nav .nav-item").nth(2).click();
+  await targetPage.getByRole("button", { name: "New host" }).click();
+  const targetDialog = targetPage.getByRole("dialog", { name: "New Host" });
+  await targetDialog.getByLabel("Display name").fill("Windows QA target");
+  await targetDialog
+    .getByLabel("Host", { exact: true })
+    .fill("target.internal");
+  await targetDialog.getByRole("spinbutton", { name: "Port" }).fill("22");
+  await targetDialog
+    .getByLabel("Group")
+    .selectOption({ label: "Windows QA group" });
+  await targetDialog.getByRole("button", { name: "Save Host" }).click();
+  await assert(
+    targetPage
+      .locator(".resource-card")
+      .filter({ hasText: "Windows QA target" }),
+  ).toContainText("Inherited");
   await capture(
     targetPage,
     "03-repository-created.png",
@@ -163,7 +201,7 @@ async function unlockRestartedVault(targetPage) {
     targetPage.getByRole("heading", { level: 1, name: "Local lab" }),
   ).toBeVisible();
 
-  await targetPage.locator(".primary-nav .nav-item").nth(2).click();
+  await targetPage.locator(".primary-nav .nav-item").nth(3).click();
   await assert(
     targetPage
       .locator(".resource-card")
@@ -172,10 +210,22 @@ async function unlockRestartedVault(targetPage) {
 
   await targetPage.locator(".primary-nav .nav-item").nth(1).click();
   await assert(
-    targetPage.locator(".resource-card").filter({ hasText: "Windows QA host" }),
+    targetPage
+      .locator(".resource-card")
+      .filter({ hasText: "Windows QA group" }),
   ).toBeVisible();
 
-  await targetPage.locator(".primary-nav .nav-item").nth(3).click();
+  await targetPage.locator(".primary-nav .nav-item").nth(2).click();
+  await assert(
+    targetPage.locator(".resource-card").filter({ hasText: "Windows QA jump" }),
+  ).toBeVisible();
+  await assert(
+    targetPage
+      .locator(".resource-card")
+      .filter({ hasText: "Windows QA target" }),
+  ).toBeVisible();
+
+  await targetPage.locator(".primary-nav .nav-item").nth(4).click();
   await assert(
     targetPage
       .locator(".resource-card")

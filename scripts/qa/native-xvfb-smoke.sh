@@ -220,7 +220,7 @@ sleep 0.5
 sleep 3
 "$DRIVER" probe "$RUN_DIR/07-vault-reunlocked.bmp" >/dev/null
 
-"$DRIVER" click 100 198
+"$DRIVER" click 100 240
 sleep 1
 "$DRIVER" click 1080 145
 sleep 1

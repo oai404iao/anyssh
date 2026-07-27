@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**Phase 0 completed; Phase 1 Group implementation starting**
+**Phase 0 completed; Phase 1 Group implementation validating**
 
 当前仓库已完成：
 
@@ -81,6 +81,10 @@
   Lock/Unlock 和进程重启恢复，截图及 Browser Error Log 已人工检查。
 - Phase 0 Threat Model、Outcomes 和 ADR 状态评审已完成。
 - Phase 1 首个计划已确定为 Group Schema v4 与 `Inherit / Set / Clear` 三态继承。
+- SQLCipher Schema v4、Group Repository、32 层 Parent 限制、三态 Override、
+  Rust-only Effective Connection Plan 和 Group/Host 配置 UI 已完成本地实现。
+- Group 继承的 Credential/Jump Route 已通过两跳 OpenSSH Saved Host Smoke；
+  Browser、X11、Wayland/IBus 和 Workspace 回归通过。
 - CI 工作流。
 
 当前仓库尚未完成：
@@ -89,7 +93,7 @@
 - Windows Native Picker 与真实 SSH Runtime 交互。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
 - iOS 构建验证；当前没有 macOS/Xcode 环境，按维护者指示暂缓。
-- Group 持久化与继承。
+- Group Schema v4 的 Windows/Android/Linux CI 回归与 ADR-0012 最终状态评审。
 
 ## 待项目负责人确认
 

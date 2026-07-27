@@ -1,7 +1,7 @@
 # AnySSH Vault Bootstrap v1
 
-> 状态：Phase 0 已实现格式
-> 日期：2026-07-26
+> 状态：Phase 1 当前已实现格式
+> 日期：2026-07-27
 
 本文记录当前 Vault Bootstrap、PIN Slot、SQLCipher Key 派生和最小数据库
 Schema。任何不向后兼容的修改都必须增加格式版本并更新 ADR/ExecPlan。
@@ -89,9 +89,9 @@ HKDF-SHA-256 使用 Vault ID 的 UTF-8 表示作为 Salt，VMK 作为输入密�
 
 两个输出均为 32 bytes，必须分别持有和清零。
 
-## SQLCipher Schema v3
+## SQLCipher Schema v4
 
-数据库当前 `user_version` 为 `3`。Schema v1 创建：
+数据库当前 `user_version` 为 `4`。Schema v1 创建：
 
 ```sql
 CREATE TABLE vault_meta(
@@ -124,15 +124,23 @@ Credential，并新增规范化 Host、Jump Route 和有序 Route Step。完整�
 - [Credential Repository v1](credential-repository-v1.md)
 - [Host 与 Jump Route Repository v1](host-jump-route-repository-v1.md)
 
+Schema v4 新增 `host_groups`、`group_overrides`，并把 Host Credential/Route
+引用改为带 CHECK Constraint 的 `Inherit / Set / Clear` 状态。完整定义见：
+
+- [Group Persistence and Three-State Inheritance v1](group-inheritance-v1.md)
+
 ## 创建和迁移
 
 - 新 Vault 先在同文件系统的私有临时目录中完整创建 Bootstrap 和数据库。
 - 文件同步后，通过目录 Rename 原子发布为正式 Vault。
 - 已存在或不完整的 Vault 不得被自动覆盖。
 - Schema migration 在 `IMMEDIATE` Transaction 中执行；失败或中断必须回滚。
-- 已有 Schema v1 Vault 在解锁时依次迁移到 v2、v3。
+- 已有 Schema v1 Vault 在解锁时依次迁移到 v2、v3、v4。
 - Schema v2 -> v3 在同一 Transaction 中把旧 Host Password 重新加密为
   Credential；中断后保持完整 v2 并可重试。
+- Schema v3 -> v4 重建 Host/Route Step 表，把非空引用迁移为 `Set`、空引用
+  迁移为 `Inherit`，并保持现有 Effective Value；中断后保持完整 v3。
+- 每个 Migration 显式写入自己的版本号，不能用最新 Schema 常量代替中间版本。
 - Schema `0` 只用于新 Vault 初始化，不在已有文件上自动创建 Schema。
 - Linux 目录权限为 `0700`，Bootstrap 和数据库权限为 `0600`。
 
@@ -148,4 +156,6 @@ Credential，并新增规范化 Host、Jump Route 和有序 Route Step。完整�
   v1 -> v2 迁移和中断回滚通过。
 - Schema v3 Host/Jump Route 重启恢复、旧 Host Password 无损迁移、引用占用、
   顺序和循环检测通过。
+- Schema v4 Group/三态 Override 重启恢复、v3 语义保持、State/Value CHECK、
+  Parent/Route 循环、32 层限制、引用占用和中断回滚通过。
 - Windows 与 Android 构建已经验证；iOS 仍等待 macOS/Xcode 环境。

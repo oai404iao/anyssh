@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { browserCredentialIsReferenced } from "./host-bridge";
 
 export type CredentialKind = "password" | "privateKey";
 
@@ -115,6 +116,9 @@ export async function importPrivateKeyCredential(
 
 export async function deleteCredential(credentialId: string): Promise<boolean> {
   if (!isTauri()) {
+    if (browserCredentialIsReferenced(credentialId)) {
+      throw new Error("Credential is in use by a Host or Group");
+    }
     const previousLength = browserCredentials.length;
     browserCredentials = browserCredentials.filter(
       (credential) => credential.id !== credentialId,

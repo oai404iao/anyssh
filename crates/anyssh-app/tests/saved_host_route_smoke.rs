@@ -1,6 +1,6 @@
 use std::{env, fs, time::Duration};
 
-use anyssh_app::{ApplicationCore, DatabaseActorConfig};
+use anyssh_app::{ApplicationCore, DatabaseActorConfig, Override};
 use anyssh_domain::TerminalSize;
 use anyssh_ssh::{SessionEvent, SessionHop};
 use anyssh_vault::PinKdfParameters;
@@ -78,13 +78,23 @@ async fn saved_host_id_executes_two_jump_route_with_rust_only_credentials() {
         )
         .await
         .expect("create route to Jump 2");
+    let jump_two_group = core
+        .create_group(
+            "Jump two defaults".to_owned(),
+            None,
+            Override::Set(jump_two_credential.id().to_owned()),
+            Override::Set(route_to_jump_two.id().to_owned()),
+        )
+        .await
+        .expect("create Jump 2 Group");
     let jump_two = core
-        .create_host(
+        .create_host_with_overrides(
             "Jump two".to_owned(),
             jump_two_host.clone(),
             22,
-            Some(jump_two_credential.id().to_owned()),
-            Some(route_to_jump_two.id().to_owned()),
+            Some(jump_two_group.id().to_owned()),
+            Override::Inherit,
+            Override::Inherit,
         )
         .await
         .expect("create Jump 2 Host");
@@ -95,13 +105,23 @@ async fn saved_host_id_executes_two_jump_route_with_rust_only_credentials() {
         )
         .await
         .expect("create route to Target");
+    let target_group = core
+        .create_group(
+            "Deep target defaults".to_owned(),
+            None,
+            Override::Set(target_credential.id().to_owned()),
+            Override::Set(route_to_target.id().to_owned()),
+        )
+        .await
+        .expect("create Target Group");
     let target = core
-        .create_host(
+        .create_host_with_overrides(
             "Deep target".to_owned(),
             target_host.clone(),
             22,
-            Some(target_credential.id().to_owned()),
-            Some(route_to_target.id().to_owned()),
+            Some(target_group.id().to_owned()),
+            Override::Inherit,
+            Override::Inherit,
         )
         .await
         .expect("create Target Host");
@@ -197,16 +217,15 @@ async fn saved_host_id_executes_two_jump_route_with_rust_only_credentials() {
         )
         .await
         .expect("store incorrect Jump 2 credential");
-    core.update_host(
-        jump_two.id().to_owned(),
-        jump_two.display_name().to_owned(),
-        jump_two.host().to_owned(),
-        jump_two.port(),
-        Some(incorrect_credential.id().to_owned()),
-        jump_two.jump_route_id().map(str::to_owned),
+    core.update_group(
+        jump_two_group.id().to_owned(),
+        jump_two_group.label().to_owned(),
+        jump_two_group.parent_group_id().map(str::to_owned),
+        Override::Set(incorrect_credential.id().to_owned()),
+        jump_two_group.jump_route_override().clone(),
     )
     .await
-    .expect("point Jump 2 at incorrect Credential");
+    .expect("point Jump 2 Group at incorrect Credential");
 
     let spawned = core
         .spawn_saved_host_session(

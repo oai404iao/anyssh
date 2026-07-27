@@ -68,6 +68,22 @@ Profile 等配置。普通 `Option<T>` 只能表达“有值/无值”，无法�
 - 被 Group/Host 引用的对象删除失败。
 - IPC/Debug/日志不包含 Credential Secret。
 
+## 当前证据
+
+- 2026-07-27：Schema v4 已实现 `host_groups`、`group_overrides`、Host Group ID
+  和带 CHECK Constraint 的 Credential/Route State/Value 列。
+- 2026-07-27：v3 -> v4 成功迁移、语义保持、中断回滚、重启恢复、明文扫描和
+  非法 State/Value 拒绝测试通过。
+- 2026-07-27：Storage/Actor 覆盖 Parent/Child、直接/间接循环、32 层限制、
+  Inherit/Set/Clear、Restrict 删除和 Effective Jump Route 循环。
+- 2026-07-27：Tauri/React 已提供 metadata-only Group/Host DTO、Group Tree 和
+  三态 Editor；Saved Host IPC 仍只提交 Host ID。
+- 2026-07-27：Docker OpenSSH 已验证 Group 继承 Password/Private Key
+  Credential 和两级 Jump Route。
+- 2026-07-27：Playwright、agent-browser、X11 Native Picker/SSH 和真实 Wayland/
+  IBus/SSH 本地回归通过。Windows、Android 和 Container CI Evidence 尚待同一
+  Feature Commit。
+
 ## 相关文档
 
 - [Group Inheritance v1](../design/group-inheritance-v1.md)

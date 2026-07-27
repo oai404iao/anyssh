@@ -28,8 +28,10 @@ import {
   type CredentialSummary,
 } from "./lib/credential-bridge";
 import {
+  listGroups,
   listHosts,
   listJumpRoutes,
+  type GroupSummary,
   type HostSummary,
   type JumpRouteSummary,
 } from "./lib/host-bridge";
@@ -99,6 +101,7 @@ function App() {
   const [vaultError, setVaultError] = useState<string | null>(null);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("terminal");
   const [credentials, setCredentials] = useState<CredentialSummary[]>([]);
+  const [groups, setGroups] = useState<GroupSummary[]>([]);
   const [hosts, setHosts] = useState<HostSummary[]>([]);
   const [routes, setRoutes] = useState<JumpRouteSummary[]>([]);
   const [repositoryLoading, setRepositoryLoading] = useState(false);
@@ -111,12 +114,15 @@ function App() {
     setRepositoryLoading(true);
     setRepositoryError(null);
     try {
-      const [nextCredentials, nextHosts, nextRoutes] = await Promise.all([
-        listCredentials(),
-        listHosts(),
-        listJumpRoutes(),
-      ]);
+      const [nextCredentials, nextGroups, nextHosts, nextRoutes] =
+        await Promise.all([
+          listCredentials(),
+          listGroups(),
+          listHosts(),
+          listJumpRoutes(),
+        ]);
       setCredentials(nextCredentials);
+      setGroups(nextGroups);
       setHosts(nextHosts);
       setRoutes(nextRoutes);
       setSelectedSavedHostId((current) =>
@@ -176,18 +182,20 @@ function App() {
   );
   const selectedCredential = useMemo(
     () =>
-      selectedSavedHost?.credentialId
+      selectedSavedHost?.effectiveCredentialId
         ? (credentials.find(
-            (credential) => credential.id === selectedSavedHost.credentialId,
+            (credential) =>
+              credential.id === selectedSavedHost.effectiveCredentialId,
           ) ?? null)
         : null,
     [credentials, selectedSavedHost],
   );
   const selectedRoute = useMemo(
     () =>
-      selectedSavedHost?.jumpRouteId
-        ? (routes.find((route) => route.id === selectedSavedHost.jumpRouteId) ??
-          null)
+      selectedSavedHost?.effectiveJumpRouteId
+        ? (routes.find(
+            (route) => route.id === selectedSavedHost.effectiveJumpRouteId,
+          ) ?? null)
         : null,
     [routes, selectedSavedHost],
   );
@@ -264,7 +272,7 @@ function App() {
     setStatusDetail("Preparing connection…");
     terminalRef.current?.reset();
     terminalRef.current?.write(
-      `\x1b[1;36mAnySSH Phase 0\x1b[0m\r\nStarting ${
+      `\x1b[1;36mAnySSH Phase 1\x1b[0m\r\nStarting ${
         selectedSavedHost ? "saved Host" : "a secure"
       } SSH session…\r\n`,
     );
@@ -366,6 +374,7 @@ function App() {
     setSessionId(null);
     setSelectedSavedHostId(null);
     setCredentials([]);
+    setGroups([]);
     setHosts([]);
     setRoutes([]);
     setWorkspaceView("terminal");
@@ -420,6 +429,7 @@ function App() {
   }
 
   const configurationTitle: Record<ConfigurationSection, string> = {
+    groups: "Groups",
     hosts: "Hosts",
     credentials: "Credentials",
     routes: "Jump Routes",
@@ -449,7 +459,7 @@ function App() {
           </div>
           <div>
             <strong>AnySSH</strong>
-            <small>Phase 0 prototype</small>
+            <small>Phase 1 desktop MVP</small>
           </div>
         </div>
 
@@ -462,6 +472,15 @@ function App() {
             <NavIcon name="terminal" />
             Terminal
             <span className="nav-count">{sessionId ? "1" : "0"}</span>
+          </button>
+          <button
+            className={`nav-item ${workspaceView === "groups" ? "active" : ""}`}
+            onClick={() => setWorkspaceView("groups")}
+            type="button"
+          >
+            <NavIcon name="groups" />
+            Groups
+            <span className="nav-count">{groups.length}</span>
           </button>
           <button
             className={`nav-item ${workspaceView === "hosts" ? "active" : ""}`}
@@ -601,6 +620,7 @@ function App() {
           {(
             [
               ["terminal", "Terminal"],
+              ["groups", "Groups"],
               ["hosts", "Hosts"],
               ["credentials", "Credentials"],
               ["routes", "Routes"],
@@ -689,7 +709,9 @@ function App() {
                   <button
                     className="connect-button"
                     disabled={
-                      busy || connected || !selectedSavedHost.credentialId
+                      busy ||
+                      connected ||
+                      !selectedSavedHost.effectiveCredentialId
                     }
                     type="submit"
                   >
@@ -846,6 +868,7 @@ function App() {
         ) : (
           <ConfigurationWorkspace
             credentials={credentials}
+            groups={groups}
             hosts={hosts}
             loadError={repositoryError}
             loading={repositoryLoading}
@@ -914,9 +937,14 @@ function App() {
   );
 }
 
-function NavIcon({ name }: { name: "terminal" | "hosts" | "keys" | "routes" }) {
+function NavIcon({
+  name,
+}: {
+  name: "terminal" | "groups" | "hosts" | "keys" | "routes";
+}) {
   const paths = {
     terminal: "M4 5h16v14H4zM7.5 9l3 3-3 3M12.5 15H17",
+    groups: "M5 5h6v5H5zM13 14h6v5h-6zM8 10v2a2 2 0 0 0 2 2h3",
     hosts: "M4 5.5h16v11H4zM8 19h8M12 16.5V19",
     keys: "M15.5 7.5a4 4 0 1 1-3.7 5.5L4 20.8V17h3v-3h3l1.8-1.8",
     routes: "M6 5.5h4v4H6zM14 14.5h4v4h-4zM10 7.5h3a3 3 0 0 1 3 3v4",

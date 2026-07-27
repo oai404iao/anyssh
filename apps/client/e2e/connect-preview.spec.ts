@@ -34,7 +34,7 @@ test("connects through the host-key preview flow", async ({ page }) => {
   await expect(password).toHaveValue("");
 });
 
-test("manages Credentials, Hosts, and ordered Jump Routes", async ({
+test("manages Groups, Credentials, Hosts, and ordered Jump Routes", async ({
   page,
 }) => {
   await page.goto("/");
@@ -72,19 +72,52 @@ test("manages Credentials, Hosts, and ordered Jump Routes", async ({
   await keyDialog.getByRole("button", { name: "Choose private key" }).click();
   await expect(page.getByText("QA imported key")).toBeVisible();
 
+  await page.getByRole("button", { name: /^Groups \d+$/ }).click();
+  await page.getByRole("button", { name: "New group" }).click();
+  const rootGroupDialog = page.getByRole("dialog", { name: "New Group" });
+  await rootGroupDialog.getByLabel("Group label").fill("QA root");
+  await rootGroupDialog.getByLabel("Credential behavior").selectOption("set");
+  await rootGroupDialog
+    .getByLabel("Credential reference")
+    .selectOption({ label: "QA deployment password · qa-user" });
+  await rootGroupDialog.getByLabel("Jump Route behavior").selectOption("set");
+  await rootGroupDialog
+    .getByLabel("Jump Route reference")
+    .selectOption({ label: "Through edge gateway" });
+  await rootGroupDialog.getByRole("button", { name: "Save Group" }).click();
+  await expect(
+    page.locator(".resource-card").filter({ hasText: "QA root" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "New group" }).click();
+  const childGroupDialog = page.getByRole("dialog", { name: "New Group" });
+  await childGroupDialog.getByLabel("Group label").fill("QA child");
+  await childGroupDialog
+    .getByLabel("Parent Group")
+    .selectOption({ label: "QA root" });
+  await childGroupDialog
+    .getByLabel("Jump Route behavior")
+    .selectOption("clear");
+  await childGroupDialog.getByRole("button", { name: "Save Group" }).click();
+  const childGroup = page
+    .locator(".resource-card")
+    .filter({ hasText: "QA child" });
+  await expect(childGroup).toContainText("Inherited");
+  await expect(childGroup).toContainText("Cleared");
+
   await page.getByRole("button", { name: /^Hosts \d+$/ }).click();
   await page.getByRole("button", { name: "New host" }).click();
   const hostDialog = page.getByRole("dialog", { name: "New Host" });
   await hostDialog.getByLabel("Display name").fill("QA target");
   await hostDialog.getByLabel("Host").fill("qa.internal");
   await hostDialog.getByRole("spinbutton", { name: "Port" }).fill("2202");
-  await hostDialog
-    .getByLabel("Credential")
-    .selectOption({ label: "QA deployment password · qa-user" });
+  await hostDialog.getByLabel("Group").selectOption({ label: "QA child" });
   await hostDialog.getByRole("button", { name: "Save Host" }).click();
-  await expect(
-    page.locator(".resource-card").filter({ hasText: "QA target" }),
-  ).toBeVisible();
+  const target = page
+    .locator(".resource-card")
+    .filter({ hasText: "QA target" });
+  await expect(target).toContainText("qa-user");
+  await expect(target).toContainText("Direct · Inherited");
 
   await page.getByRole("button", { name: /^Jump routes \d+$/ }).click();
   await page.getByRole("button", { name: "New route" }).click();

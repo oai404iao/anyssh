@@ -23,8 +23,8 @@ use zeroize::Zeroizing;
 const _: () = assert!(anyssh_storage::MAX_JUMP_ROUTE_STEPS == anyssh_ssh::MAX_JUMP_HOSTS);
 
 pub use anyssh_storage::{
-    CredentialKind, CredentialSummary, DatabaseActorConfig, DatabaseActorStartError, HostSummary,
-    JumpRouteSummary, VaultState, VaultStatus,
+    CredentialKind, CredentialSummary, DatabaseActorConfig, DatabaseActorStartError, GroupSummary,
+    HostSummary, JumpRouteSummary, MAX_GROUP_DEPTH, Override, VaultState, VaultStatus,
 };
 
 #[derive(Clone)]
@@ -180,6 +180,58 @@ impl ApplicationCore {
             .map_err(ApplicationError::from)
     }
 
+    pub async fn create_group(
+        &self,
+        label: String,
+        parent_group_id: Option<String>,
+        credential_override: Override<String>,
+        jump_route_override: Override<String>,
+    ) -> Result<GroupSummary, ApplicationError> {
+        self.database
+            .create_group(
+                label,
+                parent_group_id,
+                credential_override,
+                jump_route_override,
+            )
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn update_group(
+        &self,
+        id: String,
+        label: String,
+        parent_group_id: Option<String>,
+        credential_override: Override<String>,
+        jump_route_override: Override<String>,
+    ) -> Result<GroupSummary, ApplicationError> {
+        self.database
+            .update_group(
+                id,
+                label,
+                parent_group_id,
+                credential_override,
+                jump_route_override,
+            )
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn list_groups(&self) -> Result<Vec<GroupSummary>, ApplicationError> {
+        self.database
+            .list_groups()
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn delete_group(&self, id: String) -> Result<bool, ApplicationError> {
+        self.database
+            .delete_group(id)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
     pub async fn create_host(
         &self,
         display_name: String,
@@ -205,6 +257,53 @@ impl ApplicationCore {
     ) -> Result<HostSummary, ApplicationError> {
         self.database
             .update_host(id, display_name, host, port, credential_id, jump_route_id)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn create_host_with_overrides(
+        &self,
+        display_name: String,
+        host: String,
+        port: u16,
+        group_id: Option<String>,
+        credential_override: Override<String>,
+        jump_route_override: Override<String>,
+    ) -> Result<HostSummary, ApplicationError> {
+        self.database
+            .create_host_with_overrides(
+                display_name,
+                host,
+                port,
+                group_id,
+                credential_override,
+                jump_route_override,
+            )
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_host_with_overrides(
+        &self,
+        id: String,
+        display_name: String,
+        host: String,
+        port: u16,
+        group_id: Option<String>,
+        credential_override: Override<String>,
+        jump_route_override: Override<String>,
+    ) -> Result<HostSummary, ApplicationError> {
+        self.database
+            .update_host_with_overrides(
+                id,
+                display_name,
+                host,
+                port,
+                group_id,
+                credential_override,
+                jump_route_override,
+            )
             .await
             .map_err(ApplicationError::from)
     }

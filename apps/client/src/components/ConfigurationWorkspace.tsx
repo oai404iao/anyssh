@@ -7,20 +7,27 @@ import {
   type CredentialSummary,
 } from "../lib/credential-bridge";
 import {
+  createGroup,
   createHost,
   createJumpRoute,
+  deleteGroup,
   deleteHost,
   deleteJumpRoute,
+  updateGroup,
   updateHost,
   updateJumpRoute,
+  type GroupSummary,
   type HostSummary,
   type JumpRouteSummary,
+  type ReferenceOverride,
 } from "../lib/host-bridge";
 
-export type ConfigurationSection = "hosts" | "credentials" | "routes";
+export type ConfigurationSection =
+  "groups" | "hosts" | "credentials" | "routes";
 
 interface ConfigurationWorkspaceProps {
   section: ConfigurationSection;
+  groups: GroupSummary[];
   hosts: HostSummary[];
   credentials: CredentialSummary[];
   routes: JumpRouteSummary[];
@@ -32,6 +39,7 @@ interface ConfigurationWorkspaceProps {
 
 export function ConfigurationWorkspace({
   section,
+  groups,
   hosts,
   credentials,
   routes,
@@ -50,10 +58,20 @@ export function ConfigurationWorkspace({
       {section === "hosts" && (
         <HostManager
           credentials={credentials}
+          groups={groups}
           hosts={hosts}
           loading={loading}
           onChanged={onChanged}
           onOpenHost={onOpenHost}
+          routes={routes}
+        />
+      )}
+      {section === "groups" && (
+        <GroupManager
+          credentials={credentials}
+          groups={groups}
+          loading={loading}
+          onChanged={onChanged}
           routes={routes}
         />
       )}
@@ -81,7 +99,302 @@ interface ManagerProps {
   onChanged(): Promise<void>;
 }
 
+interface GroupManagerProps extends ManagerProps {
+  groups: GroupSummary[];
+  credentials: CredentialSummary[];
+  routes: JumpRouteSummary[];
+}
+
+interface GroupDraft {
+  groupId: string | null;
+  label: string;
+  parentGroupId: string;
+  credentialOverride: ReferenceOverride;
+  jumpRouteOverride: ReferenceOverride;
+}
+
+const EMPTY_GROUP_DRAFT: GroupDraft = {
+  groupId: null,
+  label: "",
+  parentGroupId: "",
+  credentialOverride: { kind: "inherit" },
+  jumpRouteOverride: { kind: "inherit" },
+};
+
+function GroupManager({
+  groups,
+  credentials,
+  routes,
+  loading,
+  onChanged,
+}: GroupManagerProps) {
+  const [draft, setDraft] = useState<GroupDraft | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const orderedGroups = useMemo(() => flattenGroupTree(groups), [groups]);
+  const groupLabels = useMemo(
+    () => new Map(groups.map((group) => [group.id, group])),
+    [groups],
+  );
+  const credentialLabels = useMemo(
+    () => new Map(credentials.map((credential) => [credential.id, credential])),
+    [credentials],
+  );
+  const routeLabels = useMemo(
+    () => new Map(routes.map((route) => [route.id, route])),
+    [routes],
+  );
+
+  function editGroup(group: GroupSummary) {
+    setError(null);
+    setDraft({
+      groupId: group.id,
+      label: group.label,
+      parentGroupId: group.parentGroupId ?? "",
+      credentialOverride: cloneReferenceOverride(group.credentialOverride),
+      jumpRouteOverride: cloneReferenceOverride(group.jumpRouteOverride),
+    });
+  }
+
+  async function saveGroup(event: FormEvent) {
+    event.preventDefault();
+    if (!draft) return;
+    if (!draft.label.trim()) {
+      setError("Group label is required.");
+      return;
+    }
+    if (
+      !overrideHasSelection(draft.credentialOverride) ||
+      !overrideHasSelection(draft.jumpRouteOverride)
+    ) {
+      setError("Set overrides require a selected Credential or Jump Route.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      if (draft.groupId) {
+        await updateGroup({
+          groupId: draft.groupId,
+          label: draft.label,
+          parentGroupId: draft.parentGroupId || null,
+          credentialOverride: draft.credentialOverride,
+          jumpRouteOverride: draft.jumpRouteOverride,
+        });
+      } else {
+        await createGroup({
+          label: draft.label,
+          parentGroupId: draft.parentGroupId || null,
+          credentialOverride: draft.credentialOverride,
+          jumpRouteOverride: draft.jumpRouteOverride,
+        });
+      }
+      await onChanged();
+      setDraft(null);
+    } catch (operationError) {
+      setError(String(operationError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeGroup(groupId: string) {
+    if (confirmDelete !== groupId) {
+      setConfirmDelete(groupId);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteGroup(groupId);
+      await onChanged();
+      setConfirmDelete(null);
+    } catch (operationError) {
+      setError(String(operationError));
+      setConfirmDelete(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const unavailableParents = draft?.groupId
+    ? descendantGroupIds(groups, draft.groupId)
+    : new Set<string>();
+
+  return (
+    <ManagerShell
+      action={
+        <button
+          className="connect-button compact-button"
+          onClick={() => {
+            setError(null);
+            setDraft({
+              ...EMPTY_GROUP_DRAFT,
+              credentialOverride: { kind: "inherit" },
+              jumpRouteOverride: { kind: "inherit" },
+            });
+          }}
+          type="button"
+        >
+          New group
+        </button>
+      }
+      description="Groups form a bounded tree and preserve explicit Inherit, Set, and Clear state."
+      eyebrow="Organization"
+      title="Groups"
+    >
+      {error && <ManagerError message={error} />}
+      {loading ? (
+        <ManagerEmpty>Loading Groups…</ManagerEmpty>
+      ) : groups.length === 0 ? (
+        <ManagerEmpty>No Groups yet.</ManagerEmpty>
+      ) : (
+        <div className="resource-list group-tree">
+          {orderedGroups.map(({ group, depth }) => {
+            const credential = group.effectiveCredentialId
+              ? credentialLabels.get(group.effectiveCredentialId)
+              : null;
+            const route = group.effectiveJumpRouteId
+              ? routeLabels.get(group.effectiveJumpRouteId)
+              : null;
+            return (
+              <article
+                className="resource-card group-card"
+                key={group.id}
+                style={{ marginInlineStart: `${Math.min(depth, 4) * 12}px` }}
+              >
+                <div className="resource-icon group-resource-icon">
+                  {depth + 1}
+                </div>
+                <div className="resource-main">
+                  <strong>{group.label}</strong>
+                  <span>
+                    {group.parentGroupId
+                      ? `Child of ${groupLabels.get(group.parentGroupId)?.label ?? group.parentGroupId}`
+                      : "Root Group"}
+                  </span>
+                  <div className="resource-tags">
+                    <span>
+                      {credential
+                        ? `${credential.label} · ${overrideStateLabel(group.credentialOverride)}`
+                        : `No Credential · ${overrideStateLabel(group.credentialOverride)}`}
+                    </span>
+                    <span>
+                      {route
+                        ? `${route.label} · ${overrideStateLabel(group.jumpRouteOverride)}`
+                        : `Direct · ${overrideStateLabel(group.jumpRouteOverride)}`}
+                    </span>
+                  </div>
+                </div>
+                <div className="resource-actions">
+                  <button onClick={() => editGroup(group)} type="button">
+                    Edit
+                  </button>
+                  <button
+                    className={
+                      confirmDelete === group.id ? "danger-action" : ""
+                    }
+                    disabled={busy}
+                    onClick={() => void removeGroup(group.id)}
+                    type="button"
+                  >
+                    {confirmDelete === group.id ? "Confirm delete" : "Delete"}
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      {draft && (
+        <EditorDialog
+          onClose={() => {
+            setDraft(null);
+            setError(null);
+          }}
+          title={draft.groupId ? "Edit Group" : "New Group"}
+        >
+          <form className="editor-form" onSubmit={saveGroup}>
+            <label>
+              Group label
+              <input
+                autoFocus
+                onChange={(event) =>
+                  setDraft((current) =>
+                    current
+                      ? { ...current, label: event.target.value }
+                      : current,
+                  )
+                }
+                value={draft.label}
+              />
+            </label>
+            <label>
+              Parent Group
+              <select
+                onChange={(event) =>
+                  setDraft((current) =>
+                    current
+                      ? { ...current, parentGroupId: event.target.value }
+                      : current,
+                  )
+                }
+                value={draft.parentGroupId}
+              >
+                <option value="">Root Group</option>
+                {groups
+                  .filter((group) => !unavailableParents.has(group.id))
+                  .map((group) => (
+                    <option key={group.id} value={group.id}>
+                      {group.label}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <ReferenceOverrideEditor
+              inheritLabel="Inherit parent Credential"
+              label="Credential"
+              onChange={(credentialOverride) =>
+                setDraft((current) =>
+                  current ? { ...current, credentialOverride } : current,
+                )
+              }
+              options={credentials.map((credential) => ({
+                id: credential.id,
+                label: `${credential.label} · ${credential.username}`,
+              }))}
+              setLabel="Set Credential"
+              value={draft.credentialOverride}
+            />
+            <ReferenceOverrideEditor
+              inheritLabel="Inherit parent Jump Route"
+              label="Jump Route"
+              onChange={(jumpRouteOverride) =>
+                setDraft((current) =>
+                  current ? { ...current, jumpRouteOverride } : current,
+                )
+              }
+              options={routes.map((route) => ({
+                id: route.id,
+                label: route.label,
+              }))}
+              setLabel="Set Jump Route"
+              value={draft.jumpRouteOverride}
+            />
+            {error && <ManagerError message={error} />}
+            <EditorActions busy={busy} submitLabel="Save Group" />
+          </form>
+        </EditorDialog>
+      )}
+    </ManagerShell>
+  );
+}
+
 interface HostManagerProps extends ManagerProps {
+  groups: GroupSummary[];
   hosts: HostSummary[];
   credentials: CredentialSummary[];
   routes: JumpRouteSummary[];
@@ -93,8 +406,9 @@ interface HostDraft {
   displayName: string;
   host: string;
   port: string;
-  credentialId: string;
-  jumpRouteId: string;
+  groupId: string;
+  credentialOverride: ReferenceOverride;
+  jumpRouteOverride: ReferenceOverride;
 }
 
 const EMPTY_HOST_DRAFT: HostDraft = {
@@ -102,12 +416,14 @@ const EMPTY_HOST_DRAFT: HostDraft = {
   displayName: "",
   host: "",
   port: "22",
-  credentialId: "",
-  jumpRouteId: "",
+  groupId: "",
+  credentialOverride: { kind: "inherit" },
+  jumpRouteOverride: { kind: "inherit" },
 };
 
 function HostManager({
   hosts,
+  groups,
   credentials,
   routes,
   loading,
@@ -126,6 +442,10 @@ function HostManager({
     () => new Map(routes.map((route) => [route.id, route])),
     [routes],
   );
+  const groupLabels = useMemo(
+    () => new Map(groups.map((group) => [group.id, group])),
+    [groups],
+  );
 
   function editHost(host: HostSummary) {
     setError(null);
@@ -134,8 +454,9 @@ function HostManager({
       displayName: host.displayName,
       host: host.host,
       port: String(host.port),
-      credentialId: host.credentialId ?? "",
-      jumpRouteId: host.jumpRouteId ?? "",
+      groupId: host.groupId ?? "",
+      credentialOverride: cloneReferenceOverride(host.credentialOverride),
+      jumpRouteOverride: cloneReferenceOverride(host.jumpRouteOverride),
     });
   }
 
@@ -153,6 +474,13 @@ function HostManager({
       setError("Display name, Host, and a valid port are required.");
       return;
     }
+    if (
+      !overrideHasSelection(draft.credentialOverride) ||
+      !overrideHasSelection(draft.jumpRouteOverride)
+    ) {
+      setError("Set overrides require a selected Credential or Jump Route.");
+      return;
+    }
 
     setBusy(true);
     setError(null);
@@ -163,16 +491,18 @@ function HostManager({
           displayName: draft.displayName,
           host: draft.host,
           port,
-          credentialId: draft.credentialId || null,
-          jumpRouteId: draft.jumpRouteId || null,
+          groupId: draft.groupId || null,
+          credentialOverride: draft.credentialOverride,
+          jumpRouteOverride: draft.jumpRouteOverride,
         });
       } else {
         await createHost({
           displayName: draft.displayName,
           host: draft.host,
           port,
-          credentialId: draft.credentialId || null,
-          jumpRouteId: draft.jumpRouteId || null,
+          groupId: draft.groupId || null,
+          credentialOverride: draft.credentialOverride,
+          jumpRouteOverride: draft.jumpRouteOverride,
         });
       }
       await onChanged();
@@ -210,7 +540,11 @@ function HostManager({
           className="connect-button compact-button"
           onClick={() => {
             setError(null);
-            setDraft({ ...EMPTY_HOST_DRAFT });
+            setDraft({
+              ...EMPTY_HOST_DRAFT,
+              credentialOverride: { kind: "inherit" },
+              jumpRouteOverride: { kind: "inherit" },
+            });
           }}
           type="button"
         >
@@ -229,12 +563,13 @@ function HostManager({
       ) : (
         <div className="resource-list">
           {hosts.map((host) => {
-            const credential = host.credentialId
-              ? credentialLabels.get(host.credentialId)
+            const credential = host.effectiveCredentialId
+              ? credentialLabels.get(host.effectiveCredentialId)
               : null;
-            const route = host.jumpRouteId
-              ? routeLabels.get(host.jumpRouteId)
+            const route = host.effectiveJumpRouteId
+              ? routeLabels.get(host.effectiveJumpRouteId)
               : null;
+            const group = host.groupId ? groupLabels.get(host.groupId) : null;
             return (
               <article className="resource-card" key={host.id}>
                 <div className="resource-icon host-resource-icon">
@@ -246,12 +581,17 @@ function HostManager({
                     {host.host}:{host.port}
                   </span>
                   <div className="resource-tags">
+                    {group && <span>{group.label}</span>}
                     <span>
                       {credential
-                        ? `${credential.username} · ${kindLabel(credential.kind)}`
-                        : "No Credential"}
+                        ? `${credential.username} · ${kindLabel(credential.kind)} · ${overrideStateLabel(host.credentialOverride)}`
+                        : `No Credential · ${overrideStateLabel(host.credentialOverride)}`}
                     </span>
-                    {route && <span>{route.label}</span>}
+                    <span>
+                      {route
+                        ? `${route.label} · ${overrideStateLabel(host.jumpRouteOverride)}`
+                        : `Direct · ${overrideStateLabel(host.jumpRouteOverride)}`}
+                    </span>
                   </div>
                 </div>
                 <div className="resource-actions">
@@ -334,45 +674,63 @@ function HostManager({
               </label>
             </div>
             <label>
-              Credential
+              Group
               <select
                 onChange={(event) =>
                   setDraft((current) =>
                     current
-                      ? { ...current, credentialId: event.target.value }
+                      ? { ...current, groupId: event.target.value }
                       : current,
                   )
                 }
-                value={draft.credentialId}
+                value={draft.groupId}
               >
-                <option value="">No Credential</option>
-                {credentials.map((credential) => (
-                  <option key={credential.id} value={credential.id}>
-                    {credential.label} · {credential.username}
+                <option value="">No Group</option>
+                {groups.map((group) => (
+                  <option key={group.id} value={group.id}>
+                    {group.label}
                   </option>
                 ))}
               </select>
             </label>
-            <label>
-              Jump Route
-              <select
-                onChange={(event) =>
-                  setDraft((current) =>
-                    current
-                      ? { ...current, jumpRouteId: event.target.value }
-                      : current,
-                  )
-                }
-                value={draft.jumpRouteId}
-              >
-                <option value="">Direct connection</option>
-                {routes.map((route) => (
-                  <option key={route.id} value={route.id}>
-                    {route.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <ReferenceOverrideEditor
+              inheritLabel={
+                draft.groupId
+                  ? "Inherit Group Credential"
+                  : "Inherit application default"
+              }
+              label="Credential"
+              onChange={(credentialOverride) =>
+                setDraft((current) =>
+                  current ? { ...current, credentialOverride } : current,
+                )
+              }
+              options={credentials.map((credential) => ({
+                id: credential.id,
+                label: `${credential.label} · ${credential.username}`,
+              }))}
+              setLabel="Set Credential"
+              value={draft.credentialOverride}
+            />
+            <ReferenceOverrideEditor
+              inheritLabel={
+                draft.groupId
+                  ? "Inherit Group Jump Route"
+                  : "Inherit direct connection"
+              }
+              label="Jump Route"
+              onChange={(jumpRouteOverride) =>
+                setDraft((current) =>
+                  current ? { ...current, jumpRouteOverride } : current,
+                )
+              }
+              options={routes.map((route) => ({
+                id: route.id,
+                label: route.label,
+              }))}
+              setLabel="Set Jump Route"
+              value={draft.jumpRouteOverride}
+            />
             {error && <ManagerError message={error} />}
             <EditorActions busy={busy} submitLabel="Save Host" />
           </form>
@@ -984,6 +1342,149 @@ function RouteManager({
       )}
     </ManagerShell>
   );
+}
+
+interface ReferenceOverrideEditorProps {
+  label: string;
+  inheritLabel: string;
+  setLabel: string;
+  value: ReferenceOverride;
+  options: Array<{ id: string; label: string }>;
+  onChange(value: ReferenceOverride): void;
+}
+
+function ReferenceOverrideEditor({
+  label,
+  inheritLabel,
+  setLabel,
+  value,
+  options,
+  onChange,
+}: ReferenceOverrideEditorProps) {
+  return (
+    <fieldset className="override-editor">
+      <legend>{label}</legend>
+      <label>
+        Behavior
+        <select
+          aria-label={`${label} behavior`}
+          onChange={(event) => {
+            switch (event.target.value) {
+              case "set":
+                onChange({
+                  kind: "set",
+                  value:
+                    value.kind === "set" ? value.value : (options[0]?.id ?? ""),
+                });
+                break;
+              case "clear":
+                onChange({ kind: "clear" });
+                break;
+              default:
+                onChange({ kind: "inherit" });
+            }
+          }}
+          value={value.kind}
+        >
+          <option value="inherit">{inheritLabel}</option>
+          <option value="set">{setLabel}</option>
+          <option value="clear">Clear inherited value</option>
+        </select>
+      </label>
+      {value.kind === "set" && (
+        <label>
+          {label} reference
+          <select
+            aria-label={`${label} reference`}
+            onChange={(event) =>
+              onChange({ kind: "set", value: event.target.value })
+            }
+            value={value.value}
+          >
+            {options.length === 0 && (
+              <option value="">No {label} available</option>
+            )}
+            {options.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+    </fieldset>
+  );
+}
+
+function flattenGroupTree(
+  groups: GroupSummary[],
+): Array<{ group: GroupSummary; depth: number }> {
+  const byParent = new Map<string | null, GroupSummary[]>();
+  for (const group of groups) {
+    const siblings = byParent.get(group.parentGroupId) ?? [];
+    siblings.push(group);
+    byParent.set(group.parentGroupId, siblings);
+  }
+  for (const siblings of byParent.values()) {
+    siblings.sort((left, right) => left.label.localeCompare(right.label));
+  }
+
+  const output: Array<{ group: GroupSummary; depth: number }> = [];
+  const visited = new Set<string>();
+  const visit = (group: GroupSummary, depth: number) => {
+    if (visited.has(group.id)) return;
+    visited.add(group.id);
+    output.push({ group, depth });
+    for (const child of byParent.get(group.id) ?? []) {
+      visit(child, depth + 1);
+    }
+  };
+  for (const root of byParent.get(null) ?? []) visit(root, 0);
+  for (const group of groups) visit(group, 0);
+  return output;
+}
+
+function descendantGroupIds(
+  groups: GroupSummary[],
+  groupId: string,
+): Set<string> {
+  const result = new Set([groupId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const group of groups) {
+      if (
+        group.parentGroupId &&
+        result.has(group.parentGroupId) &&
+        !result.has(group.id)
+      ) {
+        result.add(group.id);
+        changed = true;
+      }
+    }
+  }
+  return result;
+}
+
+function cloneReferenceOverride(value: ReferenceOverride): ReferenceOverride {
+  return value.kind === "set"
+    ? { kind: "set", value: value.value }
+    : { ...value };
+}
+
+function overrideHasSelection(value: ReferenceOverride) {
+  return value.kind !== "set" || Boolean(value.value);
+}
+
+function overrideStateLabel(value: ReferenceOverride) {
+  switch (value.kind) {
+    case "inherit":
+      return "Inherited";
+    case "set":
+      return "Set here";
+    case "clear":
+      return "Cleared";
+  }
 }
 
 interface ManagerShellProps {

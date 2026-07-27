@@ -11,9 +11,10 @@ use tokio::sync::{mpsc, oneshot};
 use zeroize::Zeroizing;
 
 use crate::{
-    CredentialSecret, CredentialSummary, HostSummary, JumpRouteSummary, LocalVault,
-    ResolvedCredential, ResolvedHostConnectionPlan, StorageError, VaultPresence,
+    CredentialSecret, CredentialSummary, GroupSummary, HostSummary, JumpRouteSummary, LocalVault,
+    Override, ResolvedCredential, ResolvedHostConnectionPlan, StorageError, VaultPresence,
     credential::{CredentialRecord, generate_credential_id},
+    group::generate_group_id,
     host::generate_host_id,
     jump_route::generate_jump_route_id,
 };
@@ -201,6 +202,52 @@ impl DatabaseActorHandle {
             .await
     }
 
+    pub async fn create_group(
+        &self,
+        label: String,
+        parent_group_id: Option<String>,
+        credential_override: Override<String>,
+        jump_route_override: Override<String>,
+    ) -> Result<GroupSummary, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::CreateGroup {
+            label,
+            parent_group_id,
+            credential_override,
+            jump_route_override,
+            response,
+        })
+        .await
+    }
+
+    pub async fn update_group(
+        &self,
+        id: String,
+        label: String,
+        parent_group_id: Option<String>,
+        credential_override: Override<String>,
+        jump_route_override: Override<String>,
+    ) -> Result<GroupSummary, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::UpdateGroup {
+            id,
+            label,
+            parent_group_id,
+            credential_override,
+            jump_route_override,
+            response,
+        })
+        .await
+    }
+
+    pub async fn list_groups(&self) -> Result<Vec<GroupSummary>, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::ListGroups { response })
+            .await
+    }
+
+    pub async fn delete_group(&self, id: String) -> Result<bool, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::DeleteGroup { id, response })
+            .await
+    }
+
     pub async fn create_host(
         &self,
         display_name: String,
@@ -209,12 +256,33 @@ impl DatabaseActorHandle {
         credential_id: Option<String>,
         jump_route_id: Option<String>,
     ) -> Result<HostSummary, DatabaseActorError> {
+        self.create_host_with_overrides(
+            display_name,
+            host,
+            port,
+            None,
+            credential_id.map_or(Override::Inherit, Override::Set),
+            jump_route_id.map_or(Override::Inherit, Override::Set),
+        )
+        .await
+    }
+
+    pub async fn create_host_with_overrides(
+        &self,
+        display_name: String,
+        host: String,
+        port: u16,
+        group_id: Option<String>,
+        credential_override: Override<String>,
+        jump_route_override: Override<String>,
+    ) -> Result<HostSummary, DatabaseActorError> {
         self.request(|response| DatabaseCommand::CreateHost {
             display_name,
             host,
             port,
-            credential_id,
-            jump_route_id,
+            group_id,
+            credential_override,
+            jump_route_override,
             response,
         })
         .await
@@ -229,13 +297,37 @@ impl DatabaseActorHandle {
         credential_id: Option<String>,
         jump_route_id: Option<String>,
     ) -> Result<HostSummary, DatabaseActorError> {
+        self.update_host_with_overrides(
+            id,
+            display_name,
+            host,
+            port,
+            None,
+            credential_id.map_or(Override::Inherit, Override::Set),
+            jump_route_id.map_or(Override::Inherit, Override::Set),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_host_with_overrides(
+        &self,
+        id: String,
+        display_name: String,
+        host: String,
+        port: u16,
+        group_id: Option<String>,
+        credential_override: Override<String>,
+        jump_route_override: Override<String>,
+    ) -> Result<HostSummary, DatabaseActorError> {
         self.request(|response| DatabaseCommand::UpdateHost {
             id,
             display_name,
             host,
             port,
-            credential_id,
-            jump_route_id,
+            group_id,
+            credential_override,
+            jump_route_override,
             response,
         })
         .await
@@ -355,6 +447,8 @@ type CredentialSummaryResponse = oneshot::Sender<Result<CredentialSummary, Datab
 type CredentialListResponse = oneshot::Sender<Result<Vec<CredentialSummary>, DatabaseActorError>>;
 type CredentialDeleteResponse = oneshot::Sender<Result<bool, DatabaseActorError>>;
 type ResolvedCredentialResponse = oneshot::Sender<Result<ResolvedCredential, DatabaseActorError>>;
+type GroupSummaryResponse = oneshot::Sender<Result<GroupSummary, DatabaseActorError>>;
+type GroupListResponse = oneshot::Sender<Result<Vec<GroupSummary>, DatabaseActorError>>;
 type HostSummaryResponse = oneshot::Sender<Result<HostSummary, DatabaseActorError>>;
 type HostListResponse = oneshot::Sender<Result<Vec<HostSummary>, DatabaseActorError>>;
 type JumpRouteSummaryResponse = oneshot::Sender<Result<JumpRouteSummary, DatabaseActorError>>;
@@ -403,12 +497,35 @@ enum DatabaseCommand {
         id: String,
         response: ResolvedCredentialResponse,
     },
+    CreateGroup {
+        label: String,
+        parent_group_id: Option<String>,
+        credential_override: Override<String>,
+        jump_route_override: Override<String>,
+        response: GroupSummaryResponse,
+    },
+    UpdateGroup {
+        id: String,
+        label: String,
+        parent_group_id: Option<String>,
+        credential_override: Override<String>,
+        jump_route_override: Override<String>,
+        response: GroupSummaryResponse,
+    },
+    ListGroups {
+        response: GroupListResponse,
+    },
+    DeleteGroup {
+        id: String,
+        response: DeleteResponse,
+    },
     CreateHost {
         display_name: String,
         host: String,
         port: u16,
-        credential_id: Option<String>,
-        jump_route_id: Option<String>,
+        group_id: Option<String>,
+        credential_override: Override<String>,
+        jump_route_override: Override<String>,
         response: HostSummaryResponse,
     },
     UpdateHost {
@@ -416,8 +533,9 @@ enum DatabaseCommand {
         display_name: String,
         host: String,
         port: u16,
-        credential_id: Option<String>,
-        jump_route_id: Option<String>,
+        group_id: Option<String>,
+        credential_override: Override<String>,
+        jump_route_override: Override<String>,
         response: HostSummaryResponse,
     },
     ListHosts {
@@ -563,21 +681,82 @@ impl DatabaseActorState {
             .map_err(DatabaseActorError::from)
     }
 
+    fn create_group(
+        &mut self,
+        label: String,
+        parent_group_id: Option<String>,
+        credential_override: Override<String>,
+        jump_route_override: Override<String>,
+    ) -> Result<GroupSummary, DatabaseActorError> {
+        let record = GroupSummary::new(
+            generate_group_id()?,
+            label,
+            parent_group_id,
+            credential_override,
+            jump_route_override,
+        )?;
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .create_group(&record)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn update_group(
+        &mut self,
+        id: String,
+        label: String,
+        parent_group_id: Option<String>,
+        credential_override: Override<String>,
+        jump_route_override: Override<String>,
+    ) -> Result<GroupSummary, DatabaseActorError> {
+        let record = GroupSummary::new(
+            id,
+            label,
+            parent_group_id,
+            credential_override,
+            jump_route_override,
+        )?;
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .update_group(&record)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn list_groups(&self) -> Result<Vec<GroupSummary>, DatabaseActorError> {
+        self.unlocked
+            .as_ref()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .list_groups()
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn delete_group(&mut self, id: &str) -> Result<bool, DatabaseActorError> {
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .delete_group(id)
+            .map_err(DatabaseActorError::from)
+    }
+
     fn create_host(
         &mut self,
         display_name: String,
         host: String,
         port: u16,
-        credential_id: Option<String>,
-        jump_route_id: Option<String>,
+        group_id: Option<String>,
+        credential_override: Override<String>,
+        jump_route_override: Override<String>,
     ) -> Result<HostSummary, DatabaseActorError> {
-        let record = HostSummary::new(
+        let record = HostSummary::new_with_overrides(
             generate_host_id()?,
             display_name,
             host,
             port,
-            credential_id,
-            jump_route_id,
+            group_id,
+            credential_override,
+            jump_route_override,
         )?;
         self.unlocked
             .as_mut()
@@ -586,16 +765,26 @@ impl DatabaseActorState {
             .map_err(DatabaseActorError::from)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn update_host(
         &mut self,
         id: String,
         display_name: String,
         host: String,
         port: u16,
-        credential_id: Option<String>,
-        jump_route_id: Option<String>,
+        group_id: Option<String>,
+        credential_override: Override<String>,
+        jump_route_override: Override<String>,
     ) -> Result<HostSummary, DatabaseActorError> {
-        let record = HostSummary::new(id, display_name, host, port, credential_id, jump_route_id)?;
+        let record = HostSummary::new_with_overrides(
+            id,
+            display_name,
+            host,
+            port,
+            group_id,
+            credential_override,
+            jump_route_override,
+        )?;
         self.unlocked
             .as_mut()
             .ok_or(DatabaseActorError::VaultLocked)?
@@ -733,20 +922,58 @@ fn run_database_actor(
             DatabaseCommand::ResolveCredential { id, response } => {
                 let _ = response.send(state.resolve_credential(&id));
             }
+            DatabaseCommand::CreateGroup {
+                label,
+                parent_group_id,
+                credential_override,
+                jump_route_override,
+                response,
+            } => {
+                let _ = response.send(state.create_group(
+                    label,
+                    parent_group_id,
+                    credential_override,
+                    jump_route_override,
+                ));
+            }
+            DatabaseCommand::UpdateGroup {
+                id,
+                label,
+                parent_group_id,
+                credential_override,
+                jump_route_override,
+                response,
+            } => {
+                let _ = response.send(state.update_group(
+                    id,
+                    label,
+                    parent_group_id,
+                    credential_override,
+                    jump_route_override,
+                ));
+            }
+            DatabaseCommand::ListGroups { response } => {
+                let _ = response.send(state.list_groups());
+            }
+            DatabaseCommand::DeleteGroup { id, response } => {
+                let _ = response.send(state.delete_group(&id));
+            }
             DatabaseCommand::CreateHost {
                 display_name,
                 host,
                 port,
-                credential_id,
-                jump_route_id,
+                group_id,
+                credential_override,
+                jump_route_override,
                 response,
             } => {
                 let _ = response.send(state.create_host(
                     display_name,
                     host,
                     port,
-                    credential_id,
-                    jump_route_id,
+                    group_id,
+                    credential_override,
+                    jump_route_override,
                 ));
             }
             DatabaseCommand::UpdateHost {
@@ -754,8 +981,9 @@ fn run_database_actor(
                 display_name,
                 host,
                 port,
-                credential_id,
-                jump_route_id,
+                group_id,
+                credential_override,
+                jump_route_override,
                 response,
             } => {
                 let _ = response.send(state.update_host(
@@ -763,8 +991,9 @@ fn run_database_actor(
                     display_name,
                     host,
                     port,
-                    credential_id,
-                    jump_route_id,
+                    group_id,
+                    credential_override,
+                    jump_route_override,
                 ));
             }
             DatabaseCommand::ListHosts { response } => {
@@ -1094,6 +1323,104 @@ mod tests {
             actor
                 .resolve_host_connection_plan(target.id().to_owned())
                 .await,
+            Err(DatabaseActorError::VaultLocked)
+        ));
+    }
+
+    #[tokio::test]
+    async fn actor_serializes_group_and_three_state_host_commands() {
+        let directory = tempdir().expect("tempdir");
+        let actor = DatabaseActorHandle::spawn(directory.path().join("vault"), test_config(8))
+            .expect("start actor");
+        actor
+            .create(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+
+        let credential = actor
+            .create_credential(
+                "Inherited credential".to_owned(),
+                "inherited-user".to_owned(),
+                CredentialSecret::Password {
+                    password: Zeroizing::new("inherited-secret".to_owned()),
+                },
+            )
+            .await
+            .expect("create Credential");
+        let root = actor
+            .create_group(
+                "Root".to_owned(),
+                None,
+                Override::Set(credential.id().to_owned()),
+                Override::Inherit,
+            )
+            .await
+            .expect("create root Group");
+        let child = actor
+            .create_group(
+                "Child".to_owned(),
+                Some(root.id().to_owned()),
+                Override::Inherit,
+                Override::Clear,
+            )
+            .await
+            .expect("create child Group");
+        assert_eq!(child.effective_credential_id(), Some(credential.id()));
+
+        let host = actor
+            .create_host_with_overrides(
+                "Inherited Host".to_owned(),
+                "inherited.internal".to_owned(),
+                22,
+                Some(child.id().to_owned()),
+                Override::Inherit,
+                Override::Inherit,
+            )
+            .await
+            .expect("create inherited Host");
+        assert_eq!(host.group_id(), Some(child.id()));
+        assert_eq!(host.credential_id(), Some(credential.id()));
+        assert_eq!(host.jump_route_id(), None);
+
+        let cleared = actor
+            .update_host_with_overrides(
+                host.id().to_owned(),
+                host.display_name().to_owned(),
+                host.host().to_owned(),
+                host.port(),
+                host.group_id().map(str::to_owned),
+                Override::Clear,
+                Override::Inherit,
+            )
+            .await
+            .expect("clear inherited Credential");
+        assert_eq!(cleared.credential_override(), &Override::Clear);
+        assert_eq!(cleared.credential_id(), None);
+
+        assert!(matches!(
+            actor.delete_group(child.id().to_owned()).await,
+            Err(DatabaseActorError::Storage(StorageError::GroupInUse))
+        ));
+        assert!(matches!(
+            actor.delete_credential(credential.id().to_owned()).await,
+            Err(DatabaseActorError::Storage(StorageError::CredentialInUse))
+        ));
+
+        actor
+            .delete_host(host.id().to_owned())
+            .await
+            .expect("delete Host");
+        actor
+            .delete_group(child.id().to_owned())
+            .await
+            .expect("delete child Group");
+        actor
+            .delete_group(root.id().to_owned())
+            .await
+            .expect("delete root Group");
+        actor.lock().await.expect("lock Vault");
+        assert!(matches!(
+            actor.list_groups().await,
             Err(DatabaseActorError::VaultLocked)
         ));
     }

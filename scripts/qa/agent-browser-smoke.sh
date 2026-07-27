@@ -128,7 +128,7 @@ agent-browser --session "$SESSION" wait --text "The SSH session has ended."
 agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/05-disconnected.png"
 
-agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(3)"
+agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(4)"
 agent-browser --session "$SESSION" wait --text "Secrets stay encrypted in the Vault"
 agent-browser --session "$SESSION" find role button click --name "New password"
 agent-browser --session "$SESSION" find label "Credential label" fill \
@@ -154,6 +154,36 @@ agent-browser --session "$SESSION" snapshot -i \
   >"$OUTPUT_DIR/06-credentials-snapshot.txt"
 
 agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(2)"
+agent-browser --session "$SESSION" find role button click --name "New group"
+agent-browser --session "$SESSION" find label "Group label" fill \
+  "Browser QA group"
+agent-browser --session "$SESSION" select \
+  '[aria-label="Credential behavior"]' "set"
+agent-browser --session "$SESSION" select \
+  '[aria-label="Credential reference"]' "browser-credential-4"
+agent-browser --session "$SESSION" find role button click --name "Save Group"
+agent-browser --session "$SESSION" wait --text "Browser QA group"
+agent-browser --session "$SESSION" find role button click --name "New group"
+agent-browser --session "$SESSION" find label "Group label" fill \
+  "Browser QA child"
+agent-browser --session "$SESSION" select \
+  ".resource-dialog select" "browser-group-2"
+agent-browser --session "$SESSION" select \
+  '[aria-label="Jump Route behavior"]' "clear"
+agent-browser --session "$SESSION" find role button click --name "Save Group"
+agent-browser --session "$SESSION" wait --text "Browser QA child"
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/07-groups.png"
+agent-browser --session "$SESSION" snapshot -i \
+  >"$OUTPUT_DIR/07-groups-snapshot.txt"
+agent-browser --session "$SESSION" set viewport 390 844
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/07b-groups-mobile.png"
+agent-browser --session "$SESSION" snapshot -i \
+  >"$OUTPUT_DIR/07b-groups-mobile-snapshot.txt"
+agent-browser --session "$SESSION" set viewport 1440 900
+
+agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(3)"
 agent-browser --session "$SESSION" find role button click --name "New host"
 agent-browser --session "$SESSION" find label "Display name" fill \
   "Browser QA target"
@@ -161,11 +191,11 @@ agent-browser --session "$SESSION" find label "Host" fill "qa.internal"
 agent-browser --session "$SESSION" fill \
   ".resource-dialog input[type=number]" "2202"
 agent-browser --session "$SESSION" select \
-  ".resource-dialog select" "browser-credential-4"
+  ".resource-dialog select" "browser-group-3"
 agent-browser --session "$SESSION" find role button click --name "Save Host"
 agent-browser --session "$SESSION" wait --text "Browser QA target"
 
-agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(4)"
+agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(5)"
 agent-browser --session "$SESSION" find role button click --name "New route"
 agent-browser --session "$SESSION" find label "Route label" fill \
   "Browser QA ordered route"
@@ -187,21 +217,21 @@ agent-browser --session "$SESSION" click \
   ".resource-card:first-of-type .resource-actions button:last-child"
 agent-browser --session "$SESSION" wait --text "in use"
 agent-browser --session "$SESSION" screenshot --full \
-  "$OUTPUT_DIR/screenshots/07-route-desktop.png"
+  "$OUTPUT_DIR/screenshots/08-route-desktop.png"
 agent-browser --session "$SESSION" snapshot -i \
-  >"$OUTPUT_DIR/07-route-snapshot.txt"
+  >"$OUTPUT_DIR/08-route-snapshot.txt"
 
 agent-browser --session "$SESSION" set viewport 1024 768
 agent-browser --session "$SESSION" screenshot --full \
-  "$OUTPUT_DIR/screenshots/08-route-compact.png"
+  "$OUTPUT_DIR/screenshots/09-route-compact.png"
 agent-browser --session "$SESSION" snapshot -i \
-  >"$OUTPUT_DIR/08-route-compact-snapshot.txt"
+  >"$OUTPUT_DIR/09-route-compact-snapshot.txt"
 
 agent-browser --session "$SESSION" set viewport 390 844
 agent-browser --session "$SESSION" screenshot --full \
-  "$OUTPUT_DIR/screenshots/09-route-mobile.png"
+  "$OUTPUT_DIR/screenshots/10-route-mobile.png"
 agent-browser --session "$SESSION" snapshot -i \
-  >"$OUTPUT_DIR/09-route-mobile-snapshot.txt"
+  >"$OUTPUT_DIR/10-route-mobile-snapshot.txt"
 
 BROWSER_ERRORS="$(agent-browser --session "$SESSION" errors)"
 printf '%s\n' "$BROWSER_ERRORS" >"$OUTPUT_DIR/errors.txt"
@@ -234,10 +264,13 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
   password after the editor closed.
 - Private Key import UI used a metadata-only browser simulation and exposed no
   file input, Path, Key text, or Passphrase field.
-- Host creation referenced the new Credential by opaque ID.
+- Parent/child Group creation exercised Credential Set, Credential Inherit,
+  Jump Route Inherit, and Jump Route Clear without exposing the submitted
+  password.
+- Host creation joined the child Group and inherited its Credential by opaque ID.
 - Jump Route creation added two Hosts, moved the second Host up, and preserved
   the visible order.
-- Deleting a Jump Route still referenced by a Host showed an in-use error.
+- Deleting a Jump Route still referenced by a Group showed an in-use error.
 - Configuration UI rendered at desktop and mobile viewports.
 - Browser error log was empty.
 
@@ -249,9 +282,11 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
 - \`screenshots/04-mobile-connected.png\`
 - \`screenshots/05-disconnected.png\`
 - \`screenshots/06-credentials.png\`
-- \`screenshots/07-route-desktop.png\`
-- \`screenshots/08-route-compact.png\`
-- \`screenshots/09-route-mobile.png\`
+- \`screenshots/07-groups.png\`
+- \`screenshots/07b-groups-mobile.png\`
+- \`screenshots/08-route-desktop.png\`
+- \`screenshots/09-route-compact.png\`
+- \`screenshots/10-route-mobile.png\`
 EOF
 
 echo "agent-browser smoke passed: $OUTPUT_DIR"
