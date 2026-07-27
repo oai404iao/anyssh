@@ -24,7 +24,7 @@ $script:NativeWindowHandle = [IntPtr]::Zero
 $script:StageRecords = @()
 
 New-Item -ItemType Directory -Force -Path $RunDirectory | Out-Null
-New-Item -ItemType Directory -Force -Path $VaultRoot | Out-Null
+Remove-Item -LiteralPath $VaultRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $WebViewDataRoot -Recurse -Force -ErrorAction SilentlyContinue
 
 Add-Type -TypeDefinition @"

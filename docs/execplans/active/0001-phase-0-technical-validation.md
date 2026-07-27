@@ -669,6 +669,12 @@ ssh-target-internal
   QA 改用单独的 Tauri Config Overlay 让 Wry 通过
   `ICoreWebView2EnvironmentOptions` 设置 Browser Arguments，而不是依赖进程
   环境。
+- 2026-07-27：Config Overlay 修复提交 `05961d4` 的 Run `30268921191`
+  已获得 `AnySSH` 原生窗口句柄 `0x2017A`、Session 2、WebView2
+  `Edg/150.0.4078.65`、CDP 1.3 和真实渲染截图。Smoke 随后进入
+  `Vault files are incomplete`，原因是 QA 在启动前创建了空 Vault Root；
+  Storage 按设计把“目录存在但 Bootstrap/Database 缺失”判为损坏。修复改为确保
+  Override Path 不存在，由 Vault Create 流程原子创建。
 - 2026-07-27：Commit `9f14940` 的 GitHub Actions Run `30243415893` 九个 Job
   全部通过。OpenSSH Log 明确执行
   `encrypted_private_key_flows_from_credential_id_to_ssh_core`，Windows、Android、

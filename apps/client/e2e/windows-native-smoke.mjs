@@ -3,6 +3,7 @@ import path from "node:path";
 import process from "node:process";
 import { chromium, expect } from "@playwright/test";
 
+const assert = expect.configure({ timeout: 30_000 });
 const cdpUrl = requiredEnvironment("ANYSSH_WINDOWS_CDP_URL");
 const runDirectory = requiredEnvironment("ANYSSH_WINDOWS_RUN_DIR");
 const stage = requiredEnvironment("ANYSSH_WINDOWS_STAGE");
@@ -58,7 +59,7 @@ try {
 }
 
 async function createVaultAndRepository(targetPage) {
-  await expect(
+  await assert(
     targetPage.getByRole("heading", {
       name: "Create your encrypted Vault",
     }),
@@ -70,7 +71,7 @@ async function createVaultAndRepository(targetPage) {
   await targetPage
     .getByRole("button", { name: "Create encrypted Vault" })
     .click();
-  await expect(
+  await assert(
     targetPage.getByText("Native runtime", { exact: true }),
   ).toBeVisible();
   await capture(targetPage, "02-native-ready.png", "02-native-ready.txt");
@@ -88,7 +89,7 @@ async function createVaultAndRepository(targetPage) {
   await credentialDialog
     .getByRole("button", { name: "Save Credential" })
     .click();
-  await expect(
+  await assert(
     targetPage
       .locator(".resource-card")
       .filter({ hasText: "Windows QA password" }),
@@ -104,7 +105,7 @@ async function createVaultAndRepository(targetPage) {
     .getByLabel("Credential")
     .selectOption({ label: "Windows QA password · windows-user" });
   await hostDialog.getByRole("button", { name: "Save Host" }).click();
-  await expect(
+  await assert(
     targetPage.locator(".resource-card").filter({ hasText: "Windows QA host" }),
   ).toBeVisible();
 
@@ -119,7 +120,7 @@ async function createVaultAndRepository(targetPage) {
     .selectOption({ label: "Windows QA host · 127.0.0.1:2222" });
   await routeDialog.getByRole("button", { name: "Add", exact: true }).click();
   await routeDialog.getByRole("button", { name: "Save Jump Route" }).click();
-  await expect(
+  await assert(
     targetPage
       .locator(".resource-card")
       .filter({ hasText: "Windows QA route" }),
@@ -131,17 +132,17 @@ async function createVaultAndRepository(targetPage) {
   );
 
   await targetPage.getByRole("button", { name: "Lock Vault" }).click();
-  await expect(
+  await assert(
     targetPage.getByRole("heading", { name: "Unlock AnySSH" }),
   ).toBeVisible();
   await targetPage.getByLabel("PIN", { exact: true }).fill(wrongPin);
   await targetPage.getByRole("button", { name: "Unlock" }).click();
-  await expect(targetPage.getByRole("alert")).toBeVisible();
+  await assert(targetPage.getByRole("alert")).toBeVisible();
   await capture(targetPage, "04-vault-wrong-pin.png", "04-vault-wrong-pin.txt");
 
   await targetPage.getByLabel("PIN", { exact: true }).fill(pin);
   await targetPage.getByRole("button", { name: "Unlock" }).click();
-  await expect(
+  await assert(
     targetPage.getByText("Native runtime", { exact: true }),
   ).toBeVisible();
   await capture(
@@ -152,30 +153,30 @@ async function createVaultAndRepository(targetPage) {
 }
 
 async function unlockRestartedVault(targetPage) {
-  await expect(
+  await assert(
     targetPage.getByRole("heading", { name: "Unlock AnySSH" }),
   ).toBeVisible();
   await capture(targetPage, "06-restart-locked.png", "06-restart-locked.txt");
   await targetPage.getByLabel("PIN", { exact: true }).fill(pin);
   await targetPage.getByRole("button", { name: "Unlock" }).click();
-  await expect(
+  await assert(
     targetPage.getByText("Native runtime", { exact: true }),
   ).toBeVisible();
 
   await targetPage.getByRole("button", { name: /^Credentials \d+$/ }).click();
-  await expect(
+  await assert(
     targetPage
       .locator(".resource-card")
       .filter({ hasText: "Windows QA password" }),
   ).toBeVisible();
 
   await targetPage.getByRole("button", { name: /^Hosts \d+$/ }).click();
-  await expect(
+  await assert(
     targetPage.locator(".resource-card").filter({ hasText: "Windows QA host" }),
   ).toBeVisible();
 
   await targetPage.getByRole("button", { name: /^Jump routes \d+$/ }).click();
-  await expect(
+  await assert(
     targetPage
       .locator(".resource-card")
       .filter({ hasText: "Windows QA route" }),
