@@ -105,6 +105,9 @@ Proposed ADR 是待验证方案，不是不可变事实。若 Phase 0 验证结�
 - SSH Private Key/Passphrase 不得出现在 Tauri IPC。保存的认证只传 Credential
   ID；显式临时密码仅用于当前未保存连接。`anyssh-app` 在 Rust 内解析并直接构造
   SSH Authentication。
+- Native Private Key Import Request 只允许 Label/Username。Tauri Command
+  必须在 Rust 内打开 Native Picker，再由 `ApplicationCore` 有界读取和验证；
+  WebView 不得提交 Path、Private Key 或 Passphrase。当前仅允许未加密 Key。
 - Host 只保存可选 Credential/Jump Route ID；Jump Route Step 只保存 Host ID。
   不得在 Host 或 Route 中复制 Username、Password、Private Key 或 Passphrase。
 - Saved Host Connect IPC 只传 Target Host ID 和 Terminal Size。Route 展开与
@@ -219,6 +222,8 @@ Evidence 复制回仓库。
 
 `pnpm qa:native:xvfb` 还必须覆盖原生 Vault 创建、错误 PIN、锁定和重新解锁。
 同时必须验证 Tauri/xterm Ack 背压能排空 4 MiB 输出并继续执行后续远端命令。
+该检查还必须通过真实 Native File Picker 导入测试 Private Key，确认 UI 只返回
+metadata、Key Header 不出现在 Vault 文件，且临时源文件在 SSH 流程前删除。
 
 `pnpm qa:native:wayland` 必须在 AnySSH 进程没有 `DISPLAY` 的条件下：
 
@@ -419,6 +424,7 @@ Clear
 | 根开发命令 | `package.json` |
 | Rust Workspace | `Cargo.toml` |
 | React 入口 | `apps/client/src/App.tsx` |
+| 配置工作区 | `apps/client/src/components/ConfigurationWorkspace.tsx` |
 | Terminal Adapter | `apps/client/src/components/TerminalPane.tsx` |
 | SSH Bridge | `apps/client/src/lib/ssh-bridge.ts` |
 | Credential Bridge | `apps/client/src/lib/credential-bridge.ts` |
@@ -430,6 +436,7 @@ Clear
 | Host Model | `crates/anyssh-storage/src/host.rs` |
 | Jump Route Model | `crates/anyssh-storage/src/jump_route.rs` |
 | Connection Plan | `crates/anyssh-storage/src/connection_plan.rs` |
+| Native Key Import Design | `docs/design/native-private-key-import-v1.md` |
 | SSH Core | `crates/anyssh-ssh/src/lib.rs` |
 | OpenSSH Fixture | `tests/fixtures/openssh/` |
 | Playwright E2E | `apps/client/e2e/connect-preview.spec.ts` |

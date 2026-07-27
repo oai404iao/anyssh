@@ -18,9 +18,10 @@ use anyssh_domain::{SshEndpoint, TerminalSize};
 use anyssh_ssh::{SessionControl, SessionEvent, SessionHop, SpawnedSession};
 use serde::{Deserialize, Serialize};
 use tauri::{
-    Manager, State,
+    AppHandle, Manager, State,
     ipc::{Channel, InvokeResponseBody},
 };
+use tauri_plugin_dialog::{DialogExt, FilePath};
 use tokio::sync::RwLock;
 use zeroize::Zeroizing;
 
@@ -123,6 +124,13 @@ struct UpdatePasswordCredentialRequest {
     label: String,
     username: String,
     password: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ImportPrivateKeyCredentialRequest {
+    label: String,
+    username: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -470,6 +478,40 @@ async fn credential_update_password(
 }
 
 #[tauri::command]
+async fn credential_import_private_key(
+    request: ImportPrivateKeyCredentialRequest,
+    app: AppHandle,
+    core: State<'_, ApplicationCore>,
+) -> Result<Option<CredentialSummary>, String> {
+    let selected = app
+        .dialog()
+        .file()
+        .set_title("Import SSH private key")
+        .blocking_pick_file();
+    let Some(path) = selected_private_key_path(selected)? else {
+        return Ok(None);
+    };
+
+    core.import_private_key_credential_from_path(request.label, request.username, path)
+        .await
+        .map(CredentialSummary::from)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+fn selected_private_key_path(
+    selected: Option<FilePath>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    selected
+        .map(|selected| {
+            selected
+                .into_path()
+                .map_err(|_| "selected private key cannot be read on this platform".to_owned())
+        })
+        .transpose()
+}
+
+#[tauri::command]
 async fn credential_list(
     core: State<'_, ApplicationCore>,
 ) -> Result<Vec<CredentialSummary>, String> {
@@ -781,6 +823,7 @@ async fn ssh_disconnect(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(SessionRegistry::default())
         .setup(|app| {
             let vault_root = app.path().app_data_dir()?.join("vault");
@@ -796,6 +839,7 @@ pub fn run() {
             vault_lock,
             credential_create_password,
             credential_update_password,
+            credential_import_private_key,
             credential_list,
             credential_delete,
             host_create,
@@ -902,6 +946,53 @@ mod tests {
         assert!(value.get("password").is_none());
         assert!(value.get("privateKey").is_none());
         assert!(value.get("passphrase").is_none());
+    }
+
+    #[test]
+    fn private_key_import_request_rejects_paths_and_secrets() {
+        let request: ImportPrivateKeyCredentialRequest =
+            serde_json::from_value(serde_json::json!({
+                "label": "Imported key",
+                "username": "alice"
+            }))
+            .expect("metadata-only import request should deserialize");
+        assert_eq!(request.label, "Imported key");
+        assert_eq!(request.username, "alice");
+
+        for extra in [
+            serde_json::json!({
+                "label": "Imported key",
+                "username": "alice",
+                "path": "/tmp/id_ed25519"
+            }),
+            serde_json::json!({
+                "label": "Imported key",
+                "username": "alice",
+                "privateKey": "must-not-enter-ipc"
+            }),
+            serde_json::json!({
+                "label": "Imported key",
+                "username": "alice",
+                "passphrase": "must-not-enter-ipc"
+            }),
+        ] {
+            assert!(serde_json::from_value::<ImportPrivateKeyCredentialRequest>(extra).is_err());
+        }
+    }
+
+    #[test]
+    fn private_key_picker_cancellation_returns_no_path() {
+        assert_eq!(
+            selected_private_key_path(None).expect("cancelled selection"),
+            None
+        );
+        assert_eq!(
+            selected_private_key_path(Some(FilePath::Path(std::path::PathBuf::from(
+                "/tmp/id_ed25519"
+            ),)))
+            .expect("desktop selection"),
+            Some(std::path::PathBuf::from("/tmp/id_ed25519"))
+        );
     }
 
     #[test]

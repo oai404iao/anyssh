@@ -1,11 +1,17 @@
 #![forbid(unsafe_code)]
 
-use std::{fmt, path::PathBuf};
+use std::{
+    fmt,
+    fs::{File, OpenOptions},
+    io::Read,
+    path::{Path, PathBuf},
+};
 
 use anyssh_domain::{SshEndpoint, TerminalSize};
 use anyssh_ssh::{
-    DEFAULT_CONNECTION_TIMEOUT, HostKeyPolicy, SessionAuthentication, SpawnedSession,
-    SshConnectionConfig, SshSessionConfig, spawn_session,
+    DEFAULT_CONNECTION_TIMEOUT, HostKeyPolicy, MAX_PRIVATE_KEY_BYTES, SessionAuthentication,
+    SpawnedSession, SshConnectionConfig, SshSessionConfig, spawn_session,
+    validate_private_key_text,
 };
 use anyssh_storage::{
     CredentialSecret, DatabaseActorError, DatabaseActorHandle, ResolvedCredential,
@@ -123,6 +129,19 @@ impl ApplicationCore {
             )
             .await
             .map_err(ApplicationError::from)
+    }
+
+    pub async fn import_private_key_credential_from_path(
+        &self,
+        label: String,
+        username: String,
+        path: PathBuf,
+    ) -> Result<CredentialSummary, ApplicationError> {
+        let private_key = tokio::task::spawn_blocking(move || read_private_key_file(&path))
+            .await
+            .map_err(|_| PrivateKeyImportError::TaskFailed)??;
+        self.store_private_key_credential(label, username, private_key, None)
+            .await
     }
 
     pub async fn update_private_key_credential(
@@ -391,7 +410,77 @@ pub enum ApplicationError {
     #[error("saved Host endpoint is invalid")]
     InvalidStoredHost,
     #[error(transparent)]
+    PrivateKeyImport(#[from] PrivateKeyImportError),
+    #[error(transparent)]
     Database(#[from] DatabaseActorError),
+}
+
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum PrivateKeyImportError {
+    #[error("selected private key file is unavailable")]
+    Unavailable,
+    #[error("selected private key must be a regular file")]
+    UnsupportedFileType,
+    #[error("selected private key file must be between 1 byte and 1 MiB")]
+    InvalidSize,
+    #[error("selected private key file must be UTF-8 text")]
+    InvalidEncoding,
+    #[error("selected private key is invalid or encrypted")]
+    InvalidKey,
+    #[error("private key validation task failed")]
+    TaskFailed,
+}
+
+fn read_private_key_file(path: &Path) -> Result<Zeroizing<String>, PrivateKeyImportError> {
+    let link_metadata =
+        std::fs::symlink_metadata(path).map_err(|_| PrivateKeyImportError::Unavailable)?;
+    if link_metadata.file_type().is_symlink() {
+        return Err(PrivateKeyImportError::UnsupportedFileType);
+    }
+    if !link_metadata.is_file() {
+        return Err(PrivateKeyImportError::UnsupportedFileType);
+    }
+
+    let file = open_private_key_file(path)?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| PrivateKeyImportError::Unavailable)?;
+    if !metadata.is_file() {
+        return Err(PrivateKeyImportError::UnsupportedFileType);
+    }
+    if metadata.len() == 0 || metadata.len() > MAX_PRIVATE_KEY_BYTES as u64 {
+        return Err(PrivateKeyImportError::InvalidSize);
+    }
+
+    let mut private_key = Zeroizing::new(String::new());
+    file.take(MAX_PRIVATE_KEY_BYTES as u64 + 1)
+        .read_to_string(&mut private_key)
+        .map_err(|_| PrivateKeyImportError::InvalidEncoding)?;
+    if private_key.is_empty() || private_key.len() > MAX_PRIVATE_KEY_BYTES {
+        return Err(PrivateKeyImportError::InvalidSize);
+    }
+    validate_private_key_text(private_key.as_str(), None)
+        .map_err(|_| PrivateKeyImportError::InvalidKey)?;
+    Ok(private_key)
+}
+
+#[cfg(unix)]
+fn open_private_key_file(path: &Path) -> Result<File, PrivateKeyImportError> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .map_err(|_| PrivateKeyImportError::Unavailable)
+}
+
+#[cfg(not(unix))]
+fn open_private_key_file(path: &Path) -> Result<File, PrivateKeyImportError> {
+    OpenOptions::new()
+        .read(true)
+        .open(path)
+        .map_err(|_| PrivateKeyImportError::Unavailable)
 }
 
 fn resolved_authentication(resolved: ResolvedCredential) -> (String, SessionAuthentication) {
@@ -434,6 +523,10 @@ fn normalize_username(username: String) -> Result<String, ApplicationError> {
 #[cfg(test)]
 mod tests {
     use anyssh_vault::PinKdfParameters;
+    use russh::keys::{
+        PrivateKey,
+        ssh_key::{Algorithm, LineEnding},
+    };
     use tempfile::tempdir;
 
     use super::*;
@@ -450,6 +543,11 @@ mod tests {
         )
         .expect("application core");
         (core, directory)
+    }
+
+    fn fixture_private_key() -> PrivateKey {
+        PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519)
+            .expect("generate fixture Private Key")
     }
 
     #[test]
@@ -519,6 +617,156 @@ mod tests {
         assert_eq!(
             passphrase.as_deref().map(String::as_str),
             Some("private-key-passphrase")
+        );
+    }
+
+    #[tokio::test]
+    async fn native_private_key_file_import_validates_before_storing() {
+        let (core, directory) = test_core();
+        core.create_vault(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+        let private_key = fixture_private_key()
+            .to_openssh(LineEnding::LF)
+            .expect("encode fixture Private Key");
+        let path = directory.path().join("id_ed25519");
+        std::fs::write(&path, private_key.as_bytes()).expect("write fixture Private Key");
+
+        let summary = core
+            .import_private_key_credential_from_path(
+                "Imported fixture".to_owned(),
+                "fixture-user".to_owned(),
+                path,
+            )
+            .await
+            .expect("import Private Key");
+
+        assert_eq!(summary.kind(), CredentialKind::PrivateKey);
+        assert_eq!(summary.label(), "Imported fixture");
+        assert_eq!(
+            core.list_credentials()
+                .await
+                .expect("list imported credentials"),
+            vec![summary]
+        );
+        let debug = format!(
+            "{:?}",
+            core.list_credentials()
+                .await
+                .expect("list imported credentials")
+        );
+        assert!(!debug.contains("BEGIN OPENSSH PRIVATE KEY"));
+    }
+
+    #[tokio::test]
+    async fn native_private_key_file_import_rejects_invalid_and_encrypted_keys() {
+        let (core, directory) = test_core();
+        core.create_vault(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+
+        let invalid_path = directory.path().join("invalid-key");
+        std::fs::write(&invalid_path, "not-a-private-key").expect("write invalid fixture");
+        let invalid_error = core
+            .import_private_key_credential_from_path(
+                "Invalid fixture".to_owned(),
+                "fixture-user".to_owned(),
+                invalid_path,
+            )
+            .await
+            .expect_err("invalid Private Key must fail");
+        assert!(matches!(
+            invalid_error,
+            ApplicationError::PrivateKeyImport(PrivateKeyImportError::InvalidKey)
+        ));
+
+        let encrypted_key = fixture_private_key()
+            .encrypt(&mut rand::rng(), "fixture-passphrase")
+            .expect("encrypt fixture Private Key")
+            .to_openssh(LineEnding::LF)
+            .expect("encode encrypted fixture Private Key");
+        let encrypted_path = directory.path().join("encrypted-key");
+        std::fs::write(&encrypted_path, encrypted_key.as_bytes()).expect("write encrypted fixture");
+        let encrypted_error = core
+            .import_private_key_credential_from_path(
+                "Encrypted fixture".to_owned(),
+                "fixture-user".to_owned(),
+                encrypted_path,
+            )
+            .await
+            .expect_err("encrypted Private Key must fail without native passphrase");
+        assert!(matches!(
+            encrypted_error,
+            ApplicationError::PrivateKeyImport(PrivateKeyImportError::InvalidKey)
+        ));
+        assert!(
+            core.list_credentials()
+                .await
+                .expect("list credentials after rejected imports")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn native_private_key_reader_rejects_unsafe_file_shapes_without_leaking_paths() {
+        let directory = tempdir().expect("tempdir");
+        let empty_path = directory.path().join("empty-private-key");
+        std::fs::write(&empty_path, "").expect("write empty fixture");
+        assert_eq!(
+            read_private_key_file(&empty_path),
+            Err(PrivateKeyImportError::InvalidSize)
+        );
+
+        let invalid_utf8_path = directory.path().join("invalid-utf8-private-key");
+        std::fs::write(&invalid_utf8_path, [0xff, 0xfe]).expect("write invalid UTF-8 fixture");
+        assert_eq!(
+            read_private_key_file(&invalid_utf8_path),
+            Err(PrivateKeyImportError::InvalidEncoding)
+        );
+
+        let oversized_path = directory.path().join("oversized-private-key");
+        let oversized = File::create(&oversized_path).expect("create oversized fixture");
+        oversized
+            .set_len(MAX_PRIVATE_KEY_BYTES as u64 + 1)
+            .expect("extend oversized fixture");
+        assert_eq!(
+            read_private_key_file(&oversized_path),
+            Err(PrivateKeyImportError::InvalidSize)
+        );
+
+        assert_eq!(
+            read_private_key_file(directory.path()),
+            Err(PrivateKeyImportError::UnsupportedFileType)
+        );
+
+        let missing_path = directory.path().join("secret-path-must-not-leak");
+        let error = read_private_key_file(&missing_path).expect_err("missing file must fail");
+        assert_eq!(error, PrivateKeyImportError::Unavailable);
+        assert!(!error.to_string().contains("secret-path-must-not-leak"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_private_key_reader_rejects_symlinks() {
+        use std::os::unix::fs::symlink;
+        use std::os::unix::net::UnixListener;
+
+        let directory = tempdir().expect("tempdir");
+        let target = directory.path().join("target-key");
+        std::fs::write(&target, "not-reached").expect("write symlink target");
+        let link = directory.path().join("linked-key");
+        symlink(target, &link).expect("create symlink fixture");
+
+        assert_eq!(
+            read_private_key_file(&link),
+            Err(PrivateKeyImportError::UnsupportedFileType)
+        );
+
+        let socket_path = directory.path().join("socket-key");
+        let _listener = UnixListener::bind(&socket_path).expect("create socket fixture");
+        assert_eq!(
+            read_private_key_file(&socket_path),
+            Err(PrivateKeyImportError::UnsupportedFileType)
         );
     }
 

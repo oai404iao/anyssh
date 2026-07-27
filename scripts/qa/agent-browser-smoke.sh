@@ -117,16 +117,6 @@ agent-browser --session "$SESSION" wait 400
 agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/03-connected-unicode.png"
 
-BROWSER_ERRORS="$(agent-browser --session "$SESSION" errors)"
-printf '%s\n' "$BROWSER_ERRORS" >"$OUTPUT_DIR/errors.txt"
-if [[ -n "${BROWSER_ERRORS//[[:space:]]/}" ]]; then
-  echo "Browser errors were detected:" >&2
-  printf '%s\n' "$BROWSER_ERRORS" >&2
-  exit 1
-fi
-
-agent-browser --session "$SESSION" console >"$OUTPUT_DIR/console.txt"
-
 agent-browser --session "$SESSION" set viewport 390 844
 agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/04-mobile-connected.png"
@@ -137,6 +127,85 @@ agent-browser --session "$SESSION" find role button click --name "Disconnect"
 agent-browser --session "$SESSION" wait --text "The SSH session has ended."
 agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/05-disconnected.png"
+
+agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(3)"
+agent-browser --session "$SESSION" wait --text "Secrets stay encrypted in the Vault"
+agent-browser --session "$SESSION" find role button click --name "New password"
+agent-browser --session "$SESSION" find label "Credential label" fill \
+  "Browser QA password"
+agent-browser --session "$SESSION" find label "Username" fill "browser-qa"
+agent-browser --session "$SESSION" find label "Password" fill \
+  "browser-qa-password-must-not-return"
+agent-browser --session "$SESSION" find role button click \
+  --name "Save Credential"
+agent-browser --session "$SESSION" wait --text "Browser QA password"
+
+agent-browser --session "$SESSION" find role button click \
+  --name "Import private key"
+agent-browser --session "$SESSION" find label "Credential label" fill \
+  "Browser QA imported key"
+agent-browser --session "$SESSION" find label "Username" fill "browser-key"
+agent-browser --session "$SESSION" find role button click \
+  --name "Choose private key"
+agent-browser --session "$SESSION" wait --text "Browser QA imported key"
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/06-credentials.png"
+agent-browser --session "$SESSION" snapshot -i \
+  >"$OUTPUT_DIR/06-credentials-snapshot.txt"
+
+agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(2)"
+agent-browser --session "$SESSION" find role button click --name "New host"
+agent-browser --session "$SESSION" find label "Display name" fill \
+  "Browser QA target"
+agent-browser --session "$SESSION" find label "Host" fill "qa.internal"
+agent-browser --session "$SESSION" fill \
+  ".resource-dialog input[type=number]" "2202"
+agent-browser --session "$SESSION" select \
+  ".resource-dialog select" "browser-credential-4"
+agent-browser --session "$SESSION" find role button click --name "Save Host"
+agent-browser --session "$SESSION" wait --text "Browser QA target"
+
+agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(4)"
+agent-browser --session "$SESSION" find role button click --name "New route"
+agent-browser --session "$SESSION" find label "Route label" fill \
+  "Browser QA ordered route"
+agent-browser --session "$SESSION" select \
+  ".resource-dialog select" "browser-host-local"
+agent-browser --session "$SESSION" find role button click --name "Add"
+agent-browser --session "$SESSION" select \
+  ".resource-dialog select" "browser-host-edge"
+agent-browser --session "$SESSION" find role button click --name "Add"
+agent-browser --session "$SESSION" find role button click \
+  --name "Move Edge gateway up"
+agent-browser --session "$SESSION" find role button click \
+  --name "Save Jump Route"
+agent-browser --session "$SESSION" wait --text "Browser QA ordered route"
+
+agent-browser --session "$SESSION" click \
+  ".resource-card:first-of-type .resource-actions button:last-child"
+agent-browser --session "$SESSION" click \
+  ".resource-card:first-of-type .resource-actions button:last-child"
+agent-browser --session "$SESSION" wait --text "in use"
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/07-route-desktop.png"
+agent-browser --session "$SESSION" snapshot -i \
+  >"$OUTPUT_DIR/07-route-snapshot.txt"
+
+agent-browser --session "$SESSION" set viewport 390 844
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/08-route-mobile.png"
+agent-browser --session "$SESSION" snapshot -i \
+  >"$OUTPUT_DIR/08-route-mobile-snapshot.txt"
+
+BROWSER_ERRORS="$(agent-browser --session "$SESSION" errors)"
+printf '%s\n' "$BROWSER_ERRORS" >"$OUTPUT_DIR/errors.txt"
+if [[ -n "${BROWSER_ERRORS//[[:space:]]/}" ]]; then
+  echo "Browser errors were detected:" >&2
+  printf '%s\n' "$BROWSER_ERRORS" >&2
+  exit 1
+fi
+
+agent-browser --session "$SESSION" console >"$OUTPUT_DIR/console.txt"
 
 cat >"$OUTPUT_DIR/report.md" <<EOF
 # AnySSH agent-browser smoke report
@@ -154,6 +223,15 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
 - Unicode/CJK/Nerd Font preview command rendered.
 - Responsive layout rendered at 390x844.
 - Disconnect returned the UI to the disconnected state.
+- Password Credential creation returned metadata without showing the submitted
+  password after the editor closed.
+- Private Key import UI used a metadata-only browser simulation and exposed no
+  file input, Path, Key text, or Passphrase field.
+- Host creation referenced the new Credential by opaque ID.
+- Jump Route creation added two Hosts, moved the second Host up, and preserved
+  the visible order.
+- Deleting a Jump Route still referenced by a Host showed an in-use error.
+- Configuration UI rendered at desktop and mobile viewports.
 - Browser error log was empty.
 
 ## Evidence
@@ -163,6 +241,9 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
 - \`screenshots/03-connected-unicode.png\`
 - \`screenshots/04-mobile-connected.png\`
 - \`screenshots/05-disconnected.png\`
+- \`screenshots/06-credentials.png\`
+- \`screenshots/07-route-desktop.png\`
+- \`screenshots/08-route-mobile.png\`
 EOF
 
 echo "agent-browser smoke passed: $OUTPUT_DIR"

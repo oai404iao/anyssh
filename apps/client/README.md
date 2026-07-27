@@ -28,11 +28,18 @@ Browser QA mode bypasses this gate and does not persist a PIN.
 
 SSH authentication requests are a tagged temporary-password or Credential-ID reference.
 Raw Private Key and Passphrase fields are rejected by the IPC schema. Password Credential
-CRUD exposes metadata-only responses; native Private Key import UI is not implemented yet.
+CRUD exposes metadata-only responses. Native Private Key import requests contain only a
+label and username; Rust opens the native picker, validates the selected file, and stores
+the Key without returning its Path or contents to the WebView. The first implementation
+accepts unencrypted OpenSSH Keys only.
 
 Host and Jump Route CRUD is also metadata-only. Hosts persist optional Credential and Route
 IDs; ordered Jump Routes persist Host IDs only. They never copy a username, password,
 Private Key, Passphrase, or endpoint into a Route step.
+
+The configuration workspace exposes Host, Credential, and Jump Route management. Browser
+QA uses metadata-only in-memory fixtures and never reads a file or opens a network
+connection; native mode uses the ApplicationCore and DB Actor.
 
 Saved Host connections use `ssh_connect_saved_host` and send only a Host ID plus terminal
 size. The DB Actor expands the ordered Route and resolves every Credential in Rust before
@@ -40,8 +47,7 @@ the SSH core creates up to 32 nested russh transports.
 
 The explicit Phase 0 SSH bridge accepts an optional single Jump Host. Saved Host connections
 can execute up to 32 resolved Route hops. Every host-key prompt is scoped to a request ID,
-route hop, host, and port. The current form does not expose Jump Route editing yet; the Rust
-core and Docker protocol fixture provide the end-to-end validation.
+route hop, host, and port.
 
 Native terminal output uses an acknowledgement window: Tauri keeps at most eight chunks
 in flight and React acknowledges each chunk from the xterm.js `write` callback. Browser QA

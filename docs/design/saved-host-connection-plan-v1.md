@@ -4,7 +4,8 @@
 > 日期：2026-07-27
 
 本文定义从 Target Host ID 到任意长度 russh Jump Route 的 Rust-only 解析和执行
-路径。产品配置 UI、Known Host Repository 和 Group 继承不在本阶段范围内。
+路径。产品配置 UI 已在独立里程碑实现，但不由本文定义；Known Host Repository
+和 Group 继承仍不在本阶段范围内。
 
 ## IPC 边界
 

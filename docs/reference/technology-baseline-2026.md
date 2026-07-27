@@ -1,11 +1,12 @@
 # 2026 技术版本基线
 
-> 最后核验：2026-07-26
+> 最后核验：2026-07-27
 > 用途：Phase 0 初始化依赖时的参考起点，不是永久版本锁定。
 
 | 领域 | 基线 |
 | --- | --- |
 | Tauri | 2.11.x |
+| Tauri Dialog Plugin | 2.7.x |
 | Android JDK | OpenJDK 17 |
 | Android SDK / Target SDK | 36 |
 | Android Build Tools | 35.0.0 |

@@ -21,6 +21,7 @@
 - [Credential Repository v1](design/credential-repository-v1.md)
 - [Host 与 Jump Route Repository v1](design/host-jump-route-repository-v1.md)
 - [Saved Host Connection Plan v1](design/saved-host-connection-plan-v1.md)
+- [原生私钥导入 v1](design/native-private-key-import-v1.md)
 
 Design 文档回答“系统如何工作、模块边界是什么”。
 

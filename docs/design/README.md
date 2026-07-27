@@ -12,6 +12,8 @@ Design 文档描述系统如何实现，包括组件、数据流、接口、安�
   Jump Route Schema、ID 引用和循环检测。
 - [saved-host-connection-plan-v1.md](saved-host-connection-plan-v1.md)：Saved Host
   ID、Rust-only Route 解析和任意长度 Jump Runtime。
+- [native-private-key-import-v1.md](native-private-key-import-v1.md)：Rust-owned
+  Native Picker、Private Key 文件约束和 IPC 边界。
 
 ## 规则
 

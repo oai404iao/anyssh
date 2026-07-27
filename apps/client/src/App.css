@@ -54,7 +54,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -63,7 +64,8 @@ button {
 }
 
 button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
   outline: 2px solid var(--cyan);
   outline-offset: 2px;
 }
@@ -239,6 +241,16 @@ input:focus-visible {
 .host-list {
   display: grid;
   gap: 5px;
+}
+
+.empty-host-list {
+  padding: 12px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: #68748a;
+  background: rgba(255, 255, 255, 0.018);
+  font-size: 10px;
+  cursor: pointer;
 }
 
 .host-card {
@@ -581,6 +593,39 @@ input:focus-visible {
   transition:
     border-color 150ms ease,
     background 150ms ease;
+}
+
+.saved-connection-summary {
+  display: grid;
+  gap: 9px;
+}
+
+.saved-connection-summary > div {
+  display: grid;
+  gap: 4px;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: rgba(4, 7, 13, 0.34);
+}
+
+.saved-connection-summary span {
+  color: #677287;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.saved-connection-summary strong {
+  overflow-wrap: anywhere;
+  color: #c8d1e0;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.full-width-button {
+  width: 100%;
 }
 
 .connection-panel input:hover,
@@ -950,6 +995,422 @@ input:focus-visible {
   color: var(--danger);
 }
 
+.configuration-body {
+  height: calc(100vh - 88px);
+  min-height: 0;
+  padding: 18px;
+  overflow: auto;
+}
+
+.manager-shell {
+  min-height: 100%;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(12, 17, 29, 0.82);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.18);
+}
+
+.manager-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 22px;
+}
+
+.manager-header h2,
+.resource-dialog h2 {
+  margin: 0;
+  color: var(--text);
+  letter-spacing: -0.035em;
+}
+
+.manager-header h2 {
+  font-size: 22px;
+}
+
+.manager-header > div > p:last-child {
+  max-width: 640px;
+  margin: 8px 0 0;
+  color: #7c879b;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.manager-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.compact-button {
+  min-height: 36px;
+  padding-inline: 13px;
+  white-space: nowrap;
+}
+
+.manager-error,
+.manager-notice {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.manager-error {
+  border: 1px solid rgba(255, 124, 141, 0.24);
+  color: #ff9cab;
+  background: rgba(255, 124, 141, 0.07);
+}
+
+.manager-notice {
+  border: 1px solid rgba(107, 230, 210, 0.2);
+  color: #a7dfd5;
+  background: rgba(107, 230, 210, 0.06);
+}
+
+.manager-empty {
+  display: grid;
+  min-height: 230px;
+  place-items: center;
+  border: 1px dashed var(--border);
+  border-radius: 13px;
+  color: #657188;
+  background: rgba(255, 255, 255, 0.012);
+  font-size: 11px;
+  text-align: center;
+}
+
+.resource-list {
+  display: grid;
+  gap: 9px;
+}
+
+.resource-card {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 13px;
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.022);
+}
+
+.resource-card:hover {
+  border-color: rgba(107, 230, 210, 0.18);
+  background: rgba(255, 255, 255, 0.032);
+}
+
+.resource-icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: 12px;
+  color: #b9c5d8;
+  background: #172136;
+  font-family: "AnySSH Nerd Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.resource-icon.password,
+.host-resource-icon {
+  color: var(--cyan);
+  background: rgba(53, 205, 182, 0.11);
+}
+
+.resource-icon.privateKey {
+  color: #b9adff;
+  background: rgba(156, 140, 255, 0.11);
+}
+
+.route-resource-icon {
+  color: #ffd38b;
+  background: rgba(255, 198, 109, 0.11);
+}
+
+.resource-main {
+  min-width: 0;
+}
+
+.resource-main > strong,
+.resource-main > span {
+  display: block;
+}
+
+.resource-main > strong {
+  overflow: hidden;
+  color: #d9e1ef;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resource-main > span {
+  margin-top: 3px;
+  color: #788399;
+  font-size: 10px;
+}
+
+.resource-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.resource-tags span {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: #7d899e;
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 8px;
+}
+
+.resource-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.resource-actions button,
+.route-row-actions button,
+.resource-dialog > header > button {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: #93a0b5;
+  background: rgba(255, 255, 255, 0.025);
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.resource-actions button {
+  min-height: 31px;
+  padding: 0 9px;
+}
+
+.resource-actions button:hover,
+.route-row-actions button:hover {
+  border-color: rgba(107, 230, 210, 0.24);
+  color: #cbd5e4;
+}
+
+.resource-actions .danger-action,
+.route-row-actions .danger-action {
+  border-color: rgba(255, 124, 141, 0.25);
+  color: #ff9cab;
+  background: rgba(255, 124, 141, 0.06);
+}
+
+.route-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 17px;
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: #7e899d;
+  font-size: 9px;
+}
+
+.resource-dialog-backdrop {
+  z-index: 20;
+}
+
+.resource-dialog {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 40px);
+  padding: 24px;
+  overflow: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 17px;
+  background: #101625;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.46);
+}
+
+.resource-dialog > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 21px;
+}
+
+.resource-dialog h2 {
+  font-size: 20px;
+}
+
+.resource-dialog > header > button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  font-size: 18px;
+}
+
+.editor-form {
+  display: grid;
+  gap: 14px;
+}
+
+.editor-form label,
+.route-add-row label {
+  display: grid;
+  gap: 7px;
+  color: #8590a5;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.editor-form input,
+.editor-form select {
+  width: 100%;
+  height: 41px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: #dbe2ef;
+  background: rgba(4, 7, 13, 0.48);
+  font-size: 11px;
+}
+
+.editor-form select {
+  color-scheme: dark;
+}
+
+.editor-field-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  gap: 10px;
+}
+
+.editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 3px;
+}
+
+.editor-actions .connect-button {
+  min-width: 150px;
+  justify-content: center;
+}
+
+.security-note {
+  padding: 12px;
+  border: 1px solid rgba(107, 230, 210, 0.15);
+  border-radius: 10px;
+  background: rgba(107, 230, 210, 0.05);
+}
+
+.security-note strong {
+  color: #a9ded5;
+  font-size: 10px;
+}
+
+.security-note p {
+  margin: 6px 0 0;
+  color: #77869a;
+  font-size: 9px;
+  line-height: 1.65;
+}
+
+.route-add-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 9px;
+}
+
+.route-add-row .compact-button {
+  min-width: 72px;
+}
+
+.route-builder {
+  display: grid;
+  gap: 7px;
+  min-height: 76px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(4, 7, 13, 0.3);
+}
+
+.route-builder > p {
+  align-self: center;
+  margin: 0;
+  color: #606c81;
+  font-size: 9px;
+  text-align: center;
+}
+
+.route-builder-row {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 8px;
+  border: 1px solid rgba(151, 166, 198, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.route-position {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--cyan);
+  background: rgba(53, 205, 182, 0.1);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.route-builder-row strong,
+.route-builder-row small {
+  display: block;
+}
+
+.route-builder-row strong {
+  color: #cbd4e2;
+  font-size: 10px;
+}
+
+.route-builder-row small {
+  margin-top: 2px;
+  color: #667287;
+  font-size: 8px;
+}
+
+.route-row-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.route-row-actions button {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+}
+
+.route-row-actions button:disabled,
+.resource-actions button:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.mobile-primary-nav {
+  display: none;
+}
+
 @media (max-width: 1050px) {
   .app-shell {
     grid-template-columns: 78px minmax(0, 1fr);
@@ -1005,11 +1466,79 @@ input:focus-visible {
     padding: 0 16px;
   }
 
+  .mobile-primary-nav {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 5px;
+    padding: 8px 12px 0;
+  }
+
+  .mobile-primary-nav button {
+    min-height: 34px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: #7d899e;
+    background: rgba(255, 255, 255, 0.025);
+    font-size: 9px;
+  }
+
+  .mobile-primary-nav button.active {
+    border-color: rgba(107, 230, 210, 0.22);
+    color: var(--cyan);
+    background: rgba(107, 230, 210, 0.07);
+  }
+
   .workspace-body {
     height: auto;
-    min-height: calc(100vh - 72px);
+    min-height: calc(100vh - 114px);
     grid-template-columns: 1fr;
     padding: 12px;
+  }
+
+  .configuration-body {
+    height: auto;
+    min-height: calc(100vh - 114px);
+    padding: 12px;
+  }
+
+  .manager-shell {
+    padding: 16px;
+  }
+
+  .manager-header {
+    display: grid;
+  }
+
+  .manager-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .resource-card {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .resource-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .resource-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    padding-left: 53px;
+  }
+
+  .resource-dialog {
+    padding: 19px;
+  }
+
+  .route-builder-row {
+    grid-template-columns: 26px minmax(0, 1fr);
+  }
+
+  .route-row-actions {
+    grid-column: 2;
   }
 
   .terminal-card {

@@ -40,6 +40,11 @@
   以及旧 Host Password -> Credential 的原子迁移。
 - Rust-only Saved Host Connection Plan：WebView 只提交 Target Host ID，
   DB Actor 递归展开 Route 并解析 Credential，russh 最多执行 32 个 Jump Host。
+- Host、Credential 和 Jump Route 配置 UI：metadata-only 列表、引用选择、有序
+  Route Builder、Restrict 删除错误和 Saved Host 打开入口。
+- Rust-owned Native Private Key Import：WebView 只提交 Label/Username，原生
+  Picker、文件读取、1 MiB 上限、UTF-8/OpenSSH 校验和 Vault 写入均留在 Rust；
+  Xvfb 已验证真实文件选择器和导入结果。
 - 隔离 OpenSSH 已验证 Password Jump 1 -> Password Jump 2 -> Private Key
   Target、三跳 Host Key 顺序和 Jump 2 认证失败归属。
 - `anyssh-app` Application Service：Credential ID 经 DB Actor 解密后直接进入
@@ -72,8 +77,7 @@
 
 当前仓库尚未完成：
 
-- Host/Jump Route 产品配置 UI。
-- 原生 Private Key 文件导入 UI、Credential 管理 UI 和 SSH Agent 认证。
+- 加密 Private Key 的原生 Passphrase Prompt 和 SSH Agent 认证。
 - Windows 原生运行验证。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
 - iOS 构建验证；当前没有 macOS/Xcode 环境，按维护者指示暂缓。

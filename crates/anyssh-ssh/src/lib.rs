@@ -36,7 +36,7 @@ const HOST_KEY_DECISION_TIMEOUT: Duration = Duration::from_secs(60);
 pub const DEFAULT_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
 pub const MAX_JUMP_HOSTS: usize = 32;
 const CHANNEL_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
-const MAX_PRIVATE_KEY_BYTES: usize = 1024 * 1024;
+pub const MAX_PRIVATE_KEY_BYTES: usize = 1024 * 1024;
 const MAX_PRIVATE_KEY_PASSPHRASE_BYTES: usize = 64 * 1024;
 
 pub struct PasswordSessionConfig {
@@ -347,6 +347,22 @@ impl SessionControl {
 pub struct SpawnedSession {
     pub control: SessionControl,
     pub events: mpsc::Receiver<SessionEvent>,
+}
+
+pub fn validate_private_key_text(
+    private_key: &str,
+    passphrase: Option<&str>,
+) -> Result<(), PrivateKeyValidationError> {
+    if private_key.is_empty()
+        || private_key.len() > MAX_PRIVATE_KEY_BYTES
+        || passphrase.is_some_and(|value| value.len() > MAX_PRIVATE_KEY_PASSPHRASE_BYTES)
+    {
+        return Err(PrivateKeyValidationError);
+    }
+
+    decode_secret_key(private_key, passphrase)
+        .map(|_| ())
+        .map_err(|_| PrivateKeyValidationError)
 }
 
 pub fn spawn_password_session(config: PasswordSessionConfig) -> SpawnedSession {
@@ -1341,6 +1357,10 @@ enum SessionError {
     #[error("SSH session was cancelled")]
     Cancelled,
 }
+
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+#[error("private key is invalid or requires an unsupported passphrase")]
+pub struct PrivateKeyValidationError;
 
 #[cfg(test)]
 mod tests {

@@ -34,6 +34,9 @@ AnySSH 是一个处于 Phase 0 技术验证阶段的开源跨平台 SSH 客户�
   Route，SSH Core 最多执行 32 个有序 Jump Host。
 - Schema v2 Credential Repository，以及 Credential ID -> Vault -> SSH Core
   的 Rust-only Private Key 路径。
+- Host、Password/Private Key Credential 和有序 Jump Route 的产品配置 UI。
+- Rust-owned Native File Picker 私钥导入；Path 和 Key 内容不进入 WebView IPC，
+  首版只接受未加密 OpenSSH Private Key。
 - 原生 Vault 创建、锁定和解锁界面。
 - Docker OpenSSH 真实协议测试。
 - Vitest、Playwright 和 agent-browser 测试路径。
@@ -41,8 +44,8 @@ AnySSH 是一个处于 Phase 0 技术验证阶段的开源跨平台 SSH 客户�
 - Android ARM64 Debug APK 构建，包含 Rust SSH、Vault 与 bundled SQLCipher。
 - GitHub Actions Windows Runner 已成功产出 x86-64 Debug EXE。
 
-Host/Jump Route 产品配置 UI、原生 Private Key 导入、SSH Agent 和 Windows
-运行验证尚未完成。
+加密 Private Key 的原生 Passphrase Prompt、SSH Agent 和 Windows 运行验证尚未
+完成。
 iOS 因当前没有 macOS/Xcode 环境暂缓。
 
 当前活动计划：
@@ -98,7 +101,8 @@ pnpm check:native
 编译检查；启动原生窗口还需要可用的 X11 或 Wayland Display，CI 可使用 Xvfb
 进行虚拟显示验证。
 
-安装 Xvfb、XTest 开发文件和 Docker 后，可以运行真实原生 SSH 检查：
+安装 Xvfb、XTest 开发文件、OpenSSH Client 和 Docker 后，可以运行真实原生
+Vault、Private Key Import 与 SSH 检查：
 
 ```bash
 pnpm qa:native:xvfb

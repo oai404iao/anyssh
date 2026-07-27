@@ -34,16 +34,20 @@
 - 基础 CI、lint、format 和 test 命令。
 - 用户明确追加的 Host/Jump Route 持久化验证；Host/Route 只保存 ID 引用。
 - 用户明确追加的 Saved Host ID 连接与任意长度 Jump Route Runtime 验证。
+- 用户明确追加的最小 Host/Credential/Jump Route 产品配置 UI，以及不让文件
+  路径、Private Key 或 Passphrase 进入 WebView IPC 的原生私钥导入验证。
 - Phase 0 结果驱动的 ADR 状态更新。
 
 ### 不包含
 
 - 完整 Termius 风格 UI。
-- 完整 Host/Group 管理。
+- 完整 Group 管理与三态继承。
 - WebDAV 实际同步。
 - Remote/Dynamic Forward 的完整产品 UI。
 - 完整平台生物识别实现。
 - 脚本、SFTP、FIDO2 和应用商店发布。
+- Credential Secret Reveal/Export、加密私钥的 WebView Passphrase 输入，以及
+  移动端 Content URI 私钥导入。
 
 这些能力可以保留接口或测试桩，但不得扩大 Phase 0 范围。
 
@@ -123,6 +127,11 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
   OpenSSH、Playwright、agent-browser、原生 X11、Wayland/IBus 和 Android ARM64
   本地回归；修复原生 WebView Ready 判定后，远端 Run `30250776234` 的九个 CI
   Job 全部通过。
+- [x] 2026-07-27：实现 Host、Credential 和 Jump Route 配置 UI。
+- [x] 2026-07-27：实现 Rust-owned 原生未加密 Private Key 文件导入；IPC 不接收
+  Path、Private Key 或 Passphrase。
+- [x] 2026-07-27：完成配置 UI 的 Vitest、Playwright、agent-browser、原生构建和
+  Android ARM64 回归。
 - [ ] Windows 运行证据仍待补充。
 - [ ] iOS Build 因当前没有 macOS/Xcode 环境暂缓。
 - [ ] 根据证据更新 ADR 状态并完成 Phase 0 报告。
@@ -264,11 +273,12 @@ PIN
   `Mutex<Option<LocalVault>>`。
 - Actor 单元测试覆盖 Queue Backpressure、Create/Lock/Wrong-PIN/Unlock 顺序、
   Shutdown 和不可用状态。原生 X11 与 Wayland QA 均通过现有 Vault 创建链路；
-  Android ARM64 Debug APK 也已重新构建。Private Key 原生导入 UI 仍留在
-  下一步骤。
+  Android ARM64 Debug APK 也已重新构建。原生 X11 进一步验证了 Rust-owned
+  Private Key Picker 和导入后的 Vault 明文扫描。
 - Schema v2 已增加独立 Credential Repository。Actor Commands 覆盖
-  Create/Update/List/Delete/Resolve；Tauri 只暴露 Password CRUD 和
-  Summary-only List/Delete，不暴露 Private Key Import。
+  Create/Update/List/Delete/Resolve；Tauri 暴露 Password CRUD、
+  Summary-only List/Delete，以及只接收 Label/Username 并在 Rust 内打开 Native
+  Picker 的 Private Key Import。
 - `anyssh-app` 负责把 Credential ID 解析为 Rust-only `ResolvedCredential`，
   再直接 move 到 SSH Core。Docker OpenSSH 已验证加密 Private Key 在 Vault
   Lock/Unlock 后通过 ID 成功认证。
@@ -314,10 +324,59 @@ Client -> Jump Host -> Internal Target
   Target 握手超时和第一跳容器终止。
 - 测试路径只启动 Fixture 容器和当前 Rust 测试进程，不调用系统 `ssh` 客户端。
 - 显式 endpoint Tauri IPC 仍接受可选单 Jump Host；Saved Host IPC 可执行最多
-  32 跳。Phase 0 表单尚未暴露配置 UI。
+  32 跳。产品配置 UI 已暴露 Host/Credential/Jump Route 管理，Saved Host 连接
+  仍只提交 Host ID。
 
-状态：已完成；有序 Jump Route 持久化和最多 32 跳的 Runtime 已实现，产品 UI
-留待后续阶段。
+状态：已完成；有序 Jump Route 持久化、最多 32 跳 Runtime 和 metadata-only
+产品配置 UI 均已实现。
+
+### Milestone 4A：产品配置 UI 与原生私钥导入
+
+实现：
+
+```text
+React metadata forms
+  -> typed CRUD IPC
+    -> ApplicationCore
+      -> DB Actor / SQLCipher
+
+React { label, username }
+  -> Tauri command opens native picker
+    -> Rust reads and validates selected file
+      -> ApplicationCore stores Private Key Credential
+```
+
+工作：
+
+1. 用 Repository 数据替换静态 Saved Host 列表。
+2. 增加 Host 创建/编辑/删除和 Credential/Jump Route 引用选择。
+3. 增加 Password Credential 创建/更新/删除；Password 只保留在局部表单状态，
+   提交、取消、锁定和切页时清空。
+4. 增加有序 Jump Route Builder，支持添加、移除和上下移动 Host。
+5. Saved Host UI 连接只调用 `ssh_connect_saved_host`，不在前端展开 Route。
+6. 增加 Rust-owned Native File Picker；Tauri Request 只允许 Label/Username。
+7. Rust 拒绝 Symlink、非普通文件、空文件、超过 1 MiB、非 UTF-8 和无法解析的
+   OpenSSH Private Key；错误不得带文件路径或 Key 内容。
+8. 首版拒绝加密 Private Key。后续只有原生安全 Passphrase Prompt 完成后才允许
+   保存 Passphrase，禁止临时把它加入 WebView IPC。
+
+威胁与非目标：
+
+- 文件路径、文件内容和 Passphrase 不返回或序列化到 WebView。
+- 不接受 WebView 指定的任意 Path，不使用 HTML File Input 读取 Key。
+- 不把 Key、Path、Password 写入日志、错误、截图、QA Artifact 或前端持久状态。
+- 本里程碑不实现 Secret Reveal/Export、Group、Known Host 或移动端 Content URI。
+
+出口：
+
+- 用户可以管理 Host、Password/Private Key Credential 和有序 Jump Route。
+- 引用占用、非法 Route 和 Vault Locked 错误能在 UI 中显示且不泄露 Secret。
+- 原生文件导入的成功、取消和拒绝路径有 Rust 测试；IPC 反序列化拒绝
+  `path`、`privateKey` 和 `passphrase`。
+- Playwright 与 agent-browser 实际完成创建 Credential、Host、Route、重排和
+  删除失败提示，并人工检查桌面/移动截图。
+
+状态：已实现并完成本地验证；远端 CI 待提交后确认。
 
 ### Milestone 5：平台与图形验证
 
@@ -555,6 +614,28 @@ ssh-target-internal
   4 MiB 输出后仍保持连接；Wayland 截图和远端 Byte Evidence 记录
   `/tmp/anyssh-ime-中文文`。同一 Run 还通过 OpenSSH 两 Jump Saved Host、
   Rust Core、Frontend、E2E、agent-browser、Windows、Android 和 Linux Container。
+- 2026-07-27：GTK Native File Chooser 的 Location Entry 会在 XTest 逐字符输入
+  长完整 Path 时触发自动补全并改写文本。规范 QA 不保存或输入完整 Key Path，
+  而是导航到 `/tmp`，使用排序最前且无 `.pub` 旁文件的短生命周期 Fixture，再以
+  键盘选择；导入完成后立即删除源文件。
+- 2026-07-27：`tauri-plugin-dialog 2.7.2` 会同时引入 `rfd` 和
+  `tauri-plugin-fs`。Linux Native、Linux Container、Android Host Build 与
+  Android Container 均可继续编译；WebView Capability 未授予 Dialog Plugin
+  权限，前端只能调用 AnySSH 自己的 metadata-only Import Command。Cargo
+  Metadata 记录 Dialog/FS Plugin 为 Apache-2.0 OR MIT、`rfd` 为 MIT，
+  与 `AGPL-3.0-only` 项目兼容。
+- 2026-07-27：配置 UI 本地证据包括 agent-browser
+  `artifacts/agent-browser/smoke-1785147509`、Xvfb
+  `artifacts/native-xvfb/smoke-1785147753-820439`、Wayland
+  `artifacts/native-wayland/smoke-1785146944-802006`、Linux Container
+  `artifacts/linux-build/build-1785146519-1` 和 Android Container
+  `artifacts/android-build/build-1785146660-1`。Linux SHA-256 为
+  `ce1a80e3af9b4a81a6411b206a851c0fdea94c96b569d2a0889242d6da13967c`，
+  Android APK SHA-256 为
+  `ce447092ea791a26887b5e55ff6ebf039c8b14a2563f251a32551eecd663af0f`。
+  最终 Tauri Picker Cancellation Helper 合入后，Host Android 回归
+  `artifacts/android-build/build-1785147675-818889` 也通过，APK SHA-256 为
+  `becc6d075302b45a401c307b004fdf8e42829a041d7fd695b08de2854bf4cbc5`。
 - 2026-07-27：Commit `9f14940` 的 GitHub Actions Run `30243415893` 九个 Job
   全部通过。OpenSSH Log 明确执行
   `encrypted_private_key_flows_from_credential_id_to_ssh_core`，Windows、Android、
@@ -617,6 +698,10 @@ ssh-target-internal
   `Vec<SshConnectionConfig>`；现有显式 endpoint IPC 仅保留给 Phase 0 QA。
 - 2026-07-27：递归 Route 使用 DFS 后序展开，先加入 Step Host 自身的上游
   Route，再加入 Step Host；最大展开长度与持久化单 Route 上限统一为 32。
+- 2026-07-27：原生 Private Key Import Command 只允许 WebView 提交 Label 和
+  Username；Command 自己打开 Native Picker，选中的 Path 和 Key 内容只在 Rust
+  中存在。首版不接受 Passphrase，因此只导入可在无 Passphrase 条件下成功解析的
+  Private Key。
 
 ## Outcomes & Retrospective
 

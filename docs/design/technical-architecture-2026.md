@@ -258,7 +258,14 @@ Phase 0 SSH Core 使用 `SessionAuthentication` 统一表达 Password 和 Privat
 当前 Tauri IPC 支持临时密码或 Credential ID。`anyssh-app` 使用 ID 从 DB Actor
 解析 Password/Private Key，并把 `Zeroizing<String>` 直接 move 到
 `anyssh-ssh::SessionAuthentication`。IPC 使用 `deny_unknown_fields`，不接受
-Private Key 或 Passphrase 字段。原生 Private Key 文件选择与导入 UI 仍待实现。
+Private Key 或 Passphrase 字段。
+
+当前产品配置 UI 已提供 Password Credential CRUD 和 Private Key Import。
+`credential_import_private_key` Request 只包含 Label/Username；Tauri Command 在
+Rust 内打开 Native File Picker，`ApplicationCore` 有界读取并使用 russh Decoder
+验证文件后才写入 Vault。Path 和 Key 内容不返回 WebView。首版只接受无需
+Passphrase 即可解析的 OpenSSH Private Key；加密 Key 等待原生安全 Passphrase
+Prompt。
 
 后续支持：
 
@@ -409,7 +416,8 @@ KnownHost
 Host 只保存对 Credential/Key/Route 的 ID 引用，不复制密码或私钥。
 
 Schema v3 已实现其中的 Credential 与 Jump Route 引用；Group、Key、Proxy 和
-其他三态继承字段仍待后续领域模型实现。
+其他三态继承字段仍待后续领域模型实现。当前 React 配置 UI 已能管理 Host、
+Credential 和有序 Jump Route，但不改变这些引用边界。
 
 ---
 

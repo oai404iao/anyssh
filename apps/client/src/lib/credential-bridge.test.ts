@@ -1,12 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   createPasswordCredential,
   deleteCredential,
+  importPrivateKeyCredential,
   listCredentials,
+  resetBrowserCredentialsForTests,
   updatePasswordCredential,
 } from "./credential-bridge";
 
 describe("browser preview credential bridge", () => {
+  beforeEach(() => {
+    resetBrowserCredentialsForTests();
+  });
+
   it("returns metadata without retaining or echoing the password", async () => {
     const created = await createPasswordCredential({
       label: "Fixture password",
@@ -34,7 +40,23 @@ describe("browser preview credential bridge", () => {
     expect(JSON.stringify([created, updated])).not.toContain(
       "password-must-not-return",
     );
+    await expect(listCredentials()).resolves.toEqual([updated]);
+    await expect(deleteCredential(created.id)).resolves.toBe(true);
     await expect(listCredentials()).resolves.toEqual([]);
-    await expect(deleteCredential(created.id)).resolves.toBe(false);
+  });
+
+  it("simulates a metadata-only native Private Key import", async () => {
+    const imported = await importPrivateKeyCredential({
+      label: "Imported key",
+      username: "key-user",
+    });
+
+    expect(imported).toMatchObject({
+      label: "Imported key",
+      username: "key-user",
+      kind: "privateKey",
+    });
+    expect(JSON.stringify(imported)).not.toContain("privateKeyMaterial");
+    expect(JSON.stringify(imported)).not.toContain("passphrase");
   });
 });

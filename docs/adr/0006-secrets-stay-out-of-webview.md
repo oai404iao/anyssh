@@ -52,6 +52,10 @@ Tauri UI 运行在 WebView 中。前端状态、DevTools、日志、错误序列
 - 2026-07-27：Host IPC 只返回 endpoint 与 Credential/Route ID，Jump Route
   只返回有序 Host ID；`deny_unknown_fields` 会拒绝 Host 内嵌 Password 或
   Route 内嵌 Credential。
+- 2026-07-27：Private Key Import Request 只允许 Label/Username，并拒绝
+  `path`、`privateKey` 和 `passphrase`。Native Picker、文件读取和 russh Key
+  校验在 Rust 内完成；Browser QA DOM 不包含 File Input 或 Passphrase Input，
+  原生 Xvfb 已验证导入后的 UI 只显示 metadata。
 
 ## 相关文档
 

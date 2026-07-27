@@ -6,6 +6,7 @@ IMAGE_NAME="anyssh-openssh-fixture:phase0"
 CONTAINER_NAME="anyssh-native-xvfb-$RANDOM-$$"
 RUN_DIR="$ROOT_DIR/artifacts/native-xvfb/smoke-$(date +%s)-$$"
 DRIVER="$RUN_DIR/anyssh-x11-driver"
+PRIVATE_KEY_FIXTURE="/tmp/000-anyssh-native-import-key"
 APP_GROUP=""
 XVFB_PID=""
 
@@ -20,6 +21,7 @@ cleanup() {
     wait "$XVFB_PID" >/dev/null 2>&1 || true
   fi
   docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  rm -f "$PRIVATE_KEY_FIXTURE" "$PRIVATE_KEY_FIXTURE.pub"
 }
 trap cleanup EXIT
 
@@ -32,6 +34,7 @@ for command in \
   pnpm \
   setsid \
   ss \
+  ssh-keygen \
   ssh-keyscan \
   Xvfb; do
   if ! command -v "$command" >/dev/null 2>&1; then
@@ -52,6 +55,14 @@ fi
 
 mkdir -p "$RUN_DIR"
 mkdir -p "$RUN_DIR/xdg-cache" "$RUN_DIR/xdg-config" "$RUN_DIR/xdg-data"
+rm -f "$PRIVATE_KEY_FIXTURE" "$PRIVATE_KEY_FIXTURE.pub"
+ssh-keygen \
+  -q \
+  -t ed25519 \
+  -N "" \
+  -C anyssh-native-import \
+  -f "$PRIVATE_KEY_FIXTURE"
+rm -f "$PRIVATE_KEY_FIXTURE.pub"
 cc \
   -O2 \
   -Wall \
@@ -209,14 +220,43 @@ sleep 0.5
 sleep 3
 "$DRIVER" probe "$RUN_DIR/07-vault-reunlocked.bmp" >/dev/null
 
+"$DRIVER" click 100 198
+sleep 1
+"$DRIVER" click 1080 145
+sleep 1
+"$DRIVER" type "Native import fixture"
+"$DRIVER" tab
+"$DRIVER" type "anyssh"
+"$DRIVER" tab
+"$DRIVER" enter
+sleep 3
+"$DRIVER" ctrl-l
+sleep 0.5
+"$DRIVER" type "/tmp"
+"$DRIVER" enter
+sleep 0.5
+"$DRIVER" enter
+sleep 2
+"$DRIVER" enter
+sleep 5
+"$DRIVER" probe "$RUN_DIR/08-private-key-imported.bmp" >/dev/null
+
+if grep -R -a -F "BEGIN OPENSSH PRIVATE KEY" "$VAULT_ROOT" >/dev/null 2>&1; then
+  echo "The imported Private Key leaked into a Vault file." >&2
+  exit 1
+fi
+rm -f "$PRIVATE_KEY_FIXTURE"
+
+"$DRIVER" click 100 106
+sleep 1
 "$DRIVER" click 1100 440
 sleep 0.25
 "$DRIVER" type "anyssh-test"
 sleep 0.5
-"$DRIVER" probe "$RUN_DIR/08-password-entered.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/09-password-entered.bmp" >/dev/null
 "$DRIVER" click 1100 495
 sleep 1
-"$DRIVER" probe "$RUN_DIR/09-host-key-dialog.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/10-host-key-dialog.bmp" >/dev/null
 
 COMMAND_SUCCEEDED=0
 for _ in $(seq 1 20); do
@@ -263,13 +303,13 @@ if [[ "$LARGE_OUTPUT_SUCCEEDED" -ne 1 ]]; then
   exit 1
 fi
 
-"$DRIVER" probe "$RUN_DIR/10-command-succeeded.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/11-command-succeeded.bmp" >/dev/null
 "$DRIVER" click 1117 44
 sleep 1
-"$DRIVER" probe "$RUN_DIR/11-disconnected.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/12-disconnected.bmp" >/dev/null
 "$DRIVER" click 1208 44
 sleep 1
-"$DRIVER" probe "$RUN_DIR/12-vault-locked-after-session.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/13-vault-locked-after-session.bmp" >/dev/null
 
 if ! kill -0 "$APP_GROUP" >/dev/null 2>&1; then
   echo "The native process exited unexpectedly." >&2
@@ -293,6 +333,10 @@ cat >"$RUN_DIR/report.md" <<EOF
 - Lock Vault dropped the unlocked Rust storage state and returned to the PIN gate.
 - An incorrect PIN was rejected without opening the workspace.
 - The same PIN reopened the existing Vault before the SSH session started.
+- The Credential UI opened a native file picker and imported an unencrypted
+  Ed25519 Private Key without sending its Path or contents through WebView IPC.
+- The imported Key remained absent from Vault file plaintext scans and the
+  temporary source file was deleted before SSH testing continued.
 - Password input reached the native WebView.
 - Host-key confirmation displayed the scoped endpoint and SHA-256 fingerprint and was accepted.
 - The Rust SSH core authenticated against the Docker OpenSSH fixture.
@@ -311,11 +355,12 @@ cat >"$RUN_DIR/report.md" <<EOF
 - \`05-vault-wrong-pin.bmp\`
 - \`06-vault-unlock-pin-entered.bmp\`
 - \`07-vault-reunlocked.bmp\`
-- \`08-password-entered.bmp\`
-- \`09-host-key-dialog.bmp\`
-- \`10-command-succeeded.bmp\`
-- \`11-disconnected.bmp\`
-- \`12-vault-locked-after-session.bmp\`
+- \`08-private-key-imported.bmp\`
+- \`09-password-entered.bmp\`
+- \`10-host-key-dialog.bmp\`
+- \`11-command-succeeded.bmp\`
+- \`12-disconnected.bmp\`
+- \`13-vault-locked-after-session.bmp\`
 - \`windows.txt\`
 - \`native.log\`
 EOF

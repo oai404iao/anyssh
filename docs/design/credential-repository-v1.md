@@ -4,8 +4,9 @@
 > 日期：2026-07-27
 
 本文定义在 SQLCipher Schema v2 引入、并由当前 Schema v3 继续使用的
-Vault-backed Credential Repository，以及 SSH Credential ID 解析边界。它不定义
-Credential 管理 UI、Secret Reveal 或平台文件选择器。
+Vault-backed Credential Repository，以及 SSH Credential ID 解析边界。当前产品
+已实现 metadata-only Credential 管理 UI 和 Rust-owned Native File Picker；本文
+仍不定义 Secret Reveal/Export 或加密 Key Passphrase Prompt。
 
 ## 安全目标
 
@@ -29,9 +30,11 @@ React Connect Request
               -> anyssh_ssh::SessionAuthentication
 ```
 
-Private Key 的创建与更新只提供给 Rust Trusted Service。当前不提供
-`credential_import_private_key` Tauri Command，也不接受 WebView 指定的任意文件
-路径。后续原生文件选择器必须返回受限 Token，由 Rust 读取并验证文件。
+Private Key 的创建与更新只提供给 Rust Trusted Service。产品导入由
+`credential_import_private_key` Command 在 Rust 内打开 Native File Picker；
+Command 不接受 WebView 指定的文件路径，选中的 Path 和 Key 内容不返回
+WebView。首版只接受无需 Passphrase 即可解析的 Key，详细边界见
+[原生私钥导入 v1](native-private-key-import-v1.md)。
 
 Password Credential 可以通过 Typed IPC 创建或更新，因为用户输入密码本来就会
 短暂经过 WebView；IPC Adapter 必须立即把它移动到 `Zeroizing<String>`，不得保存

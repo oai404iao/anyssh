@@ -6,10 +6,11 @@
 
 ## 背景
 
-Schema v3 已持久化 Host、Credential ID 和有序 Jump Route，但当前连接 IPC 仍由
-WebView 提交 endpoint、Credential ID 和可选单 Jump Host。若产品 UI 在前端展开
-Route，会复制拓扑、增加竞态，并诱使后续代码把 Credential Secret 或解析结果带回
-WebView。SSH Core 同时需要从单 Jump Host 扩展到任意长度的有界 Route。
+Schema v3 已持久化 Host、Credential ID 和有序 Jump Route，但实现本决策前的
+连接 IPC 仍由 WebView 提交 endpoint、Credential ID 和可选单 Jump Host。若产品
+UI 在前端展开 Route，会复制拓扑、增加竞态，并诱使后续代码把 Credential Secret
+或解析结果带回 WebView。SSH Core 同时需要从单 Jump Host 扩展到任意长度的有界
+Route。
 
 ## 决策
 
