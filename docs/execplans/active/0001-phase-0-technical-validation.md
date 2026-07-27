@@ -544,6 +544,11 @@ ssh-target-internal
   失败。Artifact 截图显示 Ubuntu WebKitGTK 布局把 Confirm PIN 输入框上移，
   硬编码 `y=522` 点击落在输入框下方，确认 PIN 为空。QA 改为在共同有效的第一
   输入框坐标聚焦，再使用 Tab/Enter 完成表单；本地完整 Xvfb 回归重新通过。
+- 2026-07-27：第一次稳定化提交的 Run `30249990549` 暴露了另一个独立时序：
+  X11 窗口已经 mapped，但 `01-vault-create.bmp` 与
+  `02-vault-pin-entered.bmp` 仍是逐像素黑屏，约 15 秒后的失败截图才显示 React
+  Vault Gate。X11 Driver 的 `probe` 因此增加目标窗口中心像素检查，只有 WebView
+  已实际绘制非黑内容才报告 ready；Wayland Vault 输入也同步改用 Tab/Enter。
 - 2026-07-27：Commit `9f14940` 的 GitHub Actions Run `30243415893` 九个 Job
   全部通过。OpenSSH Log 明确执行
   `encrypted_private_key_flows_from_credential_id_to_ssh_core`，Windows、Android、

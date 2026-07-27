@@ -328,14 +328,14 @@ fi
 sleep 3
 "$DRIVER" probe "$RUN_DIR/01-vault-create.bmp" >"$RUN_DIR/windows.txt"
 set_ibus_engine "xkb:us::eng"
-"$DRIVER" click 640 445
+"$DRIVER" click 640 430
 sleep 0.5
 "$DRIVER" type "246810"
-"$DRIVER" click 640 522
-sleep 0.5
+"$DRIVER" tab
 "$DRIVER" type "246810"
 sleep 0.5
-"$DRIVER" click 640 577
+"$DRIVER" tab
+"$DRIVER" enter
 
 VAULT_ROOT="$RUN_DIR/xdg-data/com.spiredive.anyssh/vault"
 VAULT_READY=0

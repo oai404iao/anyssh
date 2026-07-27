@@ -100,8 +100,33 @@ static int screenshot(Display *display, Window root, const char *path) {
   return 0;
 }
 
+static int window_has_rendered_content(Display *display, Window window) {
+  XWindowAttributes attributes;
+  XImage *image;
+  unsigned long pixel;
+  unsigned int brightness;
+
+  if (!XGetWindowAttributes(display, window, &attributes) ||
+      attributes.width < 1 || attributes.height < 1) {
+    return 0;
+  }
+
+  image = XGetImage(display, window, attributes.width / 2,
+                    attributes.height / 2, 1, 1, AllPlanes, ZPixmap);
+  if (!image) {
+    return 0;
+  }
+
+  pixel = XGetPixel(image, 0, 0);
+  brightness = color_channel(pixel, image->red_mask) +
+               color_channel(pixel, image->green_mask) +
+               color_channel(pixel, image->blue_mask);
+  XDestroyImage(image);
+  return brightness > 3;
+}
+
 static int list_windows(Display *display, Window parent, int depth,
-                        const char *window_match) {
+                        const char *window_match, Window *matched_window) {
   Window root_return;
   Window parent_return;
   Window *children = NULL;
@@ -126,13 +151,17 @@ static int list_windows(Display *display, Window parent, int depth,
       if (strcmp(window_match, "*") == 0 ||
           (name && strstr(name, window_match))) {
         found = 1;
+        if (*matched_window == None) {
+          *matched_window = children[index];
+        }
       }
       if (name) {
         XFree(name);
       }
     }
 
-    if (list_windows(display, children[index], depth + 1, window_match)) {
+    if (list_windows(display, children[index], depth + 1, window_match,
+                     matched_window)) {
       found = 1;
     }
   }
@@ -255,8 +284,14 @@ int main(int argc, char **argv) {
 
   if ((argc == 2 || argc == 3) && strcmp(argv[1], "probe") == 0) {
     const char *window_match = getenv("ANYSSH_X11_WINDOW_MATCH");
-    int found =
-        list_windows(display, root, 0, window_match ? window_match : "AnySSH");
+    Window matched_window = None;
+    int found = list_windows(display, root, 0,
+                             window_match ? window_match : "AnySSH",
+                             &matched_window);
+    if (found &&
+        !window_has_rendered_content(display, matched_window)) {
+      found = 0;
+    }
     if (argc == 3 && screenshot(display, root, argv[2]) != 0) {
       result = 5;
     } else if (!found) {
