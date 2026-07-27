@@ -65,6 +65,7 @@ jobs:
             dbus-x11 \
             ibus \
             ibus-libpinyin \
+            fonts-noto-cjk \
             openssh-client \
             wayland-utils \
             weston \

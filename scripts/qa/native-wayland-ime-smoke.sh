@@ -116,6 +116,7 @@ for command in \
   grep \
   ibus \
   ibus-daemon \
+  od \
   pkg-config \
   setsid \
   ss \
@@ -367,7 +368,7 @@ sleep 3
 "$DRIVER" click 500 260
 sleep 0.5
 set_ibus_engine "xkb:us::eng"
-"$DRIVER" type "touch /tmp/"
+"$DRIVER" type "touch /tmp/anyssh-ime-"
 set_ibus_engine "libpinyin"
 "$DRIVER" type "zhongwen"
 "$DRIVER" type "1"
@@ -375,16 +376,29 @@ sleep 1
 set_ibus_engine "xkb:us::eng"
 "$DRIVER" enter
 
-IME_COMMAND_SUCCEEDED=0
+IME_REMOTE_PATH=""
 for _ in $(seq 1 40); do
-  if docker exec "$CONTAINER_NAME" test -f "/tmp/中文" >/dev/null 2>&1; then
-    IME_COMMAND_SUCCEEDED=1
+  IME_REMOTE_PATH="$(
+    docker exec "$CONTAINER_NAME" sh -lc '
+      for path in /tmp/anyssh-ime-*; do
+        [ -e "$path" ] || continue
+        case "$path" in
+          /tmp/anyssh-ime-中文*)
+            printf "%s" "$path"
+            exit 0
+            ;;
+        esac
+      done
+      exit 1
+    ' 2>/dev/null || true
+  )"
+  if [[ -n "$IME_REMOTE_PATH" ]]; then
     break
   fi
   sleep 0.25
 done
 
-if [[ "$IME_COMMAND_SUCCEEDED" -ne 1 ]]; then
+if [[ -z "$IME_REMOTE_PATH" ]]; then
   echo "The Chinese IBus composition did not reach the remote SSH shell." >&2
   docker exec "$CONTAINER_NAME" sh -lc '
     for path in /tmp/*; do
@@ -397,6 +411,11 @@ if [[ "$IME_COMMAND_SUCCEEDED" -ne 1 ]]; then
   tail -n 120 "$RUN_DIR/app.log" >&2
   exit 1
 fi
+
+{
+  printf 'path=%s\n' "$IME_REMOTE_PATH"
+  printf '%s' "$IME_REMOTE_PATH" | od -An -tx1
+} >"$RUN_DIR/remote-ime-path.txt"
 
 "$DRIVER" probe "$RUN_DIR/04-terminal-ime-command.bmp" >/dev/null
 "$DRIVER" click 1117 44
@@ -426,7 +445,9 @@ cat >"$RUN_DIR/report.md" <<EOF
 - IBus switched from the US keyboard engine to \`libpinyin\`.
 - The xterm.js composition path committed \`中文\` through WebKitGTK, Tauri IPC,
   the Rust SSH core, and the Docker OpenSSH shell.
-- The remote marker \`/tmp/中文\` proved that the committed UTF-8 text reached SSH.
+- A remote file under \`/tmp/anyssh-ime-中文*\` and its recorded UTF-8 bytes proved
+  that the committed text reached SSH. The suffix may vary with the packaged
+  libpinyin candidate behavior used by the automation environment.
 - Disconnect returned the application to the disconnected state.
 
 ## Evidence
@@ -438,6 +459,7 @@ cat >"$RUN_DIR/report.md" <<EOF
 - \`05-disconnected.bmp\`
 - \`app-backend-environment.txt\`
 - \`ibus-engines.txt\`
+- \`remote-ime-path.txt\`
 - \`wayland-info.txt\`
 - \`weston.log\`
 - \`app.log\`

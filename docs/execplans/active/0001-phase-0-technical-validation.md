@@ -308,7 +308,8 @@ Client -> Jump Host -> Internal Target
 - Linux Wayland：Weston 嵌套在 Xvfb 仅承担自动化输入和截图；AnySSH 进程移除
   `DISPLAY`，强制 `GDK_BACKEND=wayland`，并通过真实 Wayland Socket 启动。
 - Linux IME：IBus/libpinyin 在 xterm.js 中提交 `中文`，经 Tauri IPC 和 Rust
-  SSH Core 到达 Docker OpenSSH，并创建远端 `/tmp/中文` Marker。
+  SSH Core 到达 Docker OpenSSH，并创建以 `/tmp/anyssh-ime-中文` 开头的远端
+  UTF-8 文件 Marker，同时记录精确文件名 Byte。
 - Android：JDK 17、SDK/Target SDK 36、Build Tools 35.0.0、
   NDK 29.0.13846066 下成功产出 ARM64 Debug APK；APK 包含
   `arm64-v8a/libanyssh_client_lib.so` 和 bundled SQLCipher。
@@ -456,6 +457,10 @@ ssh-target-internal
 - 2026-07-27：GitHub Artifact 上传曾遇到 XDG Runtime Socket 的
   `ENTRYNOTSUPPORTED` 警告。Wayland QA 退出时现删除 XDG Cache、Config、
   Data 和 Runtime 临时目录，仅保留白名单 Evidence。
+- 2026-07-27：Ubuntu 24.04 的 `ibus-libpinyin 1.15.7` 在 XTest 自动选词并立即
+  切换 Engine 时会把末字再次提交，产生合法 UTF-8 `中文文`；Arch 环境提交
+  `中文`。QA 不再把发行版相关的候选后缀当作 AnySSH 编码错误，而是验证远端
+  文件名具有 `中文` UTF-8 前缀并保存完整 Byte Evidence。
 - 其余发现待执行过程中持续补充。
 
 ## Decision Log

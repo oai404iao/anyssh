@@ -99,7 +99,8 @@ pnpm qa:native:wayland
 
 Wayland 检查把 Weston 嵌套在 Xvfb 中用于自动化，但 AnySSH 进程本身不继承
 `DISPLAY`，并强制使用 `GDK_BACKEND=wayland`。测试会通过 IBus/libpinyin 把
-`中文` 输入 xterm.js，并验证远端 OpenSSH Fixture 收到对应 UTF-8 文件名。
+`中文` 输入 xterm.js，并验证远端 OpenSSH Fixture 收到包含该 UTF-8 前缀的
+文件名。精确候选后缀可能因发行版提供的 libpinyin 版本而不同。
 
 ## Android 构建
 
