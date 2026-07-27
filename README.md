@@ -32,6 +32,7 @@ AnySSH 是一个处于 Phase 0 技术验证阶段的开源跨平台 SSH 客户�
 - Vitest、Playwright 和 agent-browser 测试路径。
 - 原生 Wayland + IBus/libpinyin + xterm.js 中文组合输入到真实 SSH Shell。
 - Android ARM64 Debug APK 构建，包含 Rust SSH、Vault 与 bundled SQLCipher。
+- GitHub Actions Windows Runner 已成功产出 x86-64 Debug EXE。
 
 Jump Host/私钥的产品配置与 Vault 集成、SSH Agent 和 Windows 运行验证尚未完成。
 iOS 因当前没有 macOS/Xcode 环境暂缓。

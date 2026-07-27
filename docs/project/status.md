@@ -46,14 +46,15 @@
   Rust SSH、Vault 和 bundled SQLCipher 均已交叉编译进 APK。
 - Linux 与 Android Build 已迁入独立 Docker Target Image；构建容器不继承宿主
   环境变量，只接收 Git 已跟踪或未忽略的工作树文件。
-- Windows 原生 Build CI 已加入工作流，等待真实 CI Runner 结果。
+- GitHub Actions Windows Runner 已成功产出 x86-64 Debug EXE；Linux 与
+  Android Container Build Evidence 也已由远端 Runner 验证。
 - CI 工作流。
 
 当前仓库尚未完成：
 
 - Jump Route 持久化和产品配置 UI。
 - 私钥 Credential 的 Vault/Tauri 产品集成和 SSH Agent 认证。
-- Windows Build/运行验证。
+- Windows 原生运行验证。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
 - iOS 构建验证；当前没有 macOS/Xcode 环境，按维护者指示暂缓。
 - Host/Group 持久化。

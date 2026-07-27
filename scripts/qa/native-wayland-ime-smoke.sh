@@ -50,8 +50,8 @@ if [[ "${1:-}" == "--session" ]]; then
     >"$RUN_DIR/ibus.log" 2>&1
 
   (
-    cd "$ROOT_DIR"
-    pnpm dev
+    cd "$ROOT_DIR/apps/client"
+    "$ROOT_DIR/apps/client/node_modules/.bin/vite"
   ) >"$RUN_DIR/vite.log" 2>&1 &
 
   for _ in $(seq 1 100); do
@@ -98,6 +98,12 @@ cleanup() {
     wait "$XVFB_PID" >/dev/null 2>&1 || true
   fi
   docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  rm -rf \
+    "$RUN_DIR/xdg-cache" \
+    "$RUN_DIR/xdg-config" \
+    "$RUN_DIR/xdg-data" \
+    "$RUN_DIR/xdg-runtime"
+  rm -f "$RUN_DIR/app.pid" "$RUN_DIR/dbus-address"
 }
 trap cleanup EXIT
 
@@ -111,7 +117,6 @@ for command in \
   ibus \
   ibus-daemon \
   pkg-config \
-  pnpm \
   setsid \
   ss \
   ssh-keyscan \
@@ -123,6 +128,11 @@ for command in \
     exit 1
   fi
 done
+
+if [[ ! -x "$ROOT_DIR/apps/client/node_modules/.bin/vite" ]]; then
+  echo "Vite is not installed; run pnpm install from the repository root." >&2
+  exit 1
+fi
 
 if ! pkg-config --exists webkit2gtk-4.1 javascriptcoregtk-4.1; then
   echo "WebKitGTK 4.1 development files are required." >&2

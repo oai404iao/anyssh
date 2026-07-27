@@ -2,7 +2,7 @@
 
 - 状态：Active
 - 创建日期：2026-07-25
-- 最后更新：2026-07-26
+- 最后更新：2026-07-27
 - 负责人：项目维护者与执行 Agent
 
 ## 目的与用户价值
@@ -99,7 +99,11 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
 - [x] 2026-07-26：完成原生 Wayland + IBus/libpinyin + SSH Terminal IME 验证。
 - [x] 2026-07-26：完成 Android ARM64 Debug APK 与 bundled SQLCipher 构建。
 - [x] 2026-07-26：建立独立 Linux/Android Docker Build Image 与 Evidence 导出。
-- [ ] Windows Build CI 已建立，等待 Runner 结果和运行证据。
+- [x] 2026-07-27：GitHub Actions Windows Runner 成功产出 x86-64 Debug EXE。
+- [x] 2026-07-27：首次远端 CI 验证 Frontend、Rust、OpenSSH、Browser、
+  Windows、Linux Container 和 Android Container Job。
+- [ ] 原生 Wayland CI 启动差异已修复并在本地通过，等待远端重跑。
+- [ ] Windows 运行证据仍待补充。
 - [ ] iOS Build 因当前没有 macOS/Xcode 环境暂缓。
 - [ ] 根据证据更新 ADR 状态并完成 Phase 0 报告。
 
@@ -311,8 +315,10 @@ Client -> Jump Host -> Internal Target
 - Build Isolation：`infra/build/Dockerfile` 使用独立 `linux`/`android` Target；
   容器从 Git 已跟踪和未忽略的文件生成隔离工作树，不继承宿主 Token，并仅复制
   `artifacts/linux-build` 或 `artifacts/android-build` 回仓库。
-- Windows：原生 Build Job 已加入 GitHub Actions；仓库当前没有 Remote，
-  尚无 Windows Runner 结果。
+- Windows：GitHub Actions `windows-2025` Runner 已成功产出 33,130,496 Byte
+  的 x86-64 PE32+ Debug EXE；SHA-256 为
+  `83b3d4510a0084a371fa54bce87bb72301dc6b28be97650415335983a4f70c60`。
+  该证据只证明 MSVC/WebView2 Application Shell 可链接，运行验证仍待补充。
 - iOS：维护者当前没有 Mac，Build 验证暂缓；Linux 结果不得冒充 Xcode Build。
 
 ### Milestone 6：Phase 0 关闭
@@ -440,6 +446,16 @@ ssh-target-internal
 - 2026-07-26：独立 Build Image 与 Debug Compiler Cache 体积较大，尤其 Android
   NDK Image。缓存按平台隔离到 `~/.cache/anyssh-build/`，需要在开发文档中明确
   清理路径，不能把这些缓存纳入仓库或构建证据。
+- 2026-07-27：首次 GitHub Actions Run `30227796601` 中，九个 Job 仅
+  `native-linux-check` 的 Wayland Step 失败，其余均通过，包括 Windows、
+  Android Container、Linux Container 和完整 OpenSSH Smoke。
+- 2026-07-27：Wayland QA 的隔离 Session 修改 `XDG_DATA_HOME` 后，
+  `pnpm dev` 会认为现有 `node_modules` 来自另一个 pnpm Store，并在无 TTY
+  环境拒绝自动重装。QA 改为直接启动已安装的 Vite Binary，避免包管理器状态
+  检查污染隔离的应用数据目录。
+- 2026-07-27：GitHub Artifact 上传曾遇到 XDG Runtime Socket 的
+  `ENTRYNOTSUPPORTED` 警告。Wayland QA 退出时现删除 XDG Cache、Config、
+  Data 和 Runtime 临时目录，仅保留白名单 Evidence。
 - 其余发现待执行过程中持续补充。
 
 ## Decision Log
@@ -474,6 +490,9 @@ ssh-target-internal
 - 2026-07-26：Linux 与 Android Build 使用独立 Docker Target Image；Windows
   保留原生 Windows Runner，因为 Linux Cross Build 不能替代 MSVC/WebView2
   验证；iOS 仍必须等待 macOS/Xcode。
+- 2026-07-27：Wayland QA 的 Vite Server 直接使用 Workspace 已安装 Binary，
+  不在清空宿主环境后的 Session 内重新调用 pnpm；应用进程仍使用隔离的 XDG
+  路径，保证 Vault 和 IBus Evidence 不进入宿主用户目录。
 
 ## Outcomes & Retrospective
 
