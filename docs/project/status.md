@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**Phase 0 completed; Phase 1 Group implementation validating**
+**Phase 0 completed; Phase 1 Desktop MVP in progress**
 
 当前仓库已完成：
 
@@ -85,15 +85,19 @@
   Rust-only Effective Connection Plan 和 Group/Host 配置 UI 已完成本地实现。
 - Group 继承的 Credential/Jump Route 已通过两跳 OpenSSH Saved Host Smoke；
   Browser、X11、Wayland/IBus 和 Workspace 回归通过。
+- Group Feature Commit `ece4fe7` 的 GitHub Actions Run `30279500562` 全部
+  九个 Job 通过；Windows Group/Inherited Host/Route 重启恢复、Android ARM64、
+  Linux Container、X11、Wayland 和 agent-browser Evidence 已人工检查。
+- ADR-0012 已接受，Group ExecPlan 已完成。
 - CI 工作流。
 
 当前仓库尚未完成：
 
-- 加密 Private Key 的原生 Passphrase Prompt 和 SSH Agent 认证。
+- 加密 Private Key 的原生 Passphrase Prompt。
+- 系统 SSH Agent 认证正在执行 Active ExecPlan。
 - Windows Native Picker 与真实 SSH Runtime 交互。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
 - iOS 构建验证；当前没有 macOS/Xcode 环境，按维护者指示暂缓。
-- Group Schema v4 的 Windows/Android/Linux CI 回归与 ADR-0012 最终状态评审。
 
 ## 待项目负责人确认
 
@@ -112,8 +116,9 @@
 
 ## 当前活动计划
 
-- [`Phase 1：Group 持久化与三态继承`](../execplans/active/0002-group-persistence-and-inheritance.md)
+- [`Phase 1：系统 SSH Agent 认证`](../execplans/active/0003-system-ssh-agent-authentication.md)
 
 ## 已完成计划
 
 - [`Phase 0：技术风险验证`](../execplans/completed/0001-phase-0-technical-validation.md)
+- [`Phase 1：Group 持久化与三态继承`](../execplans/completed/0002-group-persistence-and-inheritance.md)

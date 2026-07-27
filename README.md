@@ -56,11 +56,12 @@ iOS 因当前没有 macOS/Xcode 环境暂缓。
 
 当前活动计划：
 
-- [`Phase 1：Group 持久化与三态继承`](docs/execplans/active/0002-group-persistence-and-inheritance.md)
+- [`Phase 1：系统 SSH Agent 认证`](docs/execplans/active/0003-system-ssh-agent-authentication.md)
 
-Phase 0 结果：
+已完成计划：
 
 - [`Phase 0：技术风险验证`](docs/execplans/completed/0001-phase-0-technical-validation.md)
+- [`Phase 1：Group 持久化与三态继承`](docs/execplans/completed/0002-group-persistence-and-inheritance.md)
 
 ## 文档入口
 

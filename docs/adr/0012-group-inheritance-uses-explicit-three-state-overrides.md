@@ -1,6 +1,6 @@
 # ADR-0012：Group 继承使用显式三态 Override
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-07-27
 - 决策人：项目维护者
 
@@ -80,9 +80,11 @@ Profile 等配置。普通 `Option<T>` 只能表达“有值/无值”，无法�
   三态 Editor；Saved Host IPC 仍只提交 Host ID。
 - 2026-07-27：Docker OpenSSH 已验证 Group 继承 Password/Private Key
   Credential 和两级 Jump Route。
-- 2026-07-27：Playwright、agent-browser、X11 Native Picker/SSH 和真实 Wayland/
-  IBus/SSH 本地回归通过。Windows、Android 和 Container CI Evidence 尚待同一
-  Feature Commit。
+- 2026-07-27：Feature Commit `ece4fe7` 的 GitHub Actions Run
+  `30279500562` 全部九个 Job 通过。Windows EXE/WebView2 已验证 Group、
+  inherited Host、Credential 和 Route 在错误 PIN、Lock/Unlock 与进程重启后
+  恢复；Android ARM64、Linux Container、X11、Wayland/IBus、Playwright 和
+  agent-browser Evidence 均通过并已人工检查关键截图与 Error Log。
 
 ## 相关文档
 
@@ -90,4 +92,4 @@ Profile 等配置。普通 `Option<T>` 只能表达“有值/无值”，无法�
 - [ADR-0006](0006-secrets-stay-out-of-webview.md)
 - [ADR-0009](0009-host-jump-route-reference-model.md)
 - [ADR-0010](0010-saved-host-plans-resolve-in-rust.md)
-- [Phase 1 Group ExecPlan](../execplans/active/0002-group-persistence-and-inheritance.md)
+- [Phase 1 Group ExecPlan](../execplans/completed/0002-group-persistence-and-inheritance.md)

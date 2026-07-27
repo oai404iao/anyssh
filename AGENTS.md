@@ -17,7 +17,8 @@ React/xterm.js UI
         -> Platform Security APIs
 ```
 
-仓库已完成 **Phase 0 技术验证**，当前进入 **Phase 1 Group 持久化与三态继承**。
+仓库已完成 **Phase 0 技术验证** 与 **Phase 1 Group 持久化/三态继承**，当前
+实施 **Phase 1 系统 SSH Agent 认证**。
 已经存在可构建的 React 前端、Rust Workspace、russh SSH/Jump Host、SQLCipher/
 PIN Vault、Tauri IPC、Host/Credential/Route Repository、Windows WebView2、
 OpenSSH Fixture、Playwright E2E、agent-browser 与原生 X11/Wayland 检查。
@@ -109,6 +110,9 @@ Proposed ADR 是待验证方案，不是不可变事实。若 Phase 0 验证结�
 - Native Private Key Import Request 只允许 Label/Username。Tauri Command
   必须在 Rust 内打开 Native Picker，再由 `ApplicationCore` 有界读取和验证；
   WebView 不得提交 Path、Private Key 或 Passphrase。当前仅允许未加密 Key。
+- System SSH Agent Identity 枚举和签名只在 Rust 内执行。WebView 不得提交
+  Agent Socket/Pipe Path、Public Key Blob 或签名 Payload；Credential 必须用
+  SHA-256 Fingerprint 选择唯一 Identity，不得自动尝试 Agent 中全部 Key。
 - Host 只保存可选 Credential/Jump Route ID；Jump Route Step 只保存 Host ID。
   不得在 Host 或 Route 中复制 Username、Password、Private Key 或 Passphrase。
 - Saved Host Connect IPC 只传 Target Host ID 和 Terminal Size。Route 展开与
@@ -429,10 +433,11 @@ Clear
 
 当前唯一活动计划是：
 
-- [`0002-group-persistence-and-inheritance.md`](docs/execplans/active/0002-group-persistence-and-inheritance.md)
+- [`0003-system-ssh-agent-authentication.md`](docs/execplans/active/0003-system-ssh-agent-authentication.md)
 
-除非用户明确改变优先级，应先完成 Group Schema v4 的全平台回归、ADR-0012
-状态评审和 ExecPlan 收尾，而不是直接开发 WebDAV 或高级脚本系统。
+除非用户明确改变优先级，应先完成 Linux/Windows 系统 SSH Agent 的
+Fingerprint-selected Credential、真实 OpenSSH/Windows Smoke、ADR-0013 状态
+评审和 ExecPlan 收尾，而不是直接开发 WebDAV 或高级脚本系统。
 
 ## 关键文件
 
@@ -469,8 +474,9 @@ Clear
 | 总体技术设计 | `docs/design/technical-architecture-2026.md` |
 | ADR 索引 | `docs/adr/README.md` |
 | ExecPlan 规范 | `docs/execplans/README.md` |
-| 当前活动计划 | `docs/execplans/active/0002-group-persistence-and-inheritance.md` |
+| 当前活动计划 | `docs/execplans/active/0003-system-ssh-agent-authentication.md` |
 | Phase 0 结果 | `docs/execplans/completed/0001-phase-0-technical-validation.md` |
+| Group 结果 | `docs/execplans/completed/0002-group-persistence-and-inheritance.md` |
 | 2026 技术基线 | `docs/reference/technology-baseline-2026.md` |
 | 术语表 | `docs/reference/glossary.md` |
 

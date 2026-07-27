@@ -1,6 +1,6 @@
 # AnySSH Threat Model v1
 
-> 状态：Phase 0 Baseline
+> 状态：Phase 1 Baseline
 > 日期：2026-07-27
 > 范围：当前 Tauri/React Client、Rust Core、Vault、SQLCipher Repository、
 > Group Inheritance、russh Session、Native Private Key Import 和 QA/Build
@@ -102,7 +102,8 @@ Native Picker
 - Linux X11：真实 Tauri/WebKitGTK、Vault、Native Picker、SSH 和 4 MiB 输出已验证。
 - Linux Wayland：无 `DISPLAY`、Weston、IBus/libpinyin、xterm 和 SSH 已验证。
 - Windows：真实 EXE/WebView2、非零窗口句柄、Vault/Repository 和重启恢复已
-  验证；Native Picker 与真实 SSH 交互仍需真实 Windows 环境补充。
+  验证；Group/Inherited Host/Route 的 Schema v4 重启恢复也已验证。Native
+  Picker 与真实 SSH 交互仍需真实 Windows 环境补充。
 - Android：ARM64 Debug APK、Rust Core 和 bundled SQLCipher 构建已验证；Runtime
   与 Content URI 尚未验证。
 - iOS：因无 macOS/Xcode 环境而明确延期。
@@ -132,6 +133,9 @@ pnpm check:container:android
 - Private Key Import 文件类型、大小、编码、Symlink 和加密 Key 拒绝。
 - Host Key 变化、两 Jump Route、取消、超时和 4 MiB 背压。
 - Browser、X11、Wayland/IME、Windows WebView2 和 Android Build Evidence。
+
+Group Feature Commit `ece4fe7` 的 Run `30279500562` 全部九个 Job 通过；关键
+Desktop/Mobile、X11、Wayland 和 Windows 截图及 Error Log 已人工检查。
 
 ## 8. 复审触发条件
 

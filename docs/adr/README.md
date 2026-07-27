@@ -25,10 +25,12 @@ ADR 记录需要长期保留的架构决策。实现细节放在 `docs/design/`�
 | [0009](0009-host-jump-route-reference-model.md) | Accepted | Host 与 Jump Route 只保存 ID 引用 |
 | [0010](0010-saved-host-plans-resolve-in-rust.md) | Accepted | Saved Host Connection Plan 只在 Rust 内解析 |
 | [0011](0011-native-private-key-import-stays-in-rust.md) | Accepted | 原生私钥导入完全留在 Rust 边界 |
-| [0012](0012-group-inheritance-uses-explicit-three-state-overrides.md) | Proposed | Group 继承使用显式三态 Override |
+| [0012](0012-group-inheritance-uses-explicit-three-state-overrides.md) | Accepted | Group 继承使用显式三态 Override |
+| [0013](0013-system-ssh-agent-uses-fingerprint-selected-identities.md) | Proposed | 系统 SSH Agent 使用 Fingerprint 选择的外部签名身份 |
 
-Phase 0 已接受 ADR-0001、0002、0003、0006、0008、0009、0010 和 0011。
-ADR-0004、0005 和 0007 因对应能力尚未完整实现而继续保持 Proposed。
+Phase 0 已接受 ADR-0001、0002、0003、0006、0008、0009、0010 和 0011；
+Phase 1 Group 验证后已接受 ADR-0012。
+ADR-0004、0005、0007 和 0013 因对应能力尚未完整实现而继续保持 Proposed。
 
 ## 文件规范
 

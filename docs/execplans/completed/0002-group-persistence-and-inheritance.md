@@ -1,6 +1,6 @@
 # ExecPlan 0002：Group 持久化与三态继承
 
-- 状态：Active
+- 状态：Completed
 - 创建日期：2026-07-27
 - 最后更新：2026-07-27
 - 负责人：项目维护者与执行 Agent
@@ -64,7 +64,7 @@ Host Plan 和配置 UI。Accepted ADR-0006/0009/0010 要求 Secret 与 Connectio
 - [x] 2026-07-27：实现 Repository/Actor/Application/Tauri Commands。
 - [x] 2026-07-27：扩展 Saved Host Effective Plan 与 OpenSSH Smoke。
 - [x] 2026-07-27：实现 Group/Host 三态配置 UI。
-- [ ] 完成全平台回归与 ADR-0012 状态评审。
+- [x] 2026-07-27：完成全平台回归、Evidence 人工检查与 ADR-0012 状态评审。
 
 ## Milestones
 
@@ -193,6 +193,42 @@ pnpm format:check
   `artifacts/android-build/build-1785165278-1`，APK SHA-256 为
   `deaad7ed037d63772d791d3f4c630aa956050d6c4e223e553a0c4aee07844834`。
 
+## 同 Commit CI 验证证据
+
+- Feature Commit：`ece4fe7 feat: add group persistence and inheritance`。
+- GitHub Actions Run：`30279500562`，九个 Job 全部通过。
+- agent-browser：
+  `agent-browser-evidence/smoke-1785165660`；Desktop/Mobile Group、
+  Set/Inherit/Clear、Route Restrict Error 和 Browser Error Log 已人工检查。
+- X11：
+  `native-linux-evidence/native-xvfb/smoke-1785165754-5863`；Native Picker、
+  SSH、4 MiB Backpressure 和 Lock 截图已人工检查。
+- Wayland：
+  `native-linux-evidence/native-wayland/smoke-1785165818-7095`；远端 Marker 为
+  `/tmp/anyssh-ime-中文文`，UTF-8 Byte 为
+  `e4 b8 ad e6 96 87 e6 96 87`。
+- Windows：
+  `windows-native-evidence/smoke-20260727-152318-5736`；WebView2
+  `Edg/150.0.4078.65`，Create/Restart HWND 为 `0x40030`/`0x6016A`。
+  Group、Inherited Host、Credential 和 Route 的 Create/Restart 截图及空
+  Browser Error Log 已人工检查。
+- Linux Container ELF SHA-256：
+  `9583107cf37b0c175e73e2fa5d22c55682230e5d0a8437476feb8ada8261f16b`。
+- Android ARM64 APK SHA-256：
+  `12596d1afa69a77f4ce38bd1a811372607db7a72b91c16c0823025f1dcef0423`。
+- Windows Debug EXE SHA-256：
+  `30ba8de9acf9fe066918b78b4c9fa78354b9eecd156616450471ab5bce6e97bf`。
+
 ## Outcomes & Retrospective
 
-尚未完成。
+- SQLCipher Schema v4、Group Repository 和显式三态 Override 已完成，并在
+  Migration、Lock/Unlock、进程重启和多平台 Build 中保持完整。
+- Saved Host 连接继续只提交 Target Host ID；Credential Secret、Effective
+  Route 和 Parent 解析没有越过 Rust/DB Actor 边界。
+- Group Parent、Effective Host Route、Restrict 删除和最大深度均在写入与
+  Runtime 两侧 Fail Closed。
+- 产品 UI 已覆盖 Desktop、Compact 和 Mobile，能够同时展示 Local Override 与
+  metadata-only Effective Value。
+- `host_groups` 避免 SQLite `GROUPS` 关键字歧义；每个 Migration 独立写入目标
+  `user_version`，修复了旧 Migration 误用最新版本号的隐患。
+- 全部出口已满足，ADR-0012 接受。本计划完成并移入 `completed/`。

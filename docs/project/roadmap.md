@@ -22,10 +22,10 @@
 
 ## Phase 1：桌面 MVP
 
-状态：进行中；首个 ExecPlan 为 Group 持久化与三态继承。
+状态：进行中；Group 持久化与三态继承已完成，当前实施系统 SSH Agent。
 
-- Host 与 Group 继承（本地实现完成，平台 CI 验证中）。
-- 密码、私钥、系统 Agent。
+- Host 与 Group 继承（已完成）。
+- 密码、私钥（已完成基础路径）、系统 Agent（进行中）。
 - known_hosts。
 - 多 Tab Terminal。
 - Jump Host。

@@ -1,6 +1,6 @@
 # Group Persistence and Three-State Inheritance v1
 
-> 状态：已实现，平台回归中
+> 状态：已实现并验证
 > 日期：2026-07-27
 
 ## 目标
@@ -68,7 +68,7 @@ group_overrides
 
 hosts
   ...
-  group_id TEXT NULL REFERENCES groups(id) RESTRICT
+  group_id TEXT NULL REFERENCES host_groups(id) RESTRICT
   credential_state INTEGER NOT NULL
   credential_id TEXT NULL REFERENCES credentials(id) RESTRICT
   jump_route_state INTEGER NOT NULL
@@ -156,6 +156,6 @@ Phase 1 不实现 WebDAV，但未来 Operation 必须同步：
 - Saved Host OpenSSH Smoke 验证 Group 继承 Credential/Route。
 - Vitest、Playwright、agent-browser、X11、Wayland、Windows 和 Android 回归。
 
-本地已完成全部可用验证，包括 Browser/X11/Wayland、OpenSSH、Android Host
-Build 和 Linux/Android Container。Windows Native 以及全部同 Commit CI
-Evidence 等待远端 Runner。
+Feature Commit `ece4fe7` 的 GitHub Actions Run `30279500562` 全部九个 Job
+通过。人工检查了 agent-browser Desktop/Mobile Group 截图、X11/Wayland
+Terminal 截图、Windows Repository/Restart 截图和 Browser Error Log。
