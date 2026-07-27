@@ -109,7 +109,7 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
   `Option<LocalVault>`；远端 Run `30238710937` 的九个 CI Job 全部通过。
 - [x] 2026-07-27：实现 SQLCipher Schema v2 Credential Repository Commands，
   增加 `anyssh-app` Application Service，并验证 Private Key 只通过 Credential ID
-  在 Rust 内部进入 SSH Core。
+  在 Rust 内部进入 SSH Core；远端 Run `30243415893` 的九个 CI Job 全部通过。
 - [ ] Windows 运行证据仍待补充。
 - [ ] iOS Build 因当前没有 macOS/Xcode 环境暂缓。
 - [ ] 根据证据更新 ADR 状态并完成 Phase 0 报告。
@@ -493,6 +493,10 @@ ssh-target-internal
 - 2026-07-27：Serde Tagged Enum 的 `rename_all` 不负责保护额外 Secret 字段。
   SSH Authentication IPC 使用 `deny_unknown_fields`，并对 `credentialId`
   显式 Rename；携带 `privateKey` 的 Payload 序列化回归测试确认会被拒绝。
+- 2026-07-27：Commit `9f14940` 的 GitHub Actions Run `30243415893` 九个 Job
+  全部通过。OpenSSH Log 明确执行
+  `encrypted_private_key_flows_from_credential_id_to_ssh_core`，Windows、Android、
+  Linux Container、原生 X11/Wayland、浏览器和 Rust Core 同时通过。
 - 2026-07-27：Commit `f2fc360` 的 GitHub Actions Run `30238710937` 九个 Job
   全部通过，包含 Windows Build、Android/Linux Container、原生 X11/Wayland
   Vault QA、OpenSSH、浏览器和 Rust Core。
