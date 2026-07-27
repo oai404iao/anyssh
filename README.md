@@ -76,6 +76,7 @@ pnpm test:e2e
 pnpm qa:browser
 pnpm qa:native:xvfb
 pnpm qa:native:wayland
+pnpm qa:native:windows # Windows only
 pnpm check:android
 pnpm check:container:linux
 pnpm check:container:android
@@ -135,6 +136,10 @@ pnpm check:container:linux
 
 Windows 仍使用原生 Windows CI 验证 MSVC/WebView2。iOS 构建必须等待可用的
 macOS/Xcode 环境，Linux Docker 不能替代。
+
+Windows 上的 `pnpm qa:native:windows` 会构建 Debug EXE，启动真实 Tauri/
+WebView2 Runtime，并使用仅限该 QA 进程的 Loopback CDP Port 验证 Vault、
+Repository 和重启恢复。该端口不进入 Release 配置。
 
 ## 许可证
 

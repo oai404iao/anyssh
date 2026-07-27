@@ -128,11 +128,17 @@ jobs:
           toolchain: 1.93.1
       - uses: Swatinem/rust-cache@v2
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @anyssh/client tauri build --debug --no-bundle --ci
+      - run: pnpm qa:native:windows
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: windows-debug-build
           path: target/debug/anyssh-client.exe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-native-evidence
+          path: artifacts/native-windows/
 
   openssh-smoke:
     runs-on: ubuntu-24.04

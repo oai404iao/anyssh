@@ -132,6 +132,11 @@ Phase 0 可以只创建当前里程碑真实需要的 crate；不要创建大量
   Path、Private Key 或 Passphrase。
 - [x] 2026-07-27：完成配置 UI 的 Vitest、Playwright、agent-browser、原生构建和
   Android ARM64 回归。
+- [x] 2026-07-27：增加 Windows WebView2 Runtime Smoke：启动已构建 EXE，
+  通过仅限 QA 的 CDP Port 驱动真实 WebView，验证 Vault/Repository/重启恢复并
+  导出截图。
+- [ ] 2026-07-27：在 `windows-2025` Runner 获取非零原生窗口句柄、WebView2
+  渲染截图、SQLCipher 明文扫描和重启解锁证据。
 - [ ] Windows 运行证据仍待补充。
 - [ ] iOS Build 因当前没有 macOS/Xcode 环境暂缓。
 - [ ] 根据证据更新 ADR 状态并完成 Phase 0 报告。
@@ -418,7 +423,11 @@ React { label, username }
 - Windows：GitHub Actions `windows-2025` Runner 已成功产出 33,130,496 Byte
   的 x86-64 PE32+ Debug EXE；SHA-256 为
   `83b3d4510a0084a371fa54bce87bb72301dc6b28be97650415335983a4f70c60`。
-  该证据只证明 MSVC/WebView2 Application Shell 可链接，运行验证仍待补充。
+  该证据只证明 MSVC/WebView2 Application Shell 可链接。下一步在同一 Runner
+  启动 EXE，使用 WebView2 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 仅为 QA
+  开放 Loopback CDP Port；Playwright 只连接现有 WebView2，不启动 Chromium。
+  Smoke 必须验证非零窗口句柄、Vault Create/Lock/Wrong-PIN/Unlock、Repository
+  CRUD、进程重启恢复、截图和 Vault 明文扫描。CDP Port 不进入 Release 配置。
 - iOS：维护者当前没有 Mac，Build 验证暂缓；Linux 结果不得冒充 Xcode Build。
 
 ### Milestone 6：Phase 0 关闭
@@ -719,6 +728,11 @@ ssh-target-internal
   Username；Command 自己打开 Native Picker，选中的 Path 和 Key 内容只在 Rust
   中存在。首版不接受 Passphrase，因此只导入可在无 Passphrase 条件下成功解析的
   Private Key。
+- 2026-07-27：Windows Runtime QA 复用已构建 Debug EXE，通过进程环境临时设置
+  WebView2 Loopback CDP Port，并使用 Playwright `connectOverCDP` 驱动真实
+  Tauri WebView。该入口只存在于 QA Script，不写入 Tauri Config、Capability 或
+  Release Build；Native Picker 和真实 SSH 的 Windows 交互证据若 Hosted Runner
+  无法提供桌面输入能力，则必须明确保留为后续真实 Windows 环境检查。
 
 ## Outcomes & Retrospective
 

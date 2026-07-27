@@ -12,6 +12,7 @@ pnpm lint
 pnpm qa:browser
 pnpm qa:native:xvfb
 pnpm qa:native:wayland
+pnpm qa:native:windows # Windows only
 pnpm check:android
 pnpm check:container:linux
 pnpm check:container:android
@@ -59,3 +60,8 @@ IBus/libpinyin composition through xterm.js and the real OpenSSH fixture.
 
 The canonical reproducible build paths use the independent Linux and Android images under
 `infra/build`. Direct host Android builds remain available for debugging.
+
+On Windows, `pnpm qa:native:windows` builds and launches the actual Debug EXE, then attaches
+Playwright to its existing WebView2 instance through an ephemeral loopback CDP port. The
+smoke verifies native Vault/Repository IPC and restart recovery without enabling CDP in
+Tauri configuration or release builds.

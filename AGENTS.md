@@ -163,6 +163,9 @@ pnpm qa:browser
 # Xvfb 下启动真实 Tauri/WebKitGTK，并连接 Docker OpenSSH
 pnpm qa:native:xvfb
 
+# Windows 2025：构建 Debug EXE 并通过 WebView2 CDP 验证原生运行
+pnpm qa:native:windows
+
 # Weston 原生 Wayland、IBus/libpinyin、xterm 中文组合输入
 pnpm qa:native:wayland
 
@@ -224,6 +227,12 @@ Evidence 复制回仓库。
 同时必须验证 Tauri/xterm Ack 背压能排空 4 MiB 输出并继续执行后续远端命令。
 该检查还必须通过真实 Native File Picker 导入测试 Private Key，确认 UI 只返回
 metadata、Key Header 不出现在 Vault 文件，且临时源文件在 SSH 流程前删除。
+
+`pnpm qa:native:windows` 只在 Windows 执行。它必须启动实际构建的 EXE、确认
+标题为 `AnySSH` 的非零窗口句柄，并通过进程环境临时启用的 Loopback WebView2
+CDP Port 驱动真实 Tauri IPC。CDP 不得写入 Tauri Config、Capability 或 Release
+Build。测试必须覆盖 Vault Create/Lock/Wrong-PIN/Unlock、Repository CRUD、进程
+重启恢复、SQLCipher 明文扫描和截图；不得上传 WebView2 Profile 或 Vault 文件。
 
 `pnpm qa:native:wayland` 必须在 AnySSH 进程没有 `DISPLAY` 的条件下：
 
@@ -441,6 +450,7 @@ Clear
 | OpenSSH Fixture | `tests/fixtures/openssh/` |
 | Playwright E2E | `apps/client/e2e/connect-preview.spec.ts` |
 | agent-browser 检查 | `scripts/qa/agent-browser-smoke.sh` |
+| Windows Runtime 检查 | `scripts/qa/native-windows-smoke.ps1` |
 | CI | `.github/workflows/ci.yml` |
 | 产品目标 | `docs/project/product-brief.md` |
 | 项目状态 | `docs/project/status.md` |

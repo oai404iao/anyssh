@@ -2,6 +2,7 @@
 
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -27,6 +28,7 @@ use zeroize::Zeroizing;
 
 const OUTPUT_ACK_BUFFER: usize = 64;
 const MAX_IN_FLIGHT_OUTPUT_CHUNKS: usize = 8;
+const QA_VAULT_ROOT_ENVIRONMENT_VARIABLE: &str = "ANYSSH_QA_VAULT_ROOT";
 
 #[derive(Clone, Default)]
 struct SessionRegistry {
@@ -511,6 +513,28 @@ fn selected_private_key_path(
         .transpose()
 }
 
+fn configured_vault_root(default: PathBuf) -> std::io::Result<PathBuf> {
+    #[cfg(debug_assertions)]
+    let qa_override = std::env::var_os(QA_VAULT_ROOT_ENVIRONMENT_VARIABLE).map(PathBuf::from);
+    #[cfg(not(debug_assertions))]
+    let qa_override = None;
+
+    resolve_vault_root(default, qa_override)
+}
+
+fn resolve_vault_root(default: PathBuf, qa_override: Option<PathBuf>) -> std::io::Result<PathBuf> {
+    let Some(qa_override) = qa_override else {
+        return Ok(default);
+    };
+    if !qa_override.is_absolute() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{QA_VAULT_ROOT_ENVIRONMENT_VARIABLE} must be an absolute path"),
+        ));
+    }
+    Ok(qa_override)
+}
+
 #[tauri::command]
 async fn credential_list(
     core: State<'_, ApplicationCore>,
@@ -826,7 +850,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(SessionRegistry::default())
         .setup(|app| {
-            let vault_root = app.path().app_data_dir()?.join("vault");
+            let vault_root = configured_vault_root(app.path().app_data_dir()?.join("vault"))?;
             let core = ApplicationCore::spawn(vault_root, DatabaseActorConfig::phase0_default())?;
             app.manage(core);
             Ok(())
@@ -993,6 +1017,23 @@ mod tests {
             .expect("desktop selection"),
             Some(std::path::PathBuf::from("/tmp/id_ed25519"))
         );
+    }
+
+    #[test]
+    fn qa_vault_root_override_requires_an_absolute_path() {
+        let default = std::env::temp_dir().join("anyssh-default-vault");
+        let absolute = std::env::temp_dir().join("anyssh-qa-vault");
+
+        assert_eq!(
+            resolve_vault_root(default.clone(), None).expect("default Vault root"),
+            default
+        );
+        assert_eq!(
+            resolve_vault_root(default.clone(), Some(absolute.clone()))
+                .expect("absolute QA Vault root"),
+            absolute
+        );
+        assert!(resolve_vault_root(default, Some(PathBuf::from("relative-vault"))).is_err());
     }
 
     #[test]
