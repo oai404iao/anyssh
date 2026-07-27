@@ -262,8 +262,14 @@ async function createVaultAndRepository(targetPage) {
   await targetPage.getByLabel("PIN", { exact: true }).fill(pin);
   await targetPage.getByRole("button", { name: "Unlock" }).click();
   await assert(
-    targetPage.getByRole("heading", { level: 1, name: "Local lab" }),
+    targetPage.getByRole("button", { name: "Lock Vault" }),
   ).toBeVisible();
+  await targetPage.locator(".primary-nav .nav-item").nth(2).click();
+  await assert(
+    targetPage
+      .locator(".resource-card")
+      .filter({ hasText: "Windows QA agent host" }),
+  ).toContainText("System Agent");
   await capture(
     targetPage,
     "05-vault-reunlocked.png",
@@ -279,7 +285,7 @@ async function unlockRestartedVault(targetPage) {
   await targetPage.getByLabel("PIN", { exact: true }).fill(pin);
   await targetPage.getByRole("button", { name: "Unlock" }).click();
   await assert(
-    targetPage.getByRole("heading", { level: 1, name: "Local lab" }),
+    targetPage.getByRole("button", { name: "Lock Vault" }),
   ).toBeVisible();
 
   await targetPage.locator(".primary-nav .nav-item").nth(3).click();
