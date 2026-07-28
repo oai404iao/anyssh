@@ -159,6 +159,9 @@ pnpm format:check
 - 2026-07-28：CI Run `30324346083` 已通过 Windows Rust 编译，但 Windows
   PowerShell `Add-Type` 不会把已加载 GAC Assembly 的短文件名自动解析为编译器
   Metadata Reference。QA Driver 改为传入四个实际 `Assembly.Location`。
+- 2026-07-28：CI Run `30324714023` 的 Driver 已启动且 UI Automation 编译
+  成功；实际 Tauri Picker 标题来自 Command 的 `Import SSH private key`，不是
+  QA Driver 最初等待的 `Open SSH private key`，因此 Import 保持 `Saving…`。
 
 ## Decision Log
 

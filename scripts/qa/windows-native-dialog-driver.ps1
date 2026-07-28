@@ -231,7 +231,7 @@ public static class AnySshNativeDialogDriver
 
 $FileDialog = [AnySshNativeDialogDriver]::WaitForWindow(
   $AppProcessId,
-  "Open SSH private key",
+  "Import SSH private key",
   60000
 )
 if ($FileDialog -eq [IntPtr]::Zero) {

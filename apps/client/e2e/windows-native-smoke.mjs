@@ -379,7 +379,9 @@ async function importEncryptedPrivateKey(targetPage) {
     .locator(".resource-card")
     .filter({ hasText: "Windows QA encrypted key" });
   await Promise.all([
-    assert(privateKeyCredential).toContainText("Private Key"),
+    assert(privateKeyCredential).toContainText("Private Key", {
+      timeout: 120_000,
+    }),
     nativeDialogDriver,
   ]);
   await assert(privateKeyCredential).not.toContainText(keyPassphrase);
