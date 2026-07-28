@@ -1,10 +1,10 @@
 # Known Host Repository v1
 
-> 状态：已实现，等待同 Commit CI 与 ADR-0015 状态评审
+> 状态：已实现并验收
 > 日期：2026-07-28
 
 本文定义 Phase 1 Desktop MVP 的 Endpoint-scoped Known Host Repository、持久化
-TOFU、Changed-Key 阻断和管理 UI。长期决策见 Proposed ADR-0015。
+TOFU、Changed-Key 阻断和管理 UI。长期决策见 Accepted ADR-0015。
 
 ## 目标
 
@@ -328,4 +328,4 @@ Public Key Bytes 不进入：
 - [Threat Model v1](threat-model-v1.md)
 - [Saved Host Connection Plan v1](saved-host-connection-plan-v1.md)
 - [Host 与 Jump Route Repository v1](host-jump-route-repository-v1.md)
-- [ExecPlan 0005](../execplans/active/0005-known-host-repository-and-durable-tofu.md)
+- [ExecPlan 0005](../execplans/completed/0005-known-host-repository-and-durable-tofu.md)

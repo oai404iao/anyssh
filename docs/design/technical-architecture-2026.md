@@ -233,14 +233,15 @@ anyssh/
 SSH Core 将校验策略显式建模为：
 
 - `Prompt`：首次连接发送带 Request ID 的确认事件。
-- `RequireSha256`：只接受已保存 Fingerprint；不匹配时返回 changed-key 错误，
-  不提供重新信任入口。
+- `RequireSha256Set`：只接受已保存的有界 Fingerprint Set；不匹配时返回
+  typed changed-key 错误，不提供重新信任入口。
 
 Phase 0 已通过运行中轮换 OpenSSH Fixture Host Key 验证变化硬阻断。Fingerprint
-的 Endpoint-scoped 加密持久化正在
+的 Endpoint-scoped SQLCipher 持久化、persist-before-continue、原生 Forget
+确认和 Linux/Windows Rotation 硬阻断已经由
 [Known Host Repository v1](known-host-repository-v1.md) 和
-[ExecPlan 0005](../execplans/active/0005-known-host-repository-and-durable-tofu.md)
-中实施；OpenSSH `known_hosts` 文件导入/导出属于后续工作。
+[ExecPlan 0005](../execplans/completed/0005-known-host-repository-and-durable-tofu.md)
+完成；OpenSSH `known_hosts` 文件导入/导出属于后续工作。
 
 ### 5.4 认证方式
 
@@ -304,7 +305,7 @@ TCP/Proxy -> Jump 1 SSH
 
 Jump Route 使用有序列表存储，并在保存时检测循环引用。
 
-当前 Schema v5 已实现该持久化模型：Route Step 只保存 Host ID，Host 保存可选
+当前 Schema v6 已实现该持久化模型：Route Step 只保存 Host ID，Host 保存可选
 Group ID 和 Credential/Route 三态引用；Foreign Key 使用 Restrict 删除语义，
 保存时对 Effective Host -> Route -> Step Host 图执行循环检测。Saved Host IPC
 只提交 Target Host ID；DB Actor 先解析最多 32 层 Group，再递归展开 Route 和
@@ -619,12 +620,13 @@ SQLCipher 查询均在 Actor Thread 中串行执行，Tauri Command 不再使用
 `spawn_blocking` 或 `Mutex<Option<LocalVault>>`。最后一个 Handle 释放时先关闭
 Queue，再 Join Actor Thread，确保数据库连接按顺序销毁。
 
-当前 Schema v5 Repository 设计见：
+当前 Schema v6 Repository 设计见：
 
 - [Credential Repository v1](credential-repository-v1.md)
 - [Host 与 Jump Route Repository v1](host-jump-route-repository-v1.md)
 - [Group Inheritance v1](group-inheritance-v1.md)
 - [System SSH Agent Authentication v1](system-ssh-agent-authentication-v1.md)
+- [Known Host Repository v1](known-host-repository-v1.md)
 
 Tauri 只调用 `anyssh-app::ApplicationCore`；它不直接解析 Credential Secret、
 构造 SSH Authentication 或访问 SQLCipher Connection。

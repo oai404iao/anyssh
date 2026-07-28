@@ -1,6 +1,6 @@
 # ExecPlan 0005：Known Host Repository and Durable TOFU
 
-- 状态：Active
+- 状态：Completed
 - 创建日期：2026-07-28
 - 最后更新：2026-07-28
 - 负责人：项目维护者与执行 Agent
@@ -18,7 +18,7 @@
 
 ### 包含
 
-- Proposed ADR-0015 与 Known Host Repository v1 Design。
+- ADR-0015 与 Known Host Repository v1 Design。
 - SQLCipher Schema v6 Known Host/Key 表。
 - Endpoint 规范化与最多 16 Key 的 Trust Set。
 - DB Actor CRUD、Trust、Lookup 和 Connection Plan Policy。
@@ -71,7 +71,7 @@
 
 - Accepted ADR-0002：russh Engine 和 Host Key 变化硬阻断。
 - Accepted ADR-0010：Saved Host Plan 只在 Rust 内解析。
-- Proposed ADR-0015：Endpoint-scoped Trust 和 persist-before-continue。
+- ADR-0015：Endpoint-scoped Trust 和 persist-before-continue。
 - Threat Model T-06/T-07：MITM、轮换和延迟决策绑定。
 
 ## Progress
@@ -93,18 +93,24 @@
 - [x] 完成 Milestone 1：Schema v6 与 Repository。
 - [x] 完成 Milestone 2：SSH/Application Trust Boundary。
 - [x] 完成 Milestone 3：Tauri/React Product UI。
-- [ ] 完成 Milestone 4：Protocol 与 Native QA。
-- [ ] 完成全量回归、Artifact 人工检查、ADR-0015 状态评审和计划收尾。
+- [x] 完成 Milestone 4：Protocol 与 Native QA。
+- [x] 完成 Milestone 5：全量回归、Artifact 人工检查、ADR-0015 状态评审和
+  计划收尾。
 - [x] 2026-07-28：本地 OpenSSH、X11、Wayland、Android ARM64 和 Linux
   Container 验证通过；X11 已覆盖首次 Trust、二次免提示、原生 Forget、重新
   TOFU 和同 Endpoint Key Rotation Hard Block。
-- [ ] 运行扩展后的 Windows create/restart/changed 三阶段 QA，并取得同 Commit
+- [x] 运行扩展后的 Windows create/restart/changed 三阶段 QA，并取得同 Commit
   CI Artifact。
 - [x] 2026-07-28：Feature Commit `a0987da` 的 Run `30342613128` 中 Rust、
   Frontend、Browser、OpenSSH、Linux Native、Linux Container、Android 和
   agent-browser 通过；Windows create/restart/rotation Runtime 实际完成，但
   Changed-Key Playwright Selector 把 `alertdialog` 错写成 `dialog`，因此 Job
   失败并保留完整失败 Artifact。
+- [x] 2026-07-28：Head
+  `a75da9cf6d4ba73f8b93257c683fb97ad2c0b90f` 的 GitHub Actions Run
+  `30344638562` 九个 Job 全部通过。人工检查 Browser、X11、Wayland、Windows、
+  Android 和 Linux Artifact、Error Log、Build Hash 与 Secret Scan 后接受
+  ADR-0015 并完成计划。
 
 ## Milestones
 
@@ -284,4 +290,41 @@ git diff --check
 
 ## Outcomes & Retrospective
 
-尚未完成。
+完成。
+
+- SQLCipher Schema v6 新增 Endpoint-scoped `known_hosts` /
+  `known_host_keys`，保留完整规范 Public Key Bytes，并在写入和读取时重算
+  Algorithm/SHA-256 Fingerprint。v5 -> v6 Migration、重启和模拟中断回滚均有
+  测试。
+- Quick、Saved、Jump 和 Target Connection Plan 共用同一个 Trust Store。
+  `ApplicationCore::decide_host_key` 在 SSH Worker 继续前完成持久化；Vault
+  Locked、DB Failure、过期 Request 和并发不同 Key 冲突均 Fail Closed。
+- WebView 只获得 Host Key 元数据，并且只提交 Session ID、Request ID 和
+  Boolean。Changed-Key 使用 typed `alertdialog` 硬阻断，无 Accept/Replace；
+  Forget 只提交 Known Host ID，并由 Linux GTK/Windows 原生确认授权。
+- OpenSSH、Browser、X11、Wayland 和 Windows Runtime 已证明首次 TOFU、二次
+  免提示、锁定/解锁、进程重启、原生 Forget、重新 TOFU 与同 Endpoint Key
+  Rotation 硬阻断。X11 还证明轮换后无法创建远端 bypass Marker。
+- 同 Commit CI `30344638562` 的关键证据：
+  - agent-browser：`smoke-1785229197`，Desktop/Mobile Known Hosts、Forget、
+    重新 TOFU、Changed-Key 和空 Browser Error Log。
+  - X11：`smoke-1785229239-6043`，Durable TOFU、GTK Forget、重新 TOFU、
+    Host Key Rotation、Encrypted Key、System Agent 和 4 MiB 回归。
+  - Wayland：`smoke-1785229345-7735`，无 `DISPLAY`、IBus 中文到达 SSH，且
+    Durable Trust 二次连接无 Prompt。
+  - Windows：`smoke-20260728-090120-6384`，真实 EXE/WebView2、
+    create/restart/changed 三阶段、Native Forget、重新 TOFU、重启恢复和
+    standalone OpenSSH Key Rotation。
+  - Android ARM64 APK SHA-256：
+    `cd04f149623f67b637827703c969ad18d9d2d7d4f776f7b7df3648b4cad98286`。
+  - Linux ELF SHA-256：
+    `88323d4f1e61ffd9e94ca92332c10652d6416a5a803915ffddf7b2f74b6a49ce`。
+  - Windows EXE SHA-256：
+    `5e1897c59a43f88d4f0ea2b9b42e3ffd555c532abed93d10db2e75e6ad70f823`。
+- Artifact 二次扫描未发现测试 PIN、Password、Private Key Passphrase 或
+  OpenSSH Private Key Header。Linux Vault 不含明文 SQLite Header；Browser
+  与 Windows 三阶段 Error Log 为空。人工检查的关键截图未发现截断、遮挡、
+  错误按钮或响应式问题。
+- v1 没有实现 OpenSSH `known_hosts` 导入/导出、Pattern/Hash/Marker、
+  Host Certificate、`hostkeys@openssh.com` Rotation 或 WebDAV Sync。未来同步
+  仍必须把 Endpoint Trust Set 作为原子状态并阻断冲突，不能自动取并集。

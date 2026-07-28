@@ -55,7 +55,7 @@ credential_list_system_agent_identities()
 
 ## Credential 模型
 
-当前 Schema v5 扩展 Credential Kind：
+Schema v5 扩展并由当前 Schema v6 保留的 Credential Kind：
 
 ```text
 password

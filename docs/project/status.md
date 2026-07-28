@@ -86,7 +86,7 @@
 - Phase 1 首个计划已确定为 Group Schema v4 与 `Inherit / Set / Clear` 三态继承。
 - SQLCipher Schema v4 已引入 Group Repository、32 层 Parent 限制、三态
   Override、Rust-only Effective Connection Plan 和 Group/Host 配置 UI；当前
-  Schema v5 继续保留该模型。
+  Schema v6 继续保留该模型。
 - Group 继承的 Credential/Jump Route 已通过两跳 OpenSSH Saved Host Smoke；
   Browser、X11、Wayland/IBus 和 Workspace 回归通过。
 - Group Feature Commit `ece4fe7` 的 GitHub Actions Run `30279500562` 全部
@@ -112,13 +112,26 @@
   Linux X11 GTK Prompt、Wayland/IBus、Browser、Android 和 Container Evidence
   已人工检查。
 - ADR-0014 已接受，Native Encrypted Private Key Passphrase ExecPlan 已完成。
+- SQLCipher Schema v6 已新增 Endpoint-scoped Known Host Repository；完整
+  Public Key、Algorithm 和 SHA-256 Fingerprint 受 SQLCipher 保护并在读写时
+  重算校验。Quick、Saved、Jump 和 Target 共用同一 Trust Store。
+- 首次 TOFU 采用 persist-before-continue；并发不同 Key 使用
+  First-writer-wins 并拒绝第二个结果。已知 Endpoint 的不同 Key 产生 typed
+  Changed-Key Hard Block，不提供 Accept/Replace。
+- Known Hosts 配置 UI 只展示 Endpoint、Algorithm 和 Fingerprint；Forget 只
+  提交不透明 ID，并经过 Linux GTK 或 Windows 原生确认。Browser、X11、
+  Wayland 和 Windows 已验证首次 Trust、二次免提示、Forget、重新 TOFU、重启
+  恢复和同 Endpoint Host Key Rotation。
+- Head `a75da9cf6d4ba73f8b93257c683fb97ad2c0b90f` 的 GitHub Actions Run
+  `30344638562` 全部九个 Job 通过；Browser、Linux Native、Windows Native、
+  Android/Linux Build Hash、Error Log 和 Secret Scan 已人工检查。
+- ADR-0015 已接受，Known Host Repository and Durable TOFU ExecPlan 已完成。
 - CI 工作流。
 
 当前仓库尚未完成：
 
-- Known Host Repository/Durable TOFU（ExecPlan 0005 进行中）、OpenSSH
-  `known_hosts` 导入/导出、Keyboard-interactive/OTP、Forwarding 和后续 Key
-  管理。
+- OpenSSH `known_hosts` 导入/导出、Keyboard-interactive/OTP、Forwarding 和
+  后续 Key 管理。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
 - Android Runtime、Content URI、软键盘与生命周期验证。
 - iOS 构建验证；当前没有 macOS/Xcode 环境，按维护者指示暂缓。
@@ -140,7 +153,8 @@
 
 ## 当前活动计划
 
-- [`Phase 1：Known Host Repository and Durable TOFU`](../execplans/active/0005-known-host-repository-and-durable-tofu.md)
+暂无。下一项建议先建立 Keyboard-interactive/OTP 的 Design、ADR/ExecPlan 和
+OpenSSH MFA Fixture。
 
 ## 已完成计划
 
@@ -148,3 +162,4 @@
 - [`Phase 1：Group 持久化与三态继承`](../execplans/completed/0002-group-persistence-and-inheritance.md)
 - [`Phase 1：系统 SSH Agent 认证`](../execplans/completed/0003-system-ssh-agent-authentication.md)
 - [`Phase 1：Native Encrypted Private Key Passphrase`](../execplans/completed/0004-native-encrypted-private-key-passphrase.md)
+- [`Phase 1：Known Host Repository and Durable TOFU`](../execplans/completed/0005-known-host-repository-and-durable-tofu.md)

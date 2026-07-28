@@ -1,7 +1,8 @@
 # ADR-0015：Known Host 信任按 Endpoint 建模并在继续握手前持久化
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-07-28
+- 接受日期：2026-07-28
 - 决策人：项目维护者
 
 ## 背景
@@ -113,11 +114,18 @@ Saved Host、Jump Host 和 Target，不能因为 Host UI 记录、Group 或 Rout
 - Browser、X11、Wayland、Windows、OpenSSH、Android/Linux Container 和同
   Commit CI 回归。
 
+Head `a75da9cf6d4ba73f8b93257c683fb97ad2c0b90f` 的 GitHub Actions Run
+`30344638562` 九个 Job 全部通过。Linux X11 和 Windows 真实 Runtime 验证了
+首次 TOFU、二次免提示、原生 Forget、重新 TOFU、重启恢复和同 Endpoint Host
+Key Rotation 硬阻断；Wayland 验证了无 `DISPLAY` 的 Durable Trust 回归。
+Artifact 人工检查、空 Browser Error Log、SQLCipher 明文扫描和测试 Secret
+二次扫描均通过，因此本 ADR 于 2026-07-28 接受。
+
 ## 相关文档
 
 - Design：[Known Host Repository v1](../design/known-host-repository-v1.md)
 - Reference：[OpenSSH `known_hosts` 2026 基线](../reference/openssh-known-hosts-baseline-2026.md)
-- ExecPlan：[Known Host Repository and Durable TOFU](../execplans/active/0005-known-host-repository-and-durable-tofu.md)
+- ExecPlan：[Known Host Repository and Durable TOFU](../execplans/completed/0005-known-host-repository-and-durable-tofu.md)
 - ADR：[ADR-0002](0002-russh-as-default-ssh-engine.md)
 - ADR：[ADR-0010](0010-saved-host-plans-resolve-in-rust.md)
 - Supersedes：

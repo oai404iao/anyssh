@@ -24,12 +24,13 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
 - Host Key 确认、密码认证、PTY、输入、Resize 和 Disconnect。
 - 基于 `direct-tcpip` + 嵌套 russh Transport 的两跳 Jump Host Core。
 - 未加密/口令保护 OpenSSH 私钥认证，以及密码 Jump + 私钥 Target 混合路由。
-- 保存的 SHA-256 Host Key 匹配与变化硬阻断。
+- Endpoint-scoped Known Host Repository、Durable TOFU、重启免提示、原生
+  Forget 和 Changed-Key 硬阻断。
 - 4 MiB 终端输出下的 64 项 Core Queue、8 项 WebView Window 和 xterm Ack 背压。
 - 随机 VMK、Argon2id PIN Slot、HKDF 子密钥和版本化 Bootstrap。
 - SQLCipher 4.10 整库加密与 XChaCha20-Poly1305 Credential 字段加密。
 - 专用 DB Actor Thread、16 项有界 Command Queue 和 oneshot Response。
-- Schema v5 Credential/Group/Host/Jump Route Repository；Group 与 Host 使用显式
+- Schema v6 Credential/Group/Host/Jump Route/Known Host Repository；Group 与 Host 使用显式
   `Inherit / Set / Clear` 引用状态，Route 只保存有序 Host ID。
 - Group Parent Chain 最多 32 层；有效 Credential/Route 在 DB Actor 内解析，
   WebView 只获得 metadata-only Summary。
@@ -55,12 +56,16 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
   `sshd.exe` 完成真实 System Agent SSH，且源 Private Key 在 AnySSH 启动前删除。
 - Windows 2025 Runner 已通过 Native Picker 和 Credential UI 导入加密
   OpenSSH Key；错误 Passphrase 重试、源文件删除、真实 SSH 和重启恢复均通过。
+- Linux X11 和 Windows 2025 Runner 已验证首次 TOFU、二次免提示、原生 Forget、
+  重新 TOFU、进程重启和同 Endpoint OpenSSH Host Key Rotation 硬阻断。
+- Head `a75da9cf6d4ba73f8b93257c683fb97ad2c0b90f` 的 GitHub Actions Run
+  `30344638562` 九个 Job 全部通过，关键截图、Error Log、Build Hash 和测试
+  Secret Scan 已人工检查。
 
 iOS 因当前没有 macOS/Xcode 环境暂缓。
 
-当前活动计划：
-
-- [`Phase 1：Known Host Repository and Durable TOFU`](docs/execplans/active/0005-known-host-repository-and-durable-tofu.md)
+当前没有活动 ExecPlan。Phase 1 下一项建议先规划
+Keyboard-interactive/OTP 与 OpenSSH MFA Fixture。
 
 已完成计划：
 
@@ -68,6 +73,7 @@ iOS 因当前没有 macOS/Xcode 环境暂缓。
 - [`Phase 1：Group 持久化与三态继承`](docs/execplans/completed/0002-group-persistence-and-inheritance.md)
 - [`Phase 1：系统 SSH Agent 认证`](docs/execplans/completed/0003-system-ssh-agent-authentication.md)
 - [`Phase 1：Native Encrypted Private Key Passphrase`](docs/execplans/completed/0004-native-encrypted-private-key-passphrase.md)
+- [`Phase 1：Known Host Repository and Durable TOFU`](docs/execplans/completed/0005-known-host-repository-and-durable-tofu.md)
 
 ## 文档入口
 

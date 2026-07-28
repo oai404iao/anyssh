@@ -18,8 +18,9 @@ React/xterm.js UI
 ```
 
 仓库已完成 **Phase 0 技术验证**、**Phase 1 Group 持久化/三态继承**、
-**System SSH Agent 认证** 和 **Native Encrypted Private Key Passphrase**。
-当前活动计划是 **Known Host Repository and Durable TOFU**。
+**System SSH Agent 认证**、**Native Encrypted Private Key Passphrase** 和
+**Known Host Repository/Durable TOFU**。当前没有活动 ExecPlan；下一项建议先
+规划 **Keyboard-interactive/OTP**。
 已经存在可构建的 React 前端、Rust Workspace、russh SSH/Jump Host、SQLCipher/
 PIN Vault、Tauri IPC、Host/Credential/Route Repository、Windows WebView2、
 OpenSSH Fixture、Playwright E2E、agent-browser 与原生 X11/Wayland 检查。
@@ -232,7 +233,8 @@ Evidence 复制回仓库。
 - DB Actor 有界 Queue、oneshot Response、串行生命周期和 Shutdown。
 - Schema v1 -> v2 Credential、Schema v2 -> v3 旧 Host Password 转
   Credential、Schema v3 -> v4 Group/三态 Override、Schema v4 -> v5 System
-  Agent Credential Migration 的成功、重启和中断回滚。
+  Agent Credential、Schema v5 -> v6 Known Host Migration 的成功、重启和
+  中断回滚。
 - Host/Jump Route 引用占用、顺序恢复、直接/间接循环和 Locked Repository 拒绝。
 - SQLCipher 重启解锁和 Credential 字段 AEAD。
 - 数据库、WAL、Sidecar 与 Bootstrap 明文扫描。
@@ -357,6 +359,20 @@ Clear
 
 普通可空字段无法区分“继承”与“明确清除父配置”。
 
+### 7. Known Host Trust 按 Endpoint 持久化
+
+- 身份使用规范化逻辑 `host + explicit port`，不绑定 Host/Group/Route ID 或
+  解析后的 IP。
+- Quick、Saved、Jump 和 Target 必须共用 SQLCipher Known Host Repository。
+- TOFU 接受必须先持久化，再继续 SSH Worker；DB Failure、Vault Lock、过期
+  Request 或并发冲突均 Fail Closed。
+- 相同 Endpoint 并发不同 Key 使用 First-writer-wins，不自动合并 Trust Set。
+- 已知 Endpoint 的不同 Key 必须 typed hard block，不提供 Accept/Replace。
+- WebView 只获得 Endpoint、Algorithm、Fingerprint 等元数据；完整 Observed
+  Public Key 留在 Rust。
+- Forget 只接受 Known Host ID，并必须经过 WebView 外的原生确认。
+- 未来同步把 Endpoint Trust Set 当作原子状态，冲突时阻断而不是取并集。
+
 ## 文档规则
 
 ### ADR
@@ -449,13 +465,9 @@ Clear
 
 ## 当前下一步
 
-当前唯一活动计划是：
-
-- [`0005-known-host-repository-and-durable-tofu.md`](docs/execplans/active/0005-known-host-repository-and-durable-tofu.md)
-
-除非用户明确改变优先级，应先完成 Schema v6、Endpoint-scoped Trust、
-persist-before-continue、Changed-Key 硬阻断和 Linux/Windows Native Evidence，
-而不是直接开发 WebDAV、Forwarding、多 Tab 或高级脚本系统。
+当前没有活动 ExecPlan。除非用户明确改变优先级，下一项应先创建
+Keyboard-interactive/OTP 的 Design、必要 ADR 和 ExecPlan，并建立真实 OpenSSH
+MFA Fixture；不要直接跳到 WebDAV、Forwarding、多 Tab 或高级脚本系统。
 
 ## 关键文件
 
@@ -500,12 +512,12 @@ persist-before-continue、Changed-Key 硬阻断和 Linux/Windows Native Evidence
 | 总体技术设计 | `docs/design/technical-architecture-2026.md` |
 | ADR 索引 | `docs/adr/README.md` |
 | ExecPlan 规范 | `docs/execplans/README.md` |
-| 当前活动计划 | `docs/execplans/active/0005-known-host-repository-and-durable-tofu.md` |
-| 最新完成计划 | `docs/execplans/completed/0004-native-encrypted-private-key-passphrase.md` |
+| 最新完成计划 | `docs/execplans/completed/0005-known-host-repository-and-durable-tofu.md` |
 | Phase 0 结果 | `docs/execplans/completed/0001-phase-0-technical-validation.md` |
 | Group 结果 | `docs/execplans/completed/0002-group-persistence-and-inheritance.md` |
 | System Agent 结果 | `docs/execplans/completed/0003-system-ssh-agent-authentication.md` |
 | Encrypted Key Prompt 结果 | `docs/execplans/completed/0004-native-encrypted-private-key-passphrase.md` |
+| Known Host 结果 | `docs/execplans/completed/0005-known-host-repository-and-durable-tofu.md` |
 | 2026 技术基线 | `docs/reference/technology-baseline-2026.md` |
 | 术语表 | `docs/reference/glossary.md` |
 

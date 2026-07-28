@@ -10,3 +10,4 @@
 - [0002：Group 持久化与三态继承](0002-group-persistence-and-inheritance.md)
 - [0003：系统 SSH Agent 认证](0003-system-ssh-agent-authentication.md)
 - [0004：Native Encrypted Private Key Passphrase](0004-native-encrypted-private-key-passphrase.md)
+- [0005：Known Host Repository and Durable TOFU](0005-known-host-repository-and-durable-tofu.md)
