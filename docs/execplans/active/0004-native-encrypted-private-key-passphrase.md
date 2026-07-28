@@ -162,6 +162,10 @@ pnpm format:check
 - 2026-07-28：CI Run `30324714023` 的 Driver 已启动且 UI Automation 编译
   成功；实际 Tauri Picker 标题来自 Command 的 `Import SSH private key`，不是
   QA Driver 最初等待的 `Open SSH private key`，因此 Import 保持 `Saving…`。
+- 2026-07-28：CI Run `30325041753` 已完成 Windows Native Picker、错误/正确
+  Passphrase、加密 Key SSH、System Agent 和 Repository 流程；唯一失败是明文
+  Evidence Scanner 在 `sshd` 仍持有重定向日志时读取文件。改为验证 Marker 后先
+  停止 Fixture，再扫描已关闭的日志。
 
 ## Decision Log
 

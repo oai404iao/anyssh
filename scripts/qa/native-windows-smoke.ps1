@@ -586,6 +586,7 @@ try {
   if (-not $PrivateKeyMarker.Contains("ANYSSH_WINDOWS_ENCRYPTED_KEY_OK")) {
     throw "The Windows encrypted Private Key remote marker was invalid."
   }
+  Stop-SshFixture
   Assert-VaultFilesAreEncrypted
   Assert-EvidenceContainsNoPrivateKeySecrets
 
