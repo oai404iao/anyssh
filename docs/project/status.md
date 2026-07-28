@@ -155,15 +155,20 @@
   Close-during-connect。X11 已验证双 OpenSSH Session、Inactive Tab 4 MiB
   Output、单 Tab Close 和双 Session Vault Lock；Wayland 已验证 Connected Tab
   与 Keyboard-interactive Challenge Tab 并发及单 Tab Close。
-- 本地 Browser/X11/Wayland、OpenSSH、Workspace、Linux Container 和 Android
-  Container 回归通过；Windows Multi Tab QA 已实现，等待同 Commit GitHub
-  Actions Windows Runner 和 Artifact 评审。
+- Head `56b37a10bf91c2c7bb20c88bb99041ca404c5691` 的 GitHub Actions Run
+  `30368134792` 全部九个 Job 通过；Browser、X11、Wayland、Windows Multi Tab、
+  Linux/Android/Windows Build Hash、Error Log、Vault Header 和 Secret Scan
+  已人工检查。
+- ADR-0017 已接受，Multi Tab Terminal and Session Lifecycle ExecPlan 已完成。
+- Proposed ADR-0018、SSH Port Forwarding Design 和 ExecPlan 0008 已创建。下一步
+  是在当前 Rust Session 内实现 Loopback-only Local/Remote/Dynamic Forward，
+  Payload 不进入 WebView。
 - CI 工作流。
 
 当前仓库尚未完成：
 
-- Multi Tab 同 Commit Windows/CI Evidence、ADR-0017 评审和 ExecPlan 收尾。
-- OpenSSH `known_hosts` 导入/导出、Forwarding 和后续 Key 管理。
+- SSH Local/Remote/Dynamic Forwarding 和后续 Key 管理。
+- OpenSSH `known_hosts` 导入/导出。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
 - Android Runtime、Content URI、软键盘与生命周期验证。
 - iOS 构建验证；当前没有 macOS/Xcode 环境，按维护者指示暂缓。
@@ -185,7 +190,7 @@
 
 ## 当前活动计划
 
-- [`Phase 1：Multi Tab Terminal and Session Lifecycle`](../execplans/active/0007-multi-tab-terminal-and-session-lifecycle.md)
+- [`Phase 1：SSH Port Forwarding`](../execplans/active/0008-ssh-port-forwarding.md)
 
 ## 已完成计划
 
@@ -195,3 +200,4 @@
 - [`Phase 1：Native Encrypted Private Key Passphrase`](../execplans/completed/0004-native-encrypted-private-key-passphrase.md)
 - [`Phase 1：Known Host Repository and Durable TOFU`](../execplans/completed/0005-known-host-repository-and-durable-tofu.md)
 - [`Phase 1：Keyboard-interactive and OTP`](../execplans/completed/0006-keyboard-interactive-and-otp.md)
+- [`Phase 1：Multi Tab Terminal and Session Lifecycle`](../execplans/completed/0007-multi-tab-terminal-and-session-lifecycle.md)

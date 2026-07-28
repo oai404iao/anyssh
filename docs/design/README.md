@@ -29,6 +29,8 @@ Design 文档描述系统如何实现，包括组件、数据流、接口、安�
 - [multi-tab-session-lifecycle-v1.md](multi-tab-session-lifecycle-v1.md)：独立
   Session Tab、xterm Mount、Event Routing、Disconnect/Close 和 Vault Lock
   Lifecycle。
+- [ssh-port-forwarding-v1.md](ssh-port-forwarding-v1.md)：Session-scoped Local、
+  Remote、Dynamic Forward、SOCKS5、Loopback Policy 和 Cleanup。
 
 ## 规则
 

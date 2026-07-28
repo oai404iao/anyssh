@@ -19,8 +19,9 @@ React/xterm.js UI
 
 仓库已完成 **Phase 0 技术验证**、**Phase 1 Group 持久化/三态继承**、
 **System SSH Agent 认证**、**Native Encrypted Private Key Passphrase** 和
-**Known Host Repository/Durable TOFU**、**Keyboard-interactive and OTP**。
-当前活动计划是 **Multi Tab Terminal and Session Lifecycle**。
+**Known Host Repository/Durable TOFU**、**Keyboard-interactive and OTP**、
+**Multi Tab Terminal and Session Lifecycle**。
+当前活动计划是 **SSH Port Forwarding**。
 已经存在可构建的 React 前端、Rust Workspace、russh SSH/Jump Host、SQLCipher/
 PIN Vault、Tauri IPC、Host/Credential/Route Repository、Windows WebView2、
 OpenSSH Fixture、Playwright E2E、agent-browser 与原生 X11/Wayland 检查。
@@ -426,6 +427,19 @@ Clear
 - Late Connect Return、Stale Event、Channel Loss、Vault Lock 和 App Exit 必须
   Fail Closed；多个 Pending Action 不得持续抢焦点或交叉提交 Response。
 
+### 10. Port Forwarding 留在 Rust 并绑定 Session
+
+- Local、Remote、Dynamic Forward Payload 不得进入 WebView/Tauri Event、日志或
+  遥测，也不得调用系统 `ssh -L/-R/-D`。
+- v1 Forward 绑定 Live Rust Session；Disconnect、Tab Close、Channel Loss、
+  Vault Lock 和 App Exit 必须取消 Listener、Registration 和 Connection Task。
+- v1 Local/Dynamic/Remote Bind 只允许 Loopback；Wildcard/LAN/Public Bind
+  Fail Closed。
+- Dynamic v1 只支持无认证 SOCKS5 `CONNECT`，拒绝 SOCKS4、`BIND` 和
+  `UDP ASSOCIATE`。
+- 每 Session 最多 16 个 Forward、每 Forward 最多 64 个 Connection，所有
+  Accept Queue、Handshake、Connect 和 Copy 必须有界并可取消。
+
 ## 文档规则
 
 ### ADR
@@ -520,12 +534,11 @@ Clear
 
 当前唯一活动计划是：
 
-- [`0007-multi-tab-terminal-and-session-lifecycle.md`](docs/execplans/active/0007-multi-tab-terminal-and-session-lifecycle.md)
+- [`0008-ssh-port-forwarding.md`](docs/execplans/active/0008-ssh-port-forwarding.md)
 
-除非用户明确改变优先级，应先完成每 Tab Session State、独立 xterm.js、
-Output/Input/Resize/Host Key/Challenge Routing、Disconnect/Close/Vault Lock
-Lifecycle 和 Linux/Windows Native Multi-session Evidence；不要直接跳到
-WebDAV、Forwarding、SFTP 或高级脚本系统。
+除非用户明确改变优先级，应先完成 Rust-owned Session-scoped Local/Remote/
+Dynamic Forward、Loopback Policy、SOCKS5、Cleanup 和 Linux/Windows Native
+Evidence；不要直接跳到 WebDAV、SFTP、持久化 Forward Profile 或高级脚本系统。
 
 ## 关键文件
 
@@ -557,6 +570,7 @@ WebDAV、Forwarding、SFTP 或高级脚本系统。
 | Known Host Design | `docs/design/known-host-repository-v1.md` |
 | Keyboard-interactive Design | `docs/design/keyboard-interactive-authentication-v1.md` |
 | Multi Tab Session Design | `docs/design/multi-tab-session-lifecycle-v1.md` |
+| SSH Port Forwarding Design | `docs/design/ssh-port-forwarding-v1.md` |
 | OpenSSH Known Hosts Reference | `docs/reference/openssh-known-hosts-baseline-2026.md` |
 | Threat Model | `docs/design/threat-model-v1.md` |
 | SSH Core | `crates/anyssh-ssh/src/lib.rs` |
@@ -573,14 +587,15 @@ WebDAV、Forwarding、SFTP 或高级脚本系统。
 | 总体技术设计 | `docs/design/technical-architecture-2026.md` |
 | ADR 索引 | `docs/adr/README.md` |
 | ExecPlan 规范 | `docs/execplans/README.md` |
-| 当前活动计划 | `docs/execplans/active/0007-multi-tab-terminal-and-session-lifecycle.md` |
-| 最新完成计划 | `docs/execplans/completed/0006-keyboard-interactive-and-otp.md` |
+| 当前活动计划 | `docs/execplans/active/0008-ssh-port-forwarding.md` |
+| 最新完成计划 | `docs/execplans/completed/0007-multi-tab-terminal-and-session-lifecycle.md` |
 | Phase 0 结果 | `docs/execplans/completed/0001-phase-0-technical-validation.md` |
 | Group 结果 | `docs/execplans/completed/0002-group-persistence-and-inheritance.md` |
 | System Agent 结果 | `docs/execplans/completed/0003-system-ssh-agent-authentication.md` |
 | Encrypted Key Prompt 结果 | `docs/execplans/completed/0004-native-encrypted-private-key-passphrase.md` |
 | Known Host 结果 | `docs/execplans/completed/0005-known-host-repository-and-durable-tofu.md` |
 | Keyboard-interactive 结果 | `docs/execplans/completed/0006-keyboard-interactive-and-otp.md` |
+| Multi Tab 结果 | `docs/execplans/completed/0007-multi-tab-terminal-and-session-lifecycle.md` |
 | 2026 技术基线 | `docs/reference/technology-baseline-2026.md` |
 | 术语表 | `docs/reference/glossary.md` |
 

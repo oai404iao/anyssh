@@ -12,3 +12,4 @@
 - [0004：Native Encrypted Private Key Passphrase](0004-native-encrypted-private-key-passphrase.md)
 - [0005：Known Host Repository and Durable TOFU](0005-known-host-repository-and-durable-tofu.md)
 - [0006：Keyboard-interactive and OTP](0006-keyboard-interactive-and-otp.md)
+- [0007：Multi Tab Terminal and Session Lifecycle](0007-multi-tab-terminal-and-session-lifecycle.md)

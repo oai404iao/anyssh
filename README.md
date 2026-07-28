@@ -72,7 +72,11 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
   Response/Vault/Evidence 扫描。
 - 本地 Browser、X11 和无 `DISPLAY` Wayland 已验证双 Session、同时 Pending
   Challenge、单 Tab Close、Inactive Tab 4 MiB Output 和双 Session Vault Lock；
-  Windows Multi Tab QA 已实现，等待同 Commit CI Runner 验证。
+  Windows 真实 EXE/WebView2 已验证 Agent Session 与第二个
+  Keyboard-interactive Tab 并发及单 Tab Close。
+- Head `56b37a10bf91c2c7bb20c88bb99041ca404c5691` 的 GitHub Actions Run
+  `30368134792` 九个 Job 全部通过，Browser、X11、Wayland、Windows、Android、
+  Linux 的 Multi Tab 截图、Error Log、Build Hash 和 Secret Scan 已人工检查。
 - Head `0ceb5b332967a9b1fc7fdf73967ae49bf44505d7` 的 GitHub Actions Run
   `30360000884` 九个 Job 全部通过，Browser、X11、Wayland、Windows、Android、
   Linux 的关键截图、Error Log、Build Hash 和测试 Secret Scan 已人工检查。
@@ -81,7 +85,7 @@ iOS 因当前没有 macOS/Xcode 环境暂缓。
 
 当前活动计划：
 
-- [`Phase 1：Multi Tab Terminal and Session Lifecycle`](docs/execplans/active/0007-multi-tab-terminal-and-session-lifecycle.md)
+- [`Phase 1：SSH Port Forwarding`](docs/execplans/active/0008-ssh-port-forwarding.md)
 
 已完成计划：
 
@@ -91,6 +95,7 @@ iOS 因当前没有 macOS/Xcode 环境暂缓。
 - [`Phase 1：Native Encrypted Private Key Passphrase`](docs/execplans/completed/0004-native-encrypted-private-key-passphrase.md)
 - [`Phase 1：Known Host Repository and Durable TOFU`](docs/execplans/completed/0005-known-host-repository-and-durable-tofu.md)
 - [`Phase 1：Keyboard-interactive and OTP`](docs/execplans/completed/0006-keyboard-interactive-and-otp.md)
+- [`Phase 1：Multi Tab Terminal and Session Lifecycle`](docs/execplans/completed/0007-multi-tab-terminal-and-session-lifecycle.md)
 
 ## 文档入口
 

@@ -369,10 +369,14 @@ MVP 转发能力：
 
 安全默认值：
 
-- 本地监听默认绑定 `127.0.0.1`/`::1`。
-- 绑定 `0.0.0.0`、局域网或公网地址时二次确认。
+- Forward Payload 始终留在 Rust/SSH Channel，不经过 WebView。
+- v1 Local/Dynamic/Remote 只允许绑定 `127.0.0.1`/`::1`。
+- 绑定 `0.0.0.0`、局域网或公网地址属于后续版本，必须有额外确认和平台策略。
 - Agent Forwarding 默认关闭。
 - Remote Forward 明确展示服务端实际监听地址。
+
+Forward v1 绑定 Live Session，不持久化或自动重连。完整设计见
+[SSH Port Forwarding v1](ssh-port-forwarding-v1.md)。
 
 ### 5.7 SSH Agent
 
@@ -632,7 +636,7 @@ SQLCipher 查询均在 Actor Thread 中串行执行，Tauri Command 不再使用
 `spawn_blocking` 或 `Mutex<Option<LocalVault>>`。最后一个 Handle 释放时先关闭
 Queue，再 Join Actor Thread，确保数据库连接按顺序销毁。
 
-当前 Schema v7 Repository 设计见：
+当前 Schema v7 Repository 与相邻 Runtime 设计见：
 
 - [Credential Repository v1](credential-repository-v1.md)
 - [Host 与 Jump Route Repository v1](host-jump-route-repository-v1.md)
@@ -641,6 +645,7 @@ Queue，再 Join Actor Thread，确保数据库连接按顺序销毁。
 - [Known Host Repository v1](known-host-repository-v1.md)
 - [Keyboard-interactive Authentication v1](keyboard-interactive-authentication-v1.md)
 - [Multi Tab Terminal and Session Lifecycle v1](multi-tab-session-lifecycle-v1.md)
+- [SSH Port Forwarding v1](ssh-port-forwarding-v1.md)
 
 Tauri 只调用 `anyssh-app::ApplicationCore`；它不直接解析 Credential Secret、
 构造 SSH Authentication 或访问 SQLCipher Connection。

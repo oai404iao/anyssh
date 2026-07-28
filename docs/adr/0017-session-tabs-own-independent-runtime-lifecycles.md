@@ -1,6 +1,6 @@
 # ADR-0017：Session Tab 拥有独立的 Runtime Lifecycle
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-07-28
 - 决策人：项目维护者
 
@@ -92,7 +92,7 @@ Ack Output 而停在八个 In-flight Chunk 的背压上限。
 ## 相关文档
 
 - Design：[Multi Tab Terminal and Session Lifecycle v1](../design/multi-tab-session-lifecycle-v1.md)
-- ExecPlan：[Multi Tab Terminal and Session Lifecycle](../execplans/active/0007-multi-tab-terminal-and-session-lifecycle.md)
+- ExecPlan：[Multi Tab Terminal and Session Lifecycle](../execplans/completed/0007-multi-tab-terminal-and-session-lifecycle.md)
 - ADR：[ADR-0006](0006-secrets-stay-out-of-webview.md)
 - ADR：[ADR-0010](0010-saved-host-plans-resolve-in-rust.md)
 - ADR：[ADR-0015](0015-known-host-trust-is-endpoint-scoped.md)

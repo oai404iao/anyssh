@@ -1,11 +1,11 @@
 # Multi Tab Terminal and Session Lifecycle v1
 
-> 状态：本地实现完成；等待 ExecPlan 0007 同 Commit CI 与 ADR 评审
+> 状态：已实现并验证；ADR-0017 Accepted
 > 日期：2026-07-28
 
 本文定义 Phase 1 Desktop MVP 的多 Session Tab、Terminal Instance、Event
 Routing、Close/Disconnect/Vault Lock 生命周期和 Browser/Native 验证。长期决策
-见 Proposed ADR-0017。
+见 Accepted ADR-0017。
 
 ## 目标
 
@@ -220,4 +220,4 @@ Browser QA 仍不得打开网络或保存 Response。
 - [Threat Model v1](threat-model-v1.md)
 - [Technical Architecture 2026](technical-architecture-2026.md)
 - [Keyboard-interactive Authentication v1](keyboard-interactive-authentication-v1.md)
-- [ExecPlan 0007](../execplans/active/0007-multi-tab-terminal-and-session-lifecycle.md)
+- [ExecPlan 0007](../execplans/completed/0007-multi-tab-terminal-and-session-lifecycle.md)

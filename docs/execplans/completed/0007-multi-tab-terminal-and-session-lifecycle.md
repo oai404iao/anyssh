@@ -1,6 +1,6 @@
 # ExecPlan 0007：Multi Tab Terminal and Session Lifecycle
 
-- 状态：Active
+- 状态：Completed
 - 创建日期：2026-07-28
 - 最后更新：2026-07-28
 - 负责人：项目维护者与执行 Agent
@@ -77,9 +77,25 @@
   文本 Pending Indicator、Close/New Tab、ARIA Tab/Panel 和键盘方向键导航已完成；
   Playwright 9 项测试覆盖双 Session、同时 Challenge、8 Tab 上限和
   Close-during-connect。
-- [ ] 完成 Milestone 4：Linux X11/Wayland 已通过真实多 Session；Windows
-  EXE/WebView2 流程已实现，等待 GitHub Actions Windows Runner 验证。
-- [ ] 完成 Milestone 5：全量回归、Artifact 检查、ADR 评审和收尾。
+- [x] 2026-07-28：完成 Milestone 4。Linux X11/Wayland 与 Windows
+  EXE/WebView2 均通过真实多 Session、单 Tab Close 和 Challenge Routing。
+- [x] 2026-07-28：Head
+  `56b37a10bf91c2c7bb20c88bb99041ca404c5691` 的 GitHub Actions Run
+  `30368134792` 九个 Job 全部通过。
+- [x] 2026-07-28：人工检查远端 Browser
+  `smoke-1785248675`、X11 `smoke-1785248716-5994`、Wayland
+  `smoke-1785248862-8411` 和 Windows
+  `smoke-20260728-142612-1768` 的关键截图、空 Browser Error Log、Vault Header
+  和 Secret Scan。
+- [x] 2026-07-28：远端 Linux ELF
+  `2d71af17adb49064c8a7197712bcc1dcc290616a7367d662f67a56d50a63dfbb`、
+  Android APK
+  `2d23b27da6107057eebb6a50b3178c09cfa85758f0c70bae9d3e5d328cf7c447`
+  和 Windows EXE
+  `6a05ec25f8c190567e3fcea009368a23634dd8afc1979c2c9cb756d1ee9c23c0`
+  已记录。
+- [x] 2026-07-28：完成 Milestone 5，接受 ADR-0017 并将本计划移动到
+  `completed/`。
 - [x] 2026-07-28：本地 Browser Evidence
   `artifacts/agent-browser/smoke-1785247643` 通过，Desktop/Mobile 双 Tab 截图和
   Browser Error 空日志已人工检查。
@@ -236,4 +252,25 @@ git diff --check
 
 ## Outcomes & Retrospective
 
-尚未完成。
+完成。
+
+- React 从单 Session State 转为最多 8 个独立 Session Tab。Tab ID、Rust
+  Session ID 和 Connection Generation 分离；Output、Input、Resize、Status、
+  Host Key、Changed-Key 和 Keyboard-interactive Challenge 均按 Tab 路由。
+- 每个 Tab 拥有独立 xterm.js。Inactive Terminal 保持 Mounted 并继续完成
+  `write` Callback/Ack，Visible Guard 阻止隐藏 Surface 发送无效 Resize。
+- Disconnect 保留 Tab/Scrollback，Close 只断开并删除目标 Tab。Late Connect
+  Return、Stale Event、Channel Loss、Vault Lock、React Unmount 和 App Exit
+  均 Fail Closed。
+- Tauri Registry 新增 `remove_and_disconnect`、`disconnect_all` 和独立 Ack
+  测试；20 项 Client Test 通过。
+- Playwright 9 项测试覆盖同时 Pending Challenge、Close-during-connect、
+  键盘 Tab 导航、双 Preview Session 和 8 Tab 上限。
+- X11 证明 Inactive Tab 排空 4 MiB Output、单 Tab Close 后另一 Session 可继续
+  执行命令，以及双 Session Vault Lock；Wayland 证明 Connected Tab 与
+  Keyboard-interactive Tab 并发；Windows 证明 Agent Tab 与 controlled
+  Keyboard-interactive Tab 并发并在关闭第二 Tab 后继续创建远端 Marker。
+- 实现没有改变 Credential、Known Host、Saved Host 或 Vault 的秘密边界，也没有
+  引入 SSH Transport Multiplexing 或 Tab/Scrollback 持久化。
+- 唯一非阻断 CI 注解是 GitHub Actions Node 20 Action Runtime 的弃用提醒；当前
+  Runner 已强制使用 Node 24，后续依赖维护时升级对应 Action Major。
