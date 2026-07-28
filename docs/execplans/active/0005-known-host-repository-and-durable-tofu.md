@@ -255,6 +255,10 @@ git diff --check
 - 2026-07-28：Run `30342613128` 的 Windows 截图已经显示正确 Changed-Key
   Hard Block；失败原因只是 Playwright ARIA Role 必须精确使用
   `alertdialog`，`dialog` 不会匹配它。
+- 2026-07-28：Run `30343511045` 的 Windows 三阶段 QA 已通过；同一 Run 的
+  Xvfb 在 WebView 仍是纯白加载页时把窗口误判为 Ready，导致 PIN 输入分散到
+  未稳定的表单并出现确认不匹配。X11 Driver 的默认 AnySSH Probe 需要同时拒绝
+  纯黑和近纯白中心像素；显式匹配的原生 Dialog 不使用该限制。
 
 ## Decision Log
 

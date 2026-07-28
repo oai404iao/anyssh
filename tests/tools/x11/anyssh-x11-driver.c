@@ -122,7 +122,7 @@ static int window_has_rendered_content(Display *display, Window window) {
                color_channel(pixel, image->green_mask) +
                color_channel(pixel, image->blue_mask);
   XDestroyImage(image);
-  return brightness > 3;
+  return brightness > 3 && brightness < 720;
 }
 
 static int list_windows(Display *display, Window parent, int depth,
@@ -288,7 +288,7 @@ int main(int argc, char **argv) {
     int found = list_windows(display, root, 0,
                              window_match ? window_match : "AnySSH",
                              &matched_window);
-    if (found &&
+    if (found && !window_match &&
         !window_has_rendered_content(display, matched_window)) {
       found = 0;
     }
