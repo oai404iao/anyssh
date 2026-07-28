@@ -26,6 +26,7 @@
 - [Group Inheritance v1](design/group-inheritance-v1.md)
 - [System SSH Agent Authentication v1](design/system-ssh-agent-authentication-v1.md)
 - [Native Encrypted Private Key Passphrase v1](design/native-encrypted-private-key-passphrase-v1.md)
+- [Known Host Repository v1](design/known-host-repository-v1.md)
 
 Design 文档回答“系统如何工作、模块边界是什么”。
 
@@ -46,6 +47,7 @@ ExecPlan 是 Agent 可持续更新的执行计划。活动计划放在 `execplan
 路径：[`reference/`](reference/README.md)
 
 - [2026 技术版本基线](reference/technology-baseline-2026.md)
+- [OpenSSH `known_hosts` 2026 基线](reference/openssh-known-hosts-baseline-2026.md)
 - [术语表](reference/glossary.md)
 
 参考文档记录外部事实、协议、版本和术语，不替代 ADR。

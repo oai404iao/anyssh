@@ -58,8 +58,9 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
 
 iOS 因当前没有 macOS/Xcode 环境暂缓。
 
-当前没有活动 ExecPlan。下一项 Phase 1 工作开始前应先为 `known_hosts` 等能力
-创建计划。
+当前活动计划：
+
+- [`Phase 1：Known Host Repository and Durable TOFU`](docs/execplans/active/0005-known-host-repository-and-durable-tofu.md)
 
 已完成计划：
 

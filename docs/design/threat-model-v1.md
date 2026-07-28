@@ -96,7 +96,7 @@ System SSH Agent Socket / Named Pipe
 | T-03 | 被盗数据库泄漏业务数据 | SQLCipher 整库加密、Credential Record AEAD、随机 VMK/HKDF | Platform/Recovery Slot 尚未实现；PIN 仍面对离线猜测 |
 | T-04 | PIN 直接成为数据库 Key | Argon2id KEK 只解包随机 VMK | 尚无平台级重试限制或硬件 Slot |
 | T-05 | Migration 中断损坏或丢失数据 | `IMMEDIATE` Transaction、中断回滚、旧数据恢复测试 | 后续每次 Schema 变更必须继续提供版本和恢复测试 |
-| T-06 | Host Key MITM/轮换被静默接受 | TOFU Request ID、SHA-256、保存匹配、变化硬阻断 | Known Host Repository 和导入/导出尚未产品化 |
+| T-06 | Host Key MITM/轮换被静默接受 | TOFU Request ID、SHA-256、保存匹配、变化硬阻断 | Proposed ADR-0015/ExecPlan 0005 正在实施 Durable Repository；OpenSSH 导入/导出后续 |
 | T-07 | 延迟 Host Key 决策应用到错误 Hop | Request ID + Hop + Endpoint 绑定；过期 Request 拒绝 | UI 必须继续展示准确 Hop |
 | T-08 | Group/Jump Route 循环或膨胀导致 DoS | Group Parent 与 Effective Host Route 全图检测、最多 32 层 Group/32 Jump、Runtime 重验 | 深层故障归属仍需保持逐 Hop 测试 |
 | T-09 | 大输出耗尽内存 | 64 项 Core Queue、8 Chunk WebView Credit、xterm Ack、SSH Window Flow Control | Scrollback 与未来多 Tab 需要全局预算 |
@@ -109,6 +109,7 @@ System SSH Agent Socket / Named Pipe
 | T-16 | 任意本地脚本获得文件/网络/Secret | MVP 禁止任意 Shell、`eval` 和第三方插件 | Runbook Engine 尚未实现，需要 Phase 1/后续测试 |
 | T-17 | WebView、日志或恶意配置滥用系统 Agent | IPC 不接受 Socket/Pipe/Key/签名；最多 64 Identity；Credential 精确 Fingerprint；不自动回退；Agent Forwarding 关闭；依赖 `log` 静态上限为 Info | Agent 本身和已解锁用户 Session 仍是外部信任边界；Flatpak/确认策略待验证 |
 | T-18 | 加密 Key Passphrase 经 WebView、外部进程或 Prompt Buffer 泄露 | Accepted ADR-0014：进程内 GTK/Windows Credential UI、无 Passphrase IPC、`Zeroizing<String>`、三次上限、失败不落库、Artifact 明文扫描 | Toolkit/OS 和解锁进程内存仍短暂持有 Secret；Android/iOS Adapter 尚未实现 |
+| T-19 | 被攻陷的 WebView 删除 Known Host 后自动接受 MITM Key | Proposed ADR-0015：Forget 只提交 ID，由 ApplicationCore 解析并通过 WebView 外原生确认后删除；Changed-Key 无接受入口 | Native Forget Adapter 和 QA 尚在 ExecPlan 0005 实施 |
 
 ## 6. 平台结论
 

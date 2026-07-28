@@ -237,7 +237,10 @@ SSH Core 将校验策略显式建模为：
   不提供重新信任入口。
 
 Phase 0 已通过运行中轮换 OpenSSH Fixture Host Key 验证变化硬阻断。Fingerprint
-的加密持久化和 OpenSSH `known_hosts` 导入/导出仍属于后续 Repository 工作。
+的 Endpoint-scoped 加密持久化正在
+[Known Host Repository v1](known-host-repository-v1.md) 和
+[ExecPlan 0005](../execplans/active/0005-known-host-repository-and-durable-tofu.md)
+中实施；OpenSSH `known_hosts` 文件导入/导出属于后续工作。
 
 ### 5.4 认证方式
 

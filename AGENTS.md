@@ -19,6 +19,7 @@ React/xterm.js UI
 
 仓库已完成 **Phase 0 技术验证**、**Phase 1 Group 持久化/三态继承**、
 **System SSH Agent 认证** 和 **Native Encrypted Private Key Passphrase**。
+当前活动计划是 **Known Host Repository and Durable TOFU**。
 已经存在可构建的 React 前端、Rust Workspace、russh SSH/Jump Host、SQLCipher/
 PIN Vault、Tauri IPC、Host/Credential/Route Repository、Windows WebView2、
 OpenSSH Fixture、Playwright E2E、agent-browser 与原生 X11/Wayland 检查。
@@ -448,9 +449,13 @@ Clear
 
 ## 当前下一步
 
-当前没有活动 ExecPlan。除非用户明确改变优先级，下一项应先为 Phase 1
-`known_hosts` 产品化建立 ExecPlan，并在改变长期 Host Key 数据模型时新增 ADR；
-不要直接开发 WebDAV 或高级脚本系统。
+当前唯一活动计划是：
+
+- [`0005-known-host-repository-and-durable-tofu.md`](docs/execplans/active/0005-known-host-repository-and-durable-tofu.md)
+
+除非用户明确改变优先级，应先完成 Schema v6、Endpoint-scoped Trust、
+persist-before-continue、Changed-Key 硬阻断和 Linux/Windows Native Evidence，
+而不是直接开发 WebDAV、Forwarding、多 Tab 或高级脚本系统。
 
 ## 关键文件
 
@@ -476,6 +481,8 @@ Clear
 | Connection Plan | `crates/anyssh-storage/src/connection_plan.rs` |
 | Native Key Import Design | `docs/design/native-private-key-import-v1.md` |
 | Encrypted Key Prompt Design | `docs/design/native-encrypted-private-key-passphrase-v1.md` |
+| Known Host Design | `docs/design/known-host-repository-v1.md` |
+| OpenSSH Known Hosts Reference | `docs/reference/openssh-known-hosts-baseline-2026.md` |
 | Threat Model | `docs/design/threat-model-v1.md` |
 | SSH Core | `crates/anyssh-ssh/src/lib.rs` |
 | OpenSSH Fixture | `tests/fixtures/openssh/` |
@@ -490,6 +497,7 @@ Clear
 | 总体技术设计 | `docs/design/technical-architecture-2026.md` |
 | ADR 索引 | `docs/adr/README.md` |
 | ExecPlan 规范 | `docs/execplans/README.md` |
+| 当前活动计划 | `docs/execplans/active/0005-known-host-repository-and-durable-tofu.md` |
 | 最新完成计划 | `docs/execplans/completed/0004-native-encrypted-private-key-passphrase.md` |
 | Phase 0 结果 | `docs/execplans/completed/0001-phase-0-technical-validation.md` |
 | Group 结果 | `docs/execplans/completed/0002-group-persistence-and-inheritance.md` |

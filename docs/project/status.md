@@ -116,7 +116,9 @@
 
 当前仓库尚未完成：
 
-- `known_hosts` 产品化、Keyboard-interactive/OTP、Forwarding 和后续 Key 管理。
+- Known Host Repository/Durable TOFU（ExecPlan 0005 进行中）、OpenSSH
+  `known_hosts` 导入/导出、Keyboard-interactive/OTP、Forwarding 和后续 Key
+  管理。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
 - Android Runtime、Content URI、软键盘与生命周期验证。
 - iOS 构建验证；当前没有 macOS/Xcode 环境，按维护者指示暂缓。
@@ -138,7 +140,7 @@
 
 ## 当前活动计划
 
-当前没有活动 ExecPlan；下一项 Phase 1 能力开始前必须先建立计划。
+- [`Phase 1：Known Host Repository and Durable TOFU`](../execplans/active/0005-known-host-repository-and-durable-tofu.md)
 
 ## 已完成计划
 

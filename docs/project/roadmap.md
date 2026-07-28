@@ -23,18 +23,27 @@
 ## Phase 1：桌面 MVP
 
 状态：进行中；Group、System Agent 和加密 Private Key 原生 Passphrase Prompt
-已完成，下一项能力开始前待建立 ExecPlan。
+已完成，当前实施 Known Host Repository 与 Durable TOFU。
 
 - Host 与 Group 继承（已完成）。
 - 密码、私钥（含 Linux/Windows 加密 Key Prompt）、系统 Agent（已完成）。
-- known_hosts。
+- known_hosts（ExecPlan 0005 进行中；OpenSSH 文件导入/导出后续实施）。
+- Keyboard-interactive/OTP。
 - 多 Tab Terminal。
-- Jump Host。
+- Jump Host（任意长度 Route 与两跳 Native/Protocol 验证已完成）。
 - Local/Remote/Dynamic Forward。
-- Key 管理。
+- Key 管理（Native Import 已完成；生成、Reveal/Export 待实施）。
 - Theme/Font。
 - Snippet。
-- 加密本地 Vault。
+- 加密本地 Vault（PIN/SQLCipher/Record AEAD Core 已完成；Platform Slot 待实施）。
+
+当前建议顺序：
+
+1. 完成 ExecPlan 0005：Known Host Repository 与 Durable TOFU。
+2. Keyboard-interactive/OTP，补齐常见 MFA Server 兼容性。
+3. Multi Tab Terminal 与 Session Lifecycle。
+4. Local/Remote/Dynamic Forward。
+5. Key 生成、Reveal/Export 和更完整的 Theme/Font/Snippet 产品化。
 
 ## Phase 2：WebDAV E2EE
 

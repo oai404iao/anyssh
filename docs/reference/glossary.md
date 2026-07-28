@@ -13,6 +13,9 @@
 | Tombstone | 表示对象已删除并参与同步的逻辑记录 |
 | Outbox | 本地事务中产生、等待同步的 Operation 队列 |
 | TOFU | Trust On First Use，首次连接确认 Host Key |
+| Durable TOFU | 首次确认后把 Host Key Trust 持久保存并在后续连接严格复用 |
+| Known Host | 绑定逻辑 SSH Endpoint 与一个受信任 Host Public Key Set 的记录 |
+| Changed-Key | 已知 Endpoint 收到未匹配 Host Key 时必须硬阻断的状态 |
 | Jump Host | 通过 SSH `direct-tcpip` Channel 访问下一跳的主机 |
 | Dynamic Forward | 通过 SSH 暴露本地 SOCKS 服务的转发方式 |
 | Step-up Authentication | 查看或导出秘密前再次要求用户认证 |
