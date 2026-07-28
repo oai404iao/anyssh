@@ -106,6 +106,7 @@ enum CredentialKind {
     Password,
     PrivateKey,
     SystemAgent,
+    KeyboardInteractive,
 }
 
 impl From<StorageCredentialSummary> for CredentialSummary {
@@ -114,6 +115,7 @@ impl From<StorageCredentialSummary> for CredentialSummary {
             StorageCredentialKind::Password => CredentialKind::Password,
             StorageCredentialKind::PrivateKey => CredentialKind::PrivateKey,
             StorageCredentialKind::SystemAgent => CredentialKind::SystemAgent,
+            StorageCredentialKind::KeyboardInteractive => CredentialKind::KeyboardInteractive,
         };
         Self {
             id: summary.id().to_owned(),
@@ -154,6 +156,21 @@ struct CreateSystemAgentCredentialRequest {
     label: String,
     username: String,
     identity_fingerprint_sha256: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateKeyboardInteractiveCredentialRequest {
+    label: String,
+    username: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UpdateKeyboardInteractiveCredentialRequest {
+    credential_id: String,
+    label: String,
+    username: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -473,6 +490,14 @@ struct ConnectSavedHostRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AuthenticationResponseRequest {
+    session_id: String,
+    request_id: u64,
+    responses: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct JumpHostRequest {
     host: String,
     port: u16,
@@ -485,6 +510,9 @@ enum AuthenticationRequest {
     TemporaryPassword {
         username: String,
         password: String,
+    },
+    KeyboardInteractive {
+        username: String,
     },
     Credential {
         #[serde(rename = "credentialId")]
@@ -500,6 +528,9 @@ impl From<AuthenticationRequest> for AuthenticationSource {
                     username,
                     password: Zeroizing::new(password),
                 }
+            }
+            AuthenticationRequest::KeyboardInteractive { username } => {
+                Self::KeyboardInteractive { username }
             }
             AuthenticationRequest::Credential { credential_id } => {
                 Self::Credential { credential_id }
@@ -532,6 +563,16 @@ enum ClientEvent {
         #[serde(rename = "trustedFingerprintsSha256")]
         trusted_fingerprints_sha256: Vec<String>,
     },
+    AuthenticationChallenge {
+        #[serde(rename = "requestId")]
+        request_id: u64,
+        hop: ClientSessionHop,
+        host: String,
+        port: u16,
+        name: String,
+        instructions: String,
+        prompts: Vec<ClientAuthenticationPrompt>,
+    },
     Authenticated,
     Connected,
     ExitStatus {
@@ -541,6 +582,13 @@ enum ClientEvent {
         message: String,
     },
     Closed,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClientAuthenticationPrompt {
+    text: String,
+    echo: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -702,6 +750,32 @@ async fn credential_create_system_agent(
         request.label,
         request.username,
         request.identity_fingerprint_sha256,
+    )
+    .await
+    .map(CredentialSummary::from)
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn credential_create_keyboard_interactive(
+    request: CreateKeyboardInteractiveCredentialRequest,
+    core: State<'_, ApplicationCore>,
+) -> Result<CredentialSummary, String> {
+    core.create_keyboard_interactive_credential(request.label, request.username)
+        .await
+        .map(CredentialSummary::from)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn credential_update_keyboard_interactive(
+    request: UpdateKeyboardInteractiveCredentialRequest,
+    core: State<'_, ApplicationCore>,
+) -> Result<CredentialSummary, String> {
+    core.update_keyboard_interactive_credential(
+        request.credential_id,
+        request.label,
+        request.username,
     )
     .await
     .map(CredentialSummary::from)
@@ -1030,6 +1104,24 @@ async fn register_spawned_session(
                     received_fingerprint_sha256: info.received_fingerprint_sha256,
                     trusted_fingerprints_sha256: info.trusted_fingerprints_sha256,
                 }),
+                SessionEvent::AuthenticationChallenge(info) => {
+                    events.send(ClientEvent::AuthenticationChallenge {
+                        request_id: info.request_id,
+                        hop: info.hop.into(),
+                        host: info.endpoint.host,
+                        port: info.endpoint.port,
+                        name: info.name,
+                        instructions: info.instructions,
+                        prompts: info
+                            .prompts
+                            .into_iter()
+                            .map(|prompt| ClientAuthenticationPrompt {
+                                text: prompt.text,
+                                echo: prompt.echo,
+                            })
+                            .collect(),
+                    })
+                }
                 SessionEvent::Authenticated => events.send(ClientEvent::Authenticated),
                 SessionEvent::Connected => events.send(ClientEvent::Connected),
                 SessionEvent::Data(bytes) => {
@@ -1079,6 +1171,25 @@ async fn ssh_confirm_host_key(
 ) -> Result<(), String> {
     let control = registry.get(&session_id).await?;
     core.decide_host_key(&control, request_id, accepted)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn ssh_respond_authentication(
+    request: AuthenticationResponseRequest,
+    registry: State<'_, SessionRegistry>,
+) -> Result<(), String> {
+    let responses = request.responses.map(|responses| {
+        responses
+            .into_iter()
+            .map(Zeroizing::new)
+            .collect::<Vec<_>>()
+    });
+    registry
+        .get(&request.session_id)
+        .await?
+        .respond_authentication(request.request_id, responses)
         .await
         .map_err(|error| error.to_string())
 }
@@ -1157,6 +1268,8 @@ pub fn run() {
             credential_import_private_key,
             credential_list_system_agent_identities,
             credential_create_system_agent,
+            credential_create_keyboard_interactive,
+            credential_update_keyboard_interactive,
             credential_list,
             credential_delete,
             group_create,
@@ -1176,6 +1289,7 @@ pub fn run() {
             ssh_connect,
             ssh_connect_saved_host,
             ssh_confirm_host_key,
+            ssh_respond_authentication,
             ssh_ack_output,
             ssh_send,
             ssh_resize,
@@ -1233,6 +1347,64 @@ mod tests {
     }
 
     #[test]
+    fn authentication_challenge_event_contains_prompts_but_no_responses() {
+        let value = serde_json::to_value(ClientEvent::AuthenticationChallenge {
+            request_id: 11,
+            hop: ClientSessionHop::Target,
+            host: "target.internal".to_owned(),
+            port: 22,
+            name: "One-time code".to_owned(),
+            instructions: "Enter the value from your authenticator.".to_owned(),
+            prompts: vec![ClientAuthenticationPrompt {
+                text: "Verification code:".to_owned(),
+                echo: false,
+            }],
+        })
+        .expect("authentication challenge should serialize");
+
+        assert_eq!(value["type"], "authenticationChallenge");
+        assert_eq!(value["requestId"], 11);
+        assert_eq!(value["prompts"][0]["text"], "Verification code:");
+        assert_eq!(value["prompts"][0]["echo"], false);
+        assert!(value.get("responses").is_none());
+        assert!(value.get("password").is_none());
+        assert!(value.get("credentialId").is_none());
+    }
+
+    #[test]
+    fn authentication_response_request_rejects_saved_secret_fields() {
+        let request: AuthenticationResponseRequest = serde_json::from_value(serde_json::json!({
+            "sessionId": "ssh-1",
+            "requestId": 11,
+            "responses": ["123456"]
+        }))
+        .expect("typed authentication response");
+        assert_eq!(request.session_id, "ssh-1");
+        assert_eq!(request.request_id, 11);
+        assert_eq!(
+            request
+                .responses
+                .as_ref()
+                .and_then(|responses| responses.first())
+                .map(String::as_str),
+            Some("123456")
+        );
+
+        for forbidden in ["password", "credentialId", "privateKey", "otpSeed"] {
+            let mut value = serde_json::json!({
+                "sessionId": "ssh-1",
+                "requestId": 11,
+                "responses": ["123456"]
+            });
+            value[forbidden] = serde_json::json!("forbidden");
+            assert!(
+                serde_json::from_value::<AuthenticationResponseRequest>(value).is_err(),
+                "{forbidden} must be rejected"
+            );
+        }
+    }
+
+    #[test]
     fn connect_request_accepts_an_optional_jump_host() {
         let request: ConnectRequest = serde_json::from_value(serde_json::json!({
             "host": "target.internal",
@@ -1277,6 +1449,50 @@ mod tests {
     }
 
     #[test]
+    fn keyboard_interactive_ipc_carries_username_but_no_saved_response_rules() {
+        let request: AuthenticationRequest = serde_json::from_value(serde_json::json!({
+            "kind": "keyboardInteractive",
+            "username": "interactive-user"
+        }))
+        .expect("keyboard-interactive request should deserialize");
+        assert!(matches!(
+            request,
+            AuthenticationRequest::KeyboardInteractive { username }
+                if username == "interactive-user"
+        ));
+
+        for forbidden in ["password", "response", "otpSeed", "promptRule"] {
+            let mut value = serde_json::json!({
+                "kind": "keyboardInteractive",
+                "username": "interactive-user"
+            });
+            value[forbidden] = serde_json::json!("forbidden");
+            assert!(
+                serde_json::from_value::<AuthenticationRequest>(value).is_err(),
+                "{forbidden} must be rejected"
+            );
+        }
+
+        let create: CreateKeyboardInteractiveCredentialRequest =
+            serde_json::from_value(serde_json::json!({
+                "label": "Production OTP",
+                "username": "interactive-user"
+            }))
+            .expect("metadata-only interactive Credential request");
+        assert_eq!(create.label, "Production OTP");
+        assert_eq!(create.username, "interactive-user");
+
+        let rejected = serde_json::from_value::<CreateKeyboardInteractiveCredentialRequest>(
+            serde_json::json!({
+                "label": "Production OTP",
+                "username": "interactive-user",
+                "otpSeed": "must-not-enter-ipc"
+            }),
+        );
+        assert!(rejected.is_err());
+    }
+
+    #[test]
     fn credential_summary_serializes_metadata_only() {
         let value = serde_json::to_value(CredentialSummary {
             id: "cred-test".to_owned(),
@@ -1291,6 +1507,18 @@ mod tests {
         assert!(value.get("password").is_none());
         assert!(value.get("privateKey").is_none());
         assert!(value.get("passphrase").is_none());
+
+        let interactive = serde_json::to_value(CredentialSummary {
+            id: "cred-interactive".to_owned(),
+            label: "Production OTP".to_owned(),
+            username: "interactive-user".to_owned(),
+            kind: CredentialKind::KeyboardInteractive,
+        })
+        .expect("interactive Credential summary should serialize");
+        assert_eq!(interactive["kind"], "keyboardInteractive");
+        assert!(interactive.get("response").is_none());
+        assert!(interactive.get("otpSeed").is_none());
+        assert!(interactive.get("promptRule").is_none());
     }
 
     #[test]

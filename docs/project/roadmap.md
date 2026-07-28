@@ -23,14 +23,14 @@
 ## Phase 1：桌面 MVP
 
 状态：进行中；Group、System Agent、加密 Private Key 原生 Passphrase Prompt
-和 Known Host Repository/Durable TOFU 已完成，下一项为
-Keyboard-interactive/OTP。
+和 Known Host Repository/Durable TOFU 已完成。Keyboard-interactive/OTP
+实现与本地 Linux Evidence 已完成，等待同 Commit Windows/CI Artifact 复核。
 
 - Host 与 Group 继承（已完成）。
 - 密码、私钥（含 Linux/Windows 加密 Key Prompt）、系统 Agent（已完成）。
 - known_hosts（Endpoint-scoped Durable TOFU 已完成；OpenSSH 文件导入/导出
   后续实施）。
-- Keyboard-interactive/OTP。
+- Keyboard-interactive/OTP（实现完成，等待 CI/ADR 收尾）。
 - 多 Tab Terminal。
 - Jump Host（任意长度 Route 与两跳 Native/Protocol 验证已完成）。
 - Local/Remote/Dynamic Forward。
@@ -41,8 +41,8 @@ Keyboard-interactive/OTP。
 
 当前建议顺序：
 
-1. Keyboard-interactive/OTP（ExecPlan 0006 进行中），补齐常见 MFA Server
-   兼容性。
+1. 完成 Keyboard-interactive/OTP 的 Windows/CI Artifact 复核、ADR-0016
+   评审与 ExecPlan 0006 收尾。
 2. Multi Tab Terminal 与 Session Lifecycle。
 3. Local/Remote/Dynamic Forward。
 4. Key 生成、Reveal/Export 和更完整的 Theme/Font/Snippet 产品化。

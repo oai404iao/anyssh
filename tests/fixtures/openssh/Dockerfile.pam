@@ -1,0 +1,17 @@
+FROM alpine:3.22
+
+RUN apk add --no-cache linux-pam openssh-server-pam \
+    && adduser -D -s /bin/ash anyssh \
+    && echo 'anyssh:anyssh-disabled-password' | chpasswd \
+    && mkdir -p /run/sshd /usr/local/libexec \
+    && rm -f /etc/ssh/ssh_host_*
+
+COPY sshd_pam_config /etc/ssh/sshd_config
+COPY pam.d/sshd /etc/pam.d/sshd
+COPY verify-otp.sh /usr/local/libexec/anyssh-verify-otp
+
+RUN chmod 0755 /usr/local/libexec/anyssh-verify-otp
+
+EXPOSE 22
+
+CMD ["/bin/sh", "-c", "test -n \"${ANYSSH_OTP_TOKEN:-}\" && printf '%s' \"$ANYSSH_OTP_TOKEN\" >/run/anyssh-otp-token && chmod 0600 /run/anyssh-otp-token && unset ANYSSH_OTP_TOKEN && if [ -n \"${ANYSSH_ALLOW_FROM:-}\" ]; then sed -i \"s/^AllowUsers .*/AllowUsers anyssh@${ANYSSH_ALLOW_FROM}/\" /etc/ssh/sshd_config; fi && sed -i \"s|^AuthenticationMethods .*|AuthenticationMethods ${ANYSSH_AUTHENTICATION_METHODS:-keyboard-interactive:pam}|\" /etc/ssh/sshd_config && sed -i \"s/^PasswordAuthentication .*/PasswordAuthentication ${ANYSSH_PASSWORD_AUTHENTICATION:-no}/\" /etc/ssh/sshd_config && ssh-keygen -A >/dev/null 2>&1 && exec /usr/sbin/sshd.pam -D -e"]

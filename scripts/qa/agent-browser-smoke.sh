@@ -183,6 +183,15 @@ agent-browser --session "$SESSION" find label "Username" fill "browser-agent"
 agent-browser --session "$SESSION" find role button click \
   --name "Save Agent Credential"
 agent-browser --session "$SESSION" wait --text "Browser QA system agent"
+agent-browser --session "$SESSION" find role button click \
+  --name "New interactive"
+agent-browser --session "$SESSION" find label "Credential label" fill \
+  "Browser QA interactive"
+agent-browser --session "$SESSION" find label "Username" fill "browser-otp"
+agent-browser --session "$SESSION" wait --text "Session-only responses"
+agent-browser --session "$SESSION" find role button click \
+  --name "Save Interactive Credential"
+agent-browser --session "$SESSION" wait --text "Browser QA interactive"
 agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/06-credentials.png"
 agent-browser --session "$SESSION" snapshot -i \
@@ -193,6 +202,48 @@ agent-browser --session "$SESSION" screenshot --full \
 agent-browser --session "$SESSION" snapshot -i \
   >"$OUTPUT_DIR/06b-credentials-mobile-snapshot.txt"
 agent-browser --session "$SESSION" set viewport 1440 900
+
+agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(1)"
+agent-browser --session "$SESSION" find label "Host" fill "multi-otp.example"
+agent-browser --session "$SESSION" fill \
+  ".connection-panel input[type=number]" "22"
+agent-browser --session "$SESSION" find label "Username" fill "browser-otp"
+agent-browser --session "$SESSION" select \
+  ".connection-panel select" "keyboardInteractive"
+agent-browser --session "$SESSION" find role button click --name "Connect"
+agent-browser --session "$SESSION" wait --text "Verify server identity"
+agent-browser --session "$SESSION" find role button click --name "Trust and continue"
+agent-browser --session "$SESSION" wait --text "Multi-factor authentication"
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/06c-interactive-challenge.png"
+agent-browser --session "$SESSION" snapshot -i \
+  >"$OUTPUT_DIR/06c-interactive-challenge-snapshot.txt"
+agent-browser --session "$SESSION" set viewport 390 844
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/06d-interactive-challenge-mobile.png"
+agent-browser --session "$SESSION" set viewport 1440 900
+agent-browser --session "$SESSION" find label "Verification code:" fill \
+  "browser-otp-response-must-not-persist"
+agent-browser --session "$SESSION" find label "Device name:" fill \
+  "browser-device-response-must-not-persist"
+agent-browser --session "$SESSION" find role button click --name "Continue"
+agent-browser --session "$SESSION" wait --text "Interactive shell is active."
+agent-browser --session "$SESSION" snapshot -i \
+  >"$OUTPUT_DIR/06e-interactive-connected-snapshot.txt"
+if grep -F "browser-otp-response-must-not-persist" \
+  "$OUTPUT_DIR/06e-interactive-connected-snapshot.txt" >/dev/null; then
+  echo "The submitted Keyboard-interactive response remained in Browser state." >&2
+  exit 1
+fi
+if grep -F "browser-device-response-must-not-persist" \
+  "$OUTPUT_DIR/06e-interactive-connected-snapshot.txt" >/dev/null; then
+  echo "The echoed Keyboard-interactive response remained in Browser state." >&2
+  exit 1
+fi
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/06e-interactive-connected.png"
+agent-browser --session "$SESSION" find role button click --name "Disconnect"
+agent-browser --session "$SESSION" wait --text "The SSH session has ended."
 
 agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(2)"
 agent-browser --session "$SESSION" find role button click --name "New group"
@@ -280,6 +331,8 @@ agent-browser --session "$SESSION" find label "Host" fill "changed.example"
 agent-browser --session "$SESSION" fill \
   ".connection-panel input[type=number]" "22"
 agent-browser --session "$SESSION" find label "Username" fill "anyssh"
+agent-browser --session "$SESSION" select \
+  ".connection-panel select" "password"
 agent-browser --session "$SESSION" find label "Password" fill "fixture-password"
 agent-browser --session "$SESSION" find role button click --name "Connect"
 agent-browser --session "$SESSION" wait --text "Host key changed"
@@ -303,6 +356,13 @@ if [[ -n "${BROWSER_ERRORS//[[:space:]]/}" ]]; then
 fi
 
 agent-browser --session "$SESSION" console >"$OUTPUT_DIR/console.txt"
+if grep -R -a -F "browser-otp-response-must-not-persist" \
+  "$OUTPUT_DIR" >/dev/null 2>&1 \
+  || grep -R -a -F "browser-device-response-must-not-persist" \
+    "$OUTPUT_DIR" >/dev/null 2>&1; then
+  echo "The Keyboard-interactive response leaked into Browser QA evidence." >&2
+  exit 1
+fi
 
 cat >"$OUTPUT_DIR/report.md" <<EOF
 # AnySSH agent-browser smoke report
@@ -331,6 +391,11 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
   file input, Path, Key text, or Passphrase field.
 - System Agent creation selected a metadata-only SHA-256 Identity; no Agent
   Socket, Public Key Blob, Private Key, or signature entered Browser state.
+- Interactive Credential creation stored only Label/Username metadata and
+  exposed no Password, OTP Seed, Response, or Prompt Rule field.
+- Quick Connection displayed a masked, target-scoped Keyboard-interactive
+  Challenge at desktop and mobile widths; submission cleared the response
+  before the connected snapshot.
 - Parent/child Group creation exercised Credential Set, Credential Inherit,
   Jump Route Inherit, and Jump Route Clear without exposing the submitted
   password.
@@ -356,6 +421,9 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
 - \`screenshots/05e-tofu-after-forget.png\`
 - \`screenshots/06-credentials.png\`
 - \`screenshots/06b-credentials-mobile.png\`
+- \`screenshots/06c-interactive-challenge.png\`
+- \`screenshots/06d-interactive-challenge-mobile.png\`
+- \`screenshots/06e-interactive-connected.png\`
 - \`screenshots/07-groups.png\`
 - \`screenshots/07b-groups-mobile.png\`
 - \`screenshots/08-route-desktop.png\`

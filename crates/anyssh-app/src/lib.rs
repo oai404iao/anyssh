@@ -324,6 +324,29 @@ impl ApplicationCore {
             .map_err(ApplicationError::from)
     }
 
+    pub async fn create_keyboard_interactive_credential(
+        &self,
+        label: String,
+        username: String,
+    ) -> Result<CredentialSummary, ApplicationError> {
+        self.database
+            .create_credential(label, username, CredentialSecret::KeyboardInteractive)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn update_keyboard_interactive_credential(
+        &self,
+        id: String,
+        label: String,
+        username: String,
+    ) -> Result<CredentialSummary, ApplicationError> {
+        self.database
+            .update_credential(id, label, username, CredentialSecret::KeyboardInteractive)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
     pub async fn list_credentials(&self) -> Result<Vec<CredentialSummary>, ApplicationError> {
         self.database
             .list_credentials()
@@ -652,6 +675,10 @@ impl ApplicationCore {
                 let username = normalize_username(username)?;
                 (username, SessionAuthentication::Password { password })
             }
+            AuthenticationSource::KeyboardInteractive { username } => {
+                let username = normalize_username(username)?;
+                (username, SessionAuthentication::KeyboardInteractive)
+            }
             AuthenticationSource::Credential { credential_id } => resolved_authentication(
                 self.database
                     .resolve_credential(credential_id)
@@ -714,6 +741,9 @@ pub enum AuthenticationSource {
         username: String,
         password: Zeroizing<String>,
     },
+    KeyboardInteractive {
+        username: String,
+    },
     Credential {
         credential_id: String,
     },
@@ -726,6 +756,10 @@ impl fmt::Debug for AuthenticationSource {
                 .debug_struct("TemporaryPassword")
                 .field("username", username)
                 .field("password", &"<redacted>")
+                .finish(),
+            Self::KeyboardInteractive { username } => formatter
+                .debug_struct("KeyboardInteractive")
+                .field("username", username)
                 .finish(),
             Self::Credential { credential_id } => formatter
                 .debug_struct("Credential")
@@ -888,6 +922,7 @@ fn resolved_authentication(resolved: ResolvedCredential) -> (String, SessionAuth
         } => SessionAuthentication::SystemAgent {
             identity_fingerprint_sha256: identity_fingerprint_sha256.to_string(),
         },
+        CredentialSecret::KeyboardInteractive => SessionAuthentication::KeyboardInteractive,
     };
     (username, authentication)
 }
@@ -1062,6 +1097,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn quick_keyboard_interactive_resolves_without_a_saved_secret() {
+        let (core, _directory) = test_core();
+        core.create_vault(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+
+        let resolved = core
+            .resolve_connection(
+                SshEndpoint::new("example.com", 22).expect("endpoint"),
+                AuthenticationSource::KeyboardInteractive {
+                    username: " interactive-user ".to_owned(),
+                },
+            )
+            .await
+            .expect("resolve keyboard-interactive request");
+        assert_eq!(resolved.username, "interactive-user");
+        assert!(matches!(
+            resolved.authentication,
+            SessionAuthentication::KeyboardInteractive
+        ));
+    }
+
+    #[tokio::test]
     async fn stored_private_key_moves_from_credential_id_into_ssh_authentication() {
         let (core, _directory) = test_core();
         core.create_vault(Zeroizing::new("123456".to_owned()))
@@ -1150,6 +1208,47 @@ mod tests {
             identity_fingerprint_sha256,
             "SHA256:application-agent-selector"
         );
+    }
+
+    #[tokio::test]
+    async fn stored_keyboard_interactive_credential_resolves_without_a_secret() {
+        let (core, _directory) = test_core();
+        core.create_vault(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+        let summary = core
+            .create_keyboard_interactive_credential(
+                "Production OTP".to_owned(),
+                "interactive-user".to_owned(),
+            )
+            .await
+            .expect("create keyboard-interactive credential");
+        assert_eq!(summary.kind(), CredentialKind::KeyboardInteractive);
+
+        let updated = core
+            .update_keyboard_interactive_credential(
+                summary.id().to_owned(),
+                "Updated OTP".to_owned(),
+                "updated-interactive-user".to_owned(),
+            )
+            .await
+            .expect("update keyboard-interactive credential");
+        assert_eq!(updated.label(), "Updated OTP");
+
+        let resolved = core
+            .resolve_connection(
+                SshEndpoint::new("example.com", 22).expect("endpoint"),
+                AuthenticationSource::Credential {
+                    credential_id: summary.id().to_owned(),
+                },
+            )
+            .await
+            .expect("resolve stored keyboard-interactive credential");
+        assert_eq!(resolved.username, "updated-interactive-user");
+        assert!(matches!(
+            resolved.authentication,
+            SessionAuthentication::KeyboardInteractive
+        ));
     }
 
     #[tokio::test]

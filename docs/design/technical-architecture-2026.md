@@ -254,17 +254,20 @@ MVP 支持：
 - 系统 SSH Agent。
 - 应用内置 Agent。
 
-Phase 0 SSH Core 使用 `SessionAuthentication` 统一表达 Password 和 Private Key，
-因此 Jump 与 Target 可以选择不同 Credential。OpenSSH Key 文本和 Passphrase
+当前 SSH Core 使用 `SessionAuthentication` 统一表达 Password、Private Key、
+System Agent 和 Keyboard-interactive，因此 Jump 与 Target 可以选择不同
+Credential。OpenSSH Key 文本和 Passphrase
 进入 `Zeroizing<String>`，同步的 `decode_secret_key` 在 Blocking Pool 解码；
 解析错误不把 Key、Passphrase 或底层错误细节发送给 WebView。
 
-当前 Tauri IPC 支持临时密码或 Credential ID。`anyssh-app` 使用 ID 从 DB Actor
-解析 Password/Private Key，并把 `Zeroizing<String>` 直接 move 到
+当前 Tauri IPC 支持临时密码、Quick Keyboard-interactive 或 Credential ID。
+`anyssh-app` 使用 ID 从 DB Actor 解析 Password/Private Key/System Agent/
+Keyboard-interactive，并把必要的 `Zeroizing<String>` 直接 move 到
 `anyssh-ssh::SessionAuthentication`。IPC 使用 `deny_unknown_fields`，不接受
 Private Key 或 Passphrase 字段。
 
-当前产品配置 UI 已提供 Password Credential CRUD 和 Private Key Import。
+当前产品配置 UI 已提供 Password/Keyboard-interactive Credential CRUD 和
+Private Key Import。
 `credential_import_private_key` Request 只包含 Label/Username；Tauri Command 在
 Rust 内打开 Native File Picker，`ApplicationCore` 有界读取并使用 russh Decoder
 验证文件后才写入 Vault。Path 和 Key 内容不返回 WebView。Linux/Windows
@@ -277,6 +280,14 @@ Algorithm、SHA-256 Fingerprint 和受限 Comment；Credential 保存加密后�
 Fingerprint Selector。连接时 russh `authenticate_publickey_with` 委托 Agent
 签名，不读取 Private Key，也不自动尝试其他 Identity。Pageant、Certificate
 Identity、Agent Forwarding 和应用内 Agent 仍属于后续能力。
+
+Keyboard-interactive v1 已实现最多 8 Round、每轮 16 Prompt、`echo`、零 Prompt、
+Request/Hop/Round 绑定、120 秒 Timeout 和取消。Interactive Credential 只保存
+Label/Username；Server Prompt 不会触发 Saved Password 自动填充。Password、
+Private Key 或 System Agent 只有在 Server 明确返回 Partial Success 且继续提供
+Keyboard-interactive 时才进入第二因子；普通失败不降级。Linux OpenSSH PAM、
+Browser、X11 和 Wayland 已验证该边界，完整设计见
+[Keyboard-interactive Authentication v1](keyboard-interactive-authentication-v1.md)。
 
 后续支持：
 
@@ -305,7 +316,7 @@ TCP/Proxy -> Jump 1 SSH
 
 Jump Route 使用有序列表存储，并在保存时检测循环引用。
 
-当前 Schema v6 已实现该持久化模型：Route Step 只保存 Host ID，Host 保存可选
+当前 Schema v7 已实现该持久化模型：Route Step 只保存 Host ID，Host 保存可选
 Group ID 和 Credential/Route 三态引用；Foreign Key 使用 Restrict 删除语义，
 保存时对 Effective Host -> Route -> Step Host 图执行循环检测。Saved Host IPC
 只提交 Target Host ID；DB Actor 先解析最多 32 层 Group，再递归展开 Route 和
@@ -620,13 +631,14 @@ SQLCipher 查询均在 Actor Thread 中串行执行，Tauri Command 不再使用
 `spawn_blocking` 或 `Mutex<Option<LocalVault>>`。最后一个 Handle 释放时先关闭
 Queue，再 Join Actor Thread，确保数据库连接按顺序销毁。
 
-当前 Schema v6 Repository 设计见：
+当前 Schema v7 Repository 设计见：
 
 - [Credential Repository v1](credential-repository-v1.md)
 - [Host 与 Jump Route Repository v1](host-jump-route-repository-v1.md)
 - [Group Inheritance v1](group-inheritance-v1.md)
 - [System SSH Agent Authentication v1](system-ssh-agent-authentication-v1.md)
 - [Known Host Repository v1](known-host-repository-v1.md)
+- [Keyboard-interactive Authentication v1](keyboard-interactive-authentication-v1.md)
 
 Tauri 只调用 `anyssh-app::ApplicationCore`；它不直接解析 Credential Secret、
 构造 SSH Authentication 或访问 SQLCipher Connection。

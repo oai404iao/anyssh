@@ -80,12 +80,15 @@ fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IMAGE_NAME="anyssh-openssh-fixture:phase0"
+PAM_IMAGE_NAME="anyssh-openssh-pam-fixture:phase1"
 CONTAINER_NAME="anyssh-native-wayland-$RANDOM-$$"
+PAM_CONTAINER_NAME="anyssh-native-wayland-pam-$RANDOM-$$"
 RUN_DIR="$ROOT_DIR/artifacts/native-wayland/smoke-$(date +%s)-$$"
 DRIVER="$RUN_DIR/anyssh-x11-driver"
 WAYLAND_SOCKET="wayland-anyssh"
 SESSION_GROUP=""
 XVFB_PID=""
+INTERACTIVE_RESPONSE="otp-$RANDOM-$RANDOM"
 
 cleanup() {
   if [[ -n "$SESSION_GROUP" ]]; then
@@ -97,7 +100,7 @@ cleanup() {
     kill -TERM "$XVFB_PID" >/dev/null 2>&1 || true
     wait "$XVFB_PID" >/dev/null 2>&1 || true
   fi
-  docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  docker rm -f "$CONTAINER_NAME" "$PAM_CONTAINER_NAME" >/dev/null 2>&1 || true
   rm -rf \
     "$RUN_DIR/xdg-cache" \
     "$RUN_DIR/xdg-config" \
@@ -120,7 +123,7 @@ for command in \
   pkg-config \
   setsid \
   ss \
-  ssh-keyscan \
+  timeout \
   wayland-info \
   weston \
   Xvfb; do
@@ -129,6 +132,12 @@ for command in \
     exit 1
   fi
 done
+
+tcp_port_ready() {
+  local port="$1"
+  timeout 1 bash -c "exec 3<>/dev/tcp/127.0.0.1/$port" \
+    >/dev/null 2>&1
+}
 
 if [[ ! -x "$ROOT_DIR/apps/client/node_modules/.bin/vite" ]]; then
   echo "Vite is not installed; run pnpm install from the repository root." >&2
@@ -140,8 +149,8 @@ if ! pkg-config --exists webkit2gtk-4.1 javascriptcoregtk-4.1; then
   exit 1
 fi
 
-if ss -ltn 2>/dev/null | grep -Eq '127\.0\.0\.1:(1420|2222)[[:space:]]'; then
-  echo "Port 1420 or 2222 is already in use by another process." >&2
+if ss -ltn 2>/dev/null | grep -Eq '127\.0\.0\.1:(1420|2222|2223)[[:space:]]'; then
+  echo "Port 1420, 2222, or 2223 is already in use by another process." >&2
   exit 1
 fi
 
@@ -172,22 +181,35 @@ docker build \
   --quiet \
   --tag "$IMAGE_NAME" \
   "$ROOT_DIR/tests/fixtures/openssh" >/dev/null
+docker build \
+  --quiet \
+  --file "$ROOT_DIR/tests/fixtures/openssh/Dockerfile.pam" \
+  --tag "$PAM_IMAGE_NAME" \
+  "$ROOT_DIR/tests/fixtures/openssh" >/dev/null
 
 docker run \
   --detach \
   --name "$CONTAINER_NAME" \
   --publish 127.0.0.1:2222:22 \
   "$IMAGE_NAME" >/dev/null
+docker run \
+  --detach \
+  --name "$PAM_CONTAINER_NAME" \
+  --publish 127.0.0.1:2223:22 \
+  --env "ANYSSH_OTP_TOKEN=$INTERACTIVE_RESPONSE" \
+  "$PAM_IMAGE_NAME" >/dev/null
 
-for _ in $(seq 1 50); do
-  if ssh-keyscan -p 2222 127.0.0.1 >/dev/null 2>&1; then
+for _ in $(seq 1 100); do
+  if tcp_port_ready 2222 && tcp_port_ready 2223; then
     break
   fi
   sleep 0.1
 done
 
-if ! ssh-keyscan -p 2222 127.0.0.1 >/dev/null 2>&1; then
+if ! tcp_port_ready 2222 || ! tcp_port_ready 2223; then
   echo "OpenSSH fixture did not become ready." >&2
+  docker logs "$CONTAINER_NAME" >&2 || true
+  docker logs "$PAM_CONTAINER_NAME" >&2 || true
   exit 1
 fi
 
@@ -461,6 +483,55 @@ fi
 sleep 1
 "$DRIVER" probe "$RUN_DIR/07-disconnected-after-reconnect.bmp" >/dev/null
 
+"$DRIVER" click 1100 440
+"$DRIVER" shift-tab
+"$DRIVER" shift-tab
+"$DRIVER" shift-tab
+"$DRIVER" ctrl-a
+"$DRIVER" type "2223"
+"$DRIVER" tab
+"$DRIVER" tab
+"$DRIVER" down
+"$DRIVER" tab
+"$DRIVER" enter
+sleep 2
+"$DRIVER" probe "$RUN_DIR/08-interactive-host-key.bmp" >/dev/null
+"$DRIVER" click 700 532
+sleep 2
+"$DRIVER" probe "$RUN_DIR/09-interactive-challenge.bmp" >/dev/null
+"$DRIVER" type "$INTERACTIVE_RESPONSE"
+"$DRIVER" enter
+sleep 1
+
+docker exec "$PAM_CONTAINER_NAME" rm -f /tmp/anyssh-wayland-interactive-ok
+INTERACTIVE_SUCCEEDED=0
+for _ in $(seq 1 40); do
+  "$DRIVER" click 500 260
+  "$DRIVER" type "touch /tmp/anyssh-wayland-interactive-ok"
+  "$DRIVER" enter
+  sleep 0.5
+  if docker exec "$PAM_CONTAINER_NAME" \
+    test -f /tmp/anyssh-wayland-interactive-ok >/dev/null 2>&1; then
+    INTERACTIVE_SUCCEEDED=1
+    break
+  fi
+done
+if [[ "$INTERACTIVE_SUCCEEDED" -ne 1 ]]; then
+  echo "The Wayland Keyboard-interactive response did not reach OpenSSH PAM." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-wayland-interactive.bmp" >/dev/null || true
+  tail -n 120 "$RUN_DIR/app.log" >&2
+  exit 1
+fi
+if grep -R -a -F "$INTERACTIVE_RESPONSE" "$VAULT_ROOT" >/dev/null 2>&1 \
+  || grep -a -F "$INTERACTIVE_RESPONSE" "$RUN_DIR/app.log" >/dev/null 2>&1; then
+  echo "The Keyboard-interactive response leaked into Wayland evidence or Vault files." >&2
+  exit 1
+fi
+"$DRIVER" probe "$RUN_DIR/10-interactive-connected.bmp" >/dev/null
+"$DRIVER" click 1117 44
+sleep 1
+"$DRIVER" probe "$RUN_DIR/11-interactive-disconnected.bmp" >/dev/null
+
 if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
   echo "The AnySSH process exited unexpectedly." >&2
   exit 1
@@ -490,6 +561,11 @@ cat >"$RUN_DIR/report.md" <<EOF
 - Disconnect returned the application to the disconnected state.
 - A second native Wayland connection used durable Trust without another Host
   Key prompt.
+- The same native Wayland WebView completed a masked RFC 4256 Challenge against
+  OpenSSH PAM on a separate Endpoint and created
+  \`/tmp/anyssh-wayland-interactive-ok\`.
+- The session-bound response remained absent from Vault files and
+  \`app.log\`.
 
 ## Evidence
 
@@ -500,6 +576,10 @@ cat >"$RUN_DIR/report.md" <<EOF
 - \`05-disconnected.bmp\`
 - \`06-durable-tofu-reconnect.bmp\`
 - \`07-disconnected-after-reconnect.bmp\`
+- \`08-interactive-host-key.bmp\`
+- \`09-interactive-challenge.bmp\`
+- \`10-interactive-connected.bmp\`
+- \`11-interactive-disconnected.bmp\`
 - \`app-backend-environment.txt\`
 - \`ibus-engines.txt\`
 - \`remote-ime-path.txt\`

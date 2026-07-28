@@ -113,6 +113,9 @@ async fn target_is_not_directly_reachable(fixture: &JumpFixture) {
                 SessionEvent::HostKeyChanged(info) => {
                     panic!("fixture host key unexpectedly changed: {info:?}")
                 }
+                SessionEvent::AuthenticationChallenge(info) => {
+                    panic!("fixture unexpectedly requested interactive authentication: {info:?}")
+                }
                 SessionEvent::Authenticated => saw_authenticated = true,
                 SessionEvent::Connected => saw_connected = true,
                 SessionEvent::Error(message) => error = Some(message),
@@ -162,6 +165,9 @@ async fn jump_shell_reaches_internal_target(fixture: &JumpFixture) {
                 }
                 SessionEvent::HostKeyChanged(info) => {
                     panic!("fixture host key unexpectedly changed: {info:?}")
+                }
+                SessionEvent::AuthenticationChallenge(info) => {
+                    panic!("fixture unexpectedly requested interactive authentication: {info:?}")
                 }
                 SessionEvent::Authenticated => saw_authenticated = true,
                 SessionEvent::Connected => {
@@ -248,7 +254,8 @@ async fn cancellation_interrupts_host_key_wait(fixture: &JumpFixture) {
                 | SessionEvent::Connected
                 | SessionEvent::Data(_)
                 | SessionEvent::ExitStatus(_)
-                | SessionEvent::HostKeyChanged(_) => {
+                | SessionEvent::HostKeyChanged(_)
+                | SessionEvent::AuthenticationChallenge(_) => {
                     panic!("session advanced after cancellation")
                 }
             }
@@ -286,6 +293,9 @@ async fn target_authentication_failure_is_scoped(fixture: &JumpFixture) {
                 }
                 SessionEvent::HostKeyChanged(info) => {
                     panic!("fixture host key unexpectedly changed: {info:?}")
+                }
+                SessionEvent::AuthenticationChallenge(info) => {
+                    panic!("fixture unexpectedly requested interactive authentication: {info:?}")
                 }
                 SessionEvent::Error(message) => error = Some(message),
                 SessionEvent::Closed => break,
@@ -342,7 +352,8 @@ async fn target_handshake_timeout_is_bounded(fixture: &JumpFixture) {
                 | SessionEvent::Connected
                 | SessionEvent::Data(_)
                 | SessionEvent::ExitStatus(_)
-                | SessionEvent::HostKeyChanged(_) => {
+                | SessionEvent::HostKeyChanged(_)
+                | SessionEvent::AuthenticationChallenge(_) => {
                     panic!("blackhole target unexpectedly advanced the SSH session")
                 }
             }
@@ -384,6 +395,9 @@ async fn first_hop_loss_closes_the_target_session(fixture: &JumpFixture) {
                 }
                 SessionEvent::HostKeyChanged(info) => {
                     panic!("fixture host key unexpectedly changed: {info:?}")
+                }
+                SessionEvent::AuthenticationChallenge(info) => {
+                    panic!("fixture unexpectedly requested interactive authentication: {info:?}")
                 }
                 SessionEvent::Authenticated => {}
                 SessionEvent::Connected => {

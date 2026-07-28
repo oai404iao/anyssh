@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -28,6 +28,17 @@ const wrongKeyPassphrase = requiredEnvironment(
 );
 const privateKeyMarkerPath = requiredEnvironment(
   "ANYSSH_WINDOWS_PRIVATE_KEY_MARKER_PATH",
+);
+const interactiveHost = requiredEnvironment("ANYSSH_WINDOWS_INTERACTIVE_HOST");
+const interactivePort = requiredEnvironment("ANYSSH_WINDOWS_INTERACTIVE_PORT");
+const interactiveUsername = requiredEnvironment(
+  "ANYSSH_WINDOWS_INTERACTIVE_USERNAME",
+);
+const interactiveResponse = requiredEnvironment(
+  "ANYSSH_WINDOWS_INTERACTIVE_RESPONSE",
+);
+const interactiveMarkerPath = requiredEnvironment(
+  "ANYSSH_WINDOWS_INTERACTIVE_MARKER_PATH",
 );
 const consoleEntries = [];
 const browserErrors = [];
@@ -115,6 +126,29 @@ async function createVaultAndRepository(targetPage) {
       .locator(".resource-card")
       .filter({ hasText: "Windows QA password" }),
   ).toBeVisible();
+  await targetPage.getByRole("button", { name: "New interactive" }).click();
+  const interactiveCredentialDialog = targetPage.getByRole("dialog", {
+    name: "New Interactive Credential",
+  });
+  await interactiveCredentialDialog
+    .getByLabel("Credential label")
+    .fill("Windows QA interactive");
+  await interactiveCredentialDialog
+    .getByLabel("Username")
+    .fill(interactiveUsername);
+  await assert(interactiveCredentialDialog.getByLabel("Password")).toHaveCount(
+    0,
+  );
+  await interactiveCredentialDialog
+    .getByRole("button", { name: "Save Interactive Credential" })
+    .click();
+  const interactiveCredential = targetPage
+    .locator(".resource-card")
+    .filter({ hasText: "Windows QA interactive" });
+  await assert(interactiveCredential).toContainText("Keyboard-interactive");
+  await assert(interactiveCredential).toContainText(
+    "Responses are session-only",
+  );
 
   await importEncryptedPrivateKey(targetPage);
   await connectWithEncryptedPrivateKey(targetPage);
@@ -191,6 +225,7 @@ async function createVaultAndRepository(targetPage) {
     targetPage.getByText("The SSH session has ended."),
   ).toBeVisible();
   await verifyKnownHostForgetAndRetrust(targetPage);
+  await verifyKeyboardInteractive(targetPage);
 
   await targetPage.locator(".primary-nav .nav-item").nth(2).click();
   await targetPage.getByRole("button", { name: "New host" }).click();
@@ -320,6 +355,11 @@ async function unlockRestartedVault(targetPage) {
       .locator(".resource-card")
       .filter({ hasText: "Windows QA encrypted key" }),
   ).toContainText("Private Key");
+  await assert(
+    targetPage
+      .locator(".resource-card")
+      .filter({ hasText: "Windows QA interactive" }),
+  ).toContainText("Keyboard-interactive");
 
   await targetPage.locator(".primary-nav .nav-item").nth(1).click();
   await assert(
@@ -560,6 +600,72 @@ async function verifyKnownHostForgetAndRetrust(targetPage) {
   ).toBeVisible();
 }
 
+async function verifyKeyboardInteractive(targetPage) {
+  await targetPage
+    .getByRole("button", { name: "Use quick connection" })
+    .click();
+  const connectionForm = targetPage.locator(".connection-panel form");
+  await connectionForm
+    .getByLabel("Host", { exact: true })
+    .fill(interactiveHost);
+  await connectionForm
+    .getByRole("spinbutton", { name: "Port" })
+    .fill(interactivePort);
+  await connectionForm.getByLabel("Username").fill(interactiveUsername);
+  await connectionForm
+    .getByLabel("Authentication")
+    .selectOption("keyboardInteractive");
+  await assert(connectionForm.getByLabel("Password")).toHaveCount(0);
+  await connectionForm.getByRole("button", { name: "Connect" }).click();
+
+  const hostKeyDialog = targetPage.getByRole("dialog", {
+    name: "Verify server identity",
+  });
+  await assert(hostKeyDialog).toContainText(
+    `${interactiveHost}:${interactivePort}`,
+  );
+  await hostKeyDialog
+    .getByRole("button", { name: "Trust and continue" })
+    .click();
+
+  const challengeDialog = targetPage.getByRole("dialog", {
+    name: "AnySSH controlled challenge",
+  });
+  await assert(challengeDialog).toContainText("Verification response:");
+  await assert(challengeDialog.locator('input[type="password"]')).toHaveCount(
+    1,
+  );
+  await capture(
+    targetPage,
+    "02d-interactive-challenge.png",
+    "02d-interactive-challenge.txt",
+  );
+  await challengeDialog
+    .getByLabel("Verification response:")
+    .fill(interactiveResponse);
+  await challengeDialog.getByRole("button", { name: "Continue" }).click();
+  await assert(
+    targetPage.getByText("Interactive shell is active."),
+  ).toBeVisible();
+
+  const terminalInput = targetPage.getByRole("textbox", {
+    name: "Terminal input",
+  });
+  await terminalInput.focus();
+  await terminalInput.pressSequentially("windows-interactive-command");
+  await terminalInput.press("Enter");
+  await assert.poll(() => fileExists(interactiveMarkerPath)).toBe(true);
+  await capture(
+    targetPage,
+    "02e-interactive-connected.png",
+    "02e-interactive-connected.txt",
+  );
+  await targetPage.getByRole("button", { name: "Disconnect" }).click();
+  await assert(
+    targetPage.getByText("The SSH session has ended."),
+  ).toBeVisible();
+}
+
 function runNativeDialogDriver(mode = "PrivateKey") {
   const repositoryRoot = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
@@ -677,7 +783,17 @@ function redact(value) {
     .replaceAll(wrongPin, "[REDACTED]")
     .replaceAll(password, "[REDACTED]")
     .replaceAll(keyPassphrase, "[REDACTED]")
-    .replaceAll(wrongKeyPassphrase, "[REDACTED]");
+    .replaceAll(wrongKeyPassphrase, "[REDACTED]")
+    .replaceAll(interactiveResponse, "[REDACTED]");
+}
+
+async function fileExists(filePath) {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function requiredEnvironment(name) {

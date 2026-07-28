@@ -18,8 +18,10 @@ import {
   connectSsh,
   disconnectSsh,
   isNativeRuntime,
+  respondAuthentication,
   resizeSsh,
   sendSshInput,
+  type AuthenticationChallengeEvent,
   type HostKeyChangedEvent,
   type HostKeyEvent,
   type SshClientEvent,
@@ -50,6 +52,7 @@ type ConnectionStatus =
   | "idle"
   | "connecting"
   | "verifying"
+  | "authenticating"
   | "authenticated"
   | "connected"
   | "error"
@@ -60,6 +63,7 @@ interface ConnectionForm {
   host: string;
   port: string;
   username: string;
+  authenticationKind: "password" | "keyboardInteractive";
   password: string;
 }
 
@@ -70,6 +74,7 @@ const INITIAL_FORM: ConnectionForm = {
   host: "127.0.0.1",
   port: "2222",
   username: "anyssh",
+  authenticationKind: "password",
   password: "",
 };
 
@@ -77,6 +82,7 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
   idle: "Ready",
   connecting: "Connecting",
   verifying: "Verify host",
+  authenticating: "Authentication required",
   authenticated: "Authenticated",
   connected: "Connected",
   error: "Connection failed",
@@ -99,6 +105,8 @@ function App() {
   );
   const [changedHostKey, setChangedHostKey] =
     useState<HostKeyChangedEvent | null>(null);
+  const [pendingAuthentication, setPendingAuthentication] =
+    useState<AuthenticationChallengeEvent | null>(null);
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
@@ -181,7 +189,12 @@ function App() {
   }, [refreshRepository, vaultStatus?.state]);
 
   const connected = status === "connected";
-  const busy = ["connecting", "verifying", "authenticated"].includes(status);
+  const busy = [
+    "connecting",
+    "verifying",
+    "authenticating",
+    "authenticated",
+  ].includes(status);
   const statusTone = useMemo(() => {
     if (connected) return "success";
     if (status === "error") return "danger";
@@ -239,6 +252,7 @@ function App() {
               : `Jump host ${event.hop.index}`;
           const message = `${hop} key changed for ${event.host}:${event.port}. Connection blocked.`;
           setPendingHostKey(null);
+          setPendingAuthentication(null);
           setChangedHostKey(event);
           setStatus("error");
           setStatusDetail(message);
@@ -248,7 +262,18 @@ function App() {
           writeSystemLine(message);
           break;
         }
+        case "authenticationChallenge": {
+          const hop =
+            event.hop.kind === "target"
+              ? "Target host"
+              : `Jump host ${event.hop.index}`;
+          setStatus("authenticating");
+          setStatusDetail(`${hop} requires additional authentication.`);
+          setPendingAuthentication(event);
+          break;
+        }
         case "authenticated":
+          setPendingAuthentication(null);
           setStatus("authenticated");
           setStatusDetail("Opening an interactive PTY…");
           break;
@@ -265,6 +290,7 @@ function App() {
           setStatus("error");
           setStatusDetail(event.message);
           setError(event.message);
+          setPendingAuthentication(null);
           setForm((current) => ({ ...current, password: "" }));
           setPasswordVisible(false);
           writeSystemLine(`Connection error: ${event.message}`);
@@ -274,6 +300,7 @@ function App() {
           setStatusDetail("The SSH session has ended.");
           setSessionId(null);
           setPendingHostKey(null);
+          setPendingAuthentication(null);
           setForm((current) => ({ ...current, password: "" }));
           setPasswordVisible(false);
           break;
@@ -297,6 +324,7 @@ function App() {
     setError(null);
     setPendingHostKey(null);
     setChangedHostKey(null);
+    setPendingAuthentication(null);
     setStatus("connecting");
     setStatusDetail("Preparing connection…");
     terminalRef.current?.reset();
@@ -332,11 +360,17 @@ function App() {
             {
               host: form.host.trim(),
               port,
-              authentication: {
-                kind: "temporaryPassword",
-                username: form.username.trim(),
-                password: form.password,
-              },
+              authentication:
+                form.authenticationKind === "keyboardInteractive"
+                  ? {
+                      kind: "keyboardInteractive",
+                      username: form.username.trim(),
+                    }
+                  : {
+                      kind: "temporaryPassword",
+                      username: form.username.trim(),
+                      password: form.password,
+                    },
               columns: terminalSizeRef.current.columns,
               rows: terminalSizeRef.current.rows,
             },
@@ -377,8 +411,29 @@ function App() {
     }
   }
 
+  async function handleAuthenticationDecision(responses: string[] | null) {
+    if (!sessionId || !pendingAuthentication) return;
+
+    const requestId = pendingAuthentication.requestId;
+    setPendingAuthentication(null);
+    try {
+      await respondAuthentication(sessionId, requestId, responses);
+      if (responses === null) {
+        setStatus("closed");
+        setStatusDetail("Additional authentication was cancelled.");
+      }
+    } catch (responseError) {
+      const message =
+        responseError instanceof Error
+          ? responseError.message
+          : String(responseError);
+      handleClientEvent({ type: "error", message });
+    }
+  }
+
   async function handleDisconnect() {
     if (!sessionId) return;
+    setPendingAuthentication(null);
     await disconnectSsh(sessionId);
   }
 
@@ -404,6 +459,7 @@ function App() {
     setPasswordVisible(false);
     setPendingHostKey(null);
     setChangedHostKey(null);
+    setPendingAuthentication(null);
     setSessionId(null);
     setSelectedSavedHostId(null);
     setCredentials([]);
@@ -446,6 +502,7 @@ function App() {
     setWorkspaceView("terminal");
     setError(null);
     setChangedHostKey(null);
+    setPendingAuthentication(null);
     setPasswordVisible(false);
     setForm((current) => ({
       ...current,
@@ -461,6 +518,7 @@ function App() {
     setForm(INITIAL_FORM);
     setError(null);
     setChangedHostKey(null);
+    setPendingAuthentication(null);
     setPasswordVisible(false);
   }
 
@@ -833,50 +891,88 @@ function App() {
                     </label>
                   </div>
 
-                  <label>
-                    Username
-                    <input
-                      autoCapitalize="none"
-                      autoComplete="username"
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          username: event.target.value,
-                        }))
-                      }
-                      value={form.username}
-                    />
-                  </label>
-
-                  <div className="form-field">
-                    <label htmlFor="connection-password">Password</label>
-                    <span className="password-field">
+                  <div className="field-grid authentication-field-grid">
+                    <label>
+                      Username
                       <input
-                        autoComplete="current-password"
-                        id="connection-password"
+                        autoCapitalize="none"
+                        autoComplete="username"
                         onChange={(event) =>
                           setForm((current) => ({
                             ...current,
-                            password: event.target.value,
+                            username: event.target.value,
                           }))
                         }
-                        placeholder="Temporary, not stored"
-                        type={passwordVisible ? "text" : "password"}
-                        value={form.password}
+                        value={form.username}
                       />
-                      <button
-                        aria-label={
-                          passwordVisible ? "Hide password" : "Show password"
-                        }
-                        onClick={() =>
-                          setPasswordVisible((visible) => !visible)
-                        }
-                        type="button"
+                    </label>
+
+                    <label>
+                      Authentication
+                      <select
+                        onChange={(event) => {
+                          const authenticationKind = event.target.value as
+                            "password" | "keyboardInteractive";
+                          setForm((current) => ({
+                            ...current,
+                            authenticationKind,
+                            password:
+                              authenticationKind === "password"
+                                ? current.password
+                                : "",
+                          }));
+                          setPasswordVisible(false);
+                        }}
+                        value={form.authenticationKind}
                       >
-                        {passwordVisible ? "Hide" : "Show"}
-                      </button>
-                    </span>
+                        <option value="password">Temporary password</option>
+                        <option value="keyboardInteractive">
+                          Keyboard-interactive / OTP
+                        </option>
+                      </select>
+                    </label>
                   </div>
+
+                  {form.authenticationKind === "password" ? (
+                    <div className="form-field">
+                      <label htmlFor="connection-password">Password</label>
+                      <span className="password-field">
+                        <input
+                          autoComplete="current-password"
+                          id="connection-password"
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              password: event.target.value,
+                            }))
+                          }
+                          placeholder="Temporary, not stored"
+                          type={passwordVisible ? "text" : "password"}
+                          value={form.password}
+                        />
+                        <button
+                          aria-label={
+                            passwordVisible ? "Hide password" : "Show password"
+                          }
+                          onClick={() =>
+                            setPasswordVisible((visible) => !visible)
+                          }
+                          type="button"
+                        >
+                          {passwordVisible ? "Hide" : "Show"}
+                        </button>
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="security-note compact-security-note">
+                      <strong>Prompted during this session</strong>
+                      <p>
+                        AnySSH sends only the responses requested by the SSH
+                        server. Responses are cleared after each round and are
+                        never saved.
+                      </p>
+                    </div>
+                  )}
 
                   {error && (
                     <div className="inline-error" role="alert">
@@ -981,6 +1077,13 @@ function App() {
           </section>
         </div>
       )}
+      {pendingAuthentication && (
+        <AuthenticationChallengeDialog
+          challenge={pendingAuthentication}
+          key={`${sessionId ?? "pending"}-${pendingAuthentication.requestId}`}
+          onDecision={handleAuthenticationDecision}
+        />
+      )}
       {changedHostKey && (
         <div className="dialog-backdrop">
           <section
@@ -1050,6 +1153,99 @@ function App() {
         </div>
       )}
     </main>
+  );
+}
+
+function AuthenticationChallengeDialog({
+  challenge,
+  onDecision,
+}: {
+  challenge: AuthenticationChallengeEvent;
+  onDecision(responses: string[] | null): Promise<void>;
+}) {
+  const [responses, setResponses] = useState(() =>
+    challenge.prompts.map(() => ""),
+  );
+
+  function clearResponses() {
+    setResponses(challenge.prompts.map(() => ""));
+  }
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const submitted = [...responses];
+    clearResponses();
+    void onDecision(submitted);
+  }
+
+  function cancel() {
+    clearResponses();
+    void onDecision(null);
+  }
+
+  return (
+    <div className="dialog-backdrop">
+      <section
+        aria-labelledby="authentication-challenge-title"
+        aria-modal="true"
+        className="host-key-dialog authentication-dialog"
+        role="dialog"
+      >
+        <div className="dialog-icon">
+          <LockIcon />
+        </div>
+        <p className="eyebrow">
+          {challenge.hop.kind === "target"
+            ? "Target host"
+            : `Jump host ${challenge.hop.index}`}
+        </p>
+        <h2 id="authentication-challenge-title">
+          {challenge.name || "Additional authentication"}
+        </h2>
+        {challenge.instructions && (
+          <p className="authentication-instructions">
+            {challenge.instructions}
+          </p>
+        )}
+        <dl>
+          <div>
+            <dt>Host</dt>
+            <dd>
+              {challenge.host}:{challenge.port}
+            </dd>
+          </div>
+        </dl>
+        <form className="authentication-form" onSubmit={submit}>
+          {challenge.prompts.map((prompt, index) => (
+            <label key={`${challenge.requestId}-${index}`}>
+              {prompt.text || `Response ${index + 1}`}
+              <input
+                autoComplete={prompt.echo ? "off" : "one-time-code"}
+                autoFocus={index === 0}
+                onChange={(event) =>
+                  setResponses((current) =>
+                    current.map((value, responseIndex) =>
+                      responseIndex === index ? event.target.value : value,
+                    ),
+                  )
+                }
+                spellCheck={false}
+                type={prompt.echo ? "text" : "password"}
+                value={responses[index] ?? ""}
+              />
+            </label>
+          ))}
+          <div className="dialog-actions">
+            <button className="secondary-button" onClick={cancel} type="button">
+              Cancel authentication
+            </button>
+            <button className="connect-button" type="submit">
+              Continue
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
   );
 }
 

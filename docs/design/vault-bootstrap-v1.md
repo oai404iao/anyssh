@@ -89,9 +89,9 @@ HKDF-SHA-256 使用 Vault ID 的 UTF-8 表示作为 Salt，VMK 作为输入密�
 
 两个输出均为 32 bytes，必须分别持有和清零。
 
-## SQLCipher Schema v6
+## SQLCipher Schema v7
 
-数据库当前 `user_version` 为 `6`。Schema v1 创建：
+数据库当前 `user_version` 为 `7`。Schema v1 创建：
 
 ```sql
 CREATE TABLE vault_meta(
@@ -141,13 +141,20 @@ Public Host Key 不增加 Credential Record AEAD。完整定义见：
 
 - [Known Host Repository v1](known-host-repository-v1.md)
 
+Schema v7 重建 `credentials` 及引用它的 Group/Host/Route Step 表，新增
+`keyboard_interactive` Kind。该 Kind 只保存 Label/Username，Secret 和
+Passphrase 四列必须全部为 `NULL`；其他 Kind 继续要求现有 Record AEAD
+Ciphertext。完整定义见：
+
+- [Keyboard-interactive Authentication v1](keyboard-interactive-authentication-v1.md)
+
 ## 创建和迁移
 
 - 新 Vault 先在同文件系统的私有临时目录中完整创建 Bootstrap 和数据库。
 - 文件同步后，通过目录 Rename 原子发布为正式 Vault。
 - 已存在或不完整的 Vault 不得被自动覆盖。
 - Schema migration 在 `IMMEDIATE` Transaction 中执行；失败或中断必须回滚。
-- 已有 Schema v1 Vault 在解锁时依次迁移到 v2、v3、v4、v5、v6。
+- 已有 Schema v1 Vault 在解锁时依次迁移到 v2、v3、v4、v5、v6、v7。
 - Schema v2 -> v3 在同一 Transaction 中把旧 Host Password 重新加密为
   Credential；中断后保持完整 v2 并可重试。
 - Schema v3 -> v4 重建 Host/Route Step 表，把非空引用迁移为 `Set`、空引用
@@ -156,6 +163,8 @@ Public Host Key 不增加 Credential Record AEAD。完整定义见：
   Kind CHECK 且保持 ID、Ciphertext、Override 和 Foreign Key；中断后保持完整
   v4。
 - Schema v5 -> v6 只新增 Known Host/Key 表；中断后保持完整 v5 并可重试。
+- Schema v6 -> v7 重建 Credential 及其引用表，保持 ID、Ciphertext、
+  Override、Known Host 和 Foreign Key；中断后保持完整 v6 并可重试。
 - 每个 Migration 显式写入自己的版本号，不能用最新 Schema 常量代替中间版本。
 - Schema `0` 只用于新 Vault 初始化，不在已有文件上自动创建 Schema。
 - Linux 目录权限为 `0700`，Bootstrap 和数据库权限为 `0600`。
@@ -178,4 +187,6 @@ Public Host Key 不增加 Credential Record AEAD。完整定义见：
   回滚通过。
 - Schema v6 Known Host Repository、v5 数据恢复、Endpoint 规范化、Key 字段
   一致性、并发 TOFU 和中断回滚通过。
+- Schema v7 Interactive Credential、v6 引用/Known Host 保持、重启、
+  Secret 列约束、明文扫描和中断回滚通过。
 - Windows 与 Android 构建已经验证；iOS 仍等待 macOS/Xcode 环境。

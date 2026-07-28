@@ -1,6 +1,6 @@
 # 2026 技术版本基线
 
-> 最后核验：2026-07-27
+> 最后核验：2026-07-28
 > 用途：Phase 0 初始化依赖时的参考起点，不是永久版本锁定。
 
 | 领域 | 基线 |
@@ -17,6 +17,7 @@
 | Vite | 8.x |
 | xterm.js | 6.0.x |
 | Rust SSH | russh 0.62.x |
+| OpenSSH PAM Fixture | Alpine 3.22 `openssh-server-pam 10.0_p1-r10` / `sshd.pam` |
 | SQLCipher | 4.10.0 community（当前 bundled 验证值） |
 | rusqlite | 0.39.x |
 | Tokio | 1.x |

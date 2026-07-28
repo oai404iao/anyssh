@@ -159,6 +159,11 @@ async fn run_saved_session(
                 SessionEvent::HostKeyChanged(info) => {
                     panic!("saved route host key unexpectedly changed: {info:?}")
                 }
+                SessionEvent::AuthenticationChallenge(info) => {
+                    panic!(
+                        "saved route unexpectedly requested interactive authentication: {info:?}"
+                    )
+                }
                 SessionEvent::Connected => {
                     control
                         .send_input(format!("printf '{marker}\\n'; exit\r").into_bytes())

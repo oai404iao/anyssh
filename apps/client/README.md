@@ -27,12 +27,19 @@ SSH workspace is mounted. Tauri calls `anyssh-app::ApplicationCore`; the SQLCiph
 connection and unlocked `LocalVault` remain inside the dedicated storage Actor.
 Browser QA mode bypasses this gate and does not persist a PIN.
 
-SSH authentication requests are a tagged temporary-password or Credential-ID reference.
-Raw Private Key and Passphrase fields are rejected by the IPC schema. Password Credential
-CRUD exposes metadata-only responses. Native Private Key import requests contain only a
-label and username; Rust opens the native picker, validates the selected file, and stores
-the Key without returning its Path or contents to the WebView. The first implementation
-accepts unencrypted OpenSSH Keys only.
+SSH authentication requests are a tagged temporary-password, Quick
+Keyboard-interactive, or Credential-ID reference. Raw Private Key and Passphrase fields
+are rejected by the IPC schema. Password and Keyboard-interactive Credential CRUD exposes
+metadata-only responses; Interactive Credentials store only Label/Username. Native
+Private Key import requests contain only a label and username; Rust opens the native
+picker, validates the selected file, and stores the Key without returning its Path or
+contents to the WebView. Linux/Windows encrypted OpenSSH Keys use a native secure
+Passphrase prompt outside WebView.
+
+Keyboard-interactive Challenges are request/hop scoped. A dedicated local React form
+renders bounded plain-text Prompt metadata, masks `echo=false`, submits only the current
+response list, and unmounts on submit, cancel, disconnect, lock, or route change. Responses
+are never stored as Credential data or Browser QA evidence.
 
 System Agent Credential creation first asks Rust to enumerate the current desktop Agent.
 The WebView receives only Algorithm, SHA-256 Fingerprint, and sanitized Comment, then stores

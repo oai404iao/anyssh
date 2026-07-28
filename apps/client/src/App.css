@@ -644,6 +644,10 @@ select:focus-visible {
   gap: 9px;
 }
 
+.authentication-field-grid {
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+}
+
 .password-field {
   position: relative;
   display: block;
@@ -852,6 +856,54 @@ select:focus-visible {
 
 .changed-host-key-dialog {
   width: min(540px, 100%);
+}
+
+.authentication-dialog {
+  width: min(500px, 100%);
+}
+
+.authentication-instructions {
+  white-space: pre-wrap;
+}
+
+.authentication-form {
+  display: grid;
+  max-height: min(52vh, 430px);
+  gap: 12px;
+  overflow-y: auto;
+  margin-top: 14px;
+  padding-right: 3px;
+}
+
+.authentication-form label {
+  display: grid;
+  gap: 7px;
+  color: #aab4c7;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.authentication-form input {
+  width: 100%;
+  height: 42px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: #dbe2ef;
+  background: #090e18;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+}
+
+.authentication-form input:focus {
+  border-color: var(--cyan);
+  outline: 2px solid rgba(107, 230, 210, 0.2);
+  outline-offset: 1px;
+}
+
+.authentication-form .dialog-actions {
+  grid-template-columns: 1fr 1fr;
 }
 
 .changed-key-comparison {
@@ -1159,6 +1211,11 @@ select:focus-visible {
 .resource-icon.systemAgent {
   color: #ffd38b;
   background: rgba(255, 198, 109, 0.11);
+}
+
+.resource-icon.keyboardInteractive {
+  color: #89c9ff;
+  background: rgba(89, 171, 255, 0.11);
 }
 
 .route-resource-icon {

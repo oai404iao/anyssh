@@ -80,9 +80,19 @@ Public Key/Password/System Agent + 第二因子的 SSH Server，同时保持响�
 - [x] 2026-07-28：用 Alpine OpenSSH PAM 临时探针证明固定 Token
   Keyboard-interactive Authentication 可行。
 - [x] 2026-07-28：创建 Proposed ADR-0016、Design 和本 ExecPlan。
-- [ ] 完成 Milestone 1：SSH Core Challenge/Response。
-- [ ] 完成 Milestone 2：Schema v7 与 Application Boundary。
-- [ ] 完成 Milestone 3：Tauri/React Product UI。
+- [x] 2026-07-28：完成 Milestone 1：SSH Core Challenge/Response。
+- [x] 2026-07-28：完成 Milestone 2：Schema v7 与 Application Boundary。
+- [x] 2026-07-28：完成 Milestone 3：Tauri/React Product UI。
+- [x] 2026-07-28：Alpine OpenSSH PAM 完成纯 Interactive、
+  Password/Private Key/System Agent Partial-success + OTP、Saved Host 和
+  Jump 1/Jump 2/Target Prompt 归属。
+- [x] 2026-07-28：Browser/Playwright/agent-browser、Linux X11 和无
+  `DISPLAY` Wayland/IBus Native Challenge 通过；关键截图已人工检查。
+- [x] 2026-07-28：Windows controlled russh Server、真实 EXE/WebView2
+  Challenge、Interactive Credential 重启和 Response Secret Scan 已接入 QA。
+- [x] 2026-07-28：本地通过 Workspace Clippy/Test、Client Test、Vitest 16、
+  Playwright 5、OpenSSH Smoke、agent-browser、X11、Wayland、Android ARM64、
+  Linux/Android Container、Docs、Format 和 `git diff --check`。
 - [ ] 完成 Milestone 4：OpenSSH 与 Native QA。
 - [ ] 完成 Milestone 5：全量回归、Artifact 检查、ADR 状态评审和收尾。
 
@@ -197,6 +207,25 @@ git diff --check
 - 2026-07-28：`pam_exec.so expose_authtok` 在 `pam_setcred` 阶段也可能执行；
   Fixture 必须使用 `type=auth`，再由 `pam_permit.so` 处理 Account/Session，
   否则认证成功后 Session 仍可能被关闭。
+- 2026-07-28：russh `0.62.4` Test Server 在 Public Key Handler 返回带
+  `partial_success = true` 的 Reject 后，会在发送 Failure Packet 前把该标志
+  重置为 `false`。受控 russh Server 仍可覆盖多 Prompt/多 Round；真实
+  Partial-success 必须由 OpenSSH
+  `AuthenticationMethods publickey,keyboard-interactive:pam` Fixture 证明。
+- 2026-07-28：OpenSSH 会清理任意 Server 环境变量，PAM Helper 无法直接读取
+  Docker `ANYSSH_OTP_TOKEN`。Fixture 现在在启动 `sshd.pam` 前把 Token 写入
+  root-only `/run/anyssh-otp-token` 并从 Server 环境移除；PAM Helper 只读该
+  临时文件且不记录内容。
+- 2026-07-28：仅有 `pam_exec.so type=auth` 时，成功认证后的
+  `pam_setcred()` 会因没有成功模块而失败；在 Auth Stack 增加
+  `pam_permit.so` 后 Session 可正常建立。
+- 2026-07-28：OpenSSH 10 的 Per-source Penalty 会把高频 `ssh-keyscan`
+  Readiness Probe 视为未认证连接并暂时丢弃。Wayland Fixture 改为有界
+  `/dev/tcp` Readiness Probe，真正协议兼容仍由后续 russh Session 验证。
+- 2026-07-28：Windows 多 Stage QA 原本会让上一个 Stage 设置的 Picker/
+  Passphrase Driver 环境进入下一次 AnySSH 进程。`Start-NativeStage` 现在在
+  启动每个 EXE 前显式清除 Driver Secret，再在进程启动后重新提供给外部 Driver；
+  Keyboard-interactive Response 使用同一规则。
 
 ## Decision Log
 
@@ -209,6 +238,33 @@ git diff --check
 - 2026-07-28：Server Prompt 不触发 Saved Password 自动填充。
 - 2026-07-28：Linux OpenSSH PAM 证明真实兼容，多轮边界由受控 russh Server
   补齐。
+- 2026-07-28：Schema v7 Interactive Credential 的 Secret/Passphrase 四列
+  必须全部为 `NULL`；其他 Kind 继续要求 Secret Nonce/Ciphertext。
+- 2026-07-28：React Challenge Response 移入按 Request ID 重建的子组件局部
+  State；Submit/Cancel 先清空，Disconnect/Lock/Route Change/Unmount 通过卸载
+  组件清理。
+- 2026-07-28：Windows 使用
+  `crates/anyssh-ssh/examples/keyboard_interactive_server.rs` 作为 controlled
+  Test Server；它只用于 QA，不进入产品 Runtime，也不调用系统 `ssh`。
+
+## 当前本地证据
+
+- OpenSSH：`pnpm test:ssh:smoke`，覆盖纯 Interactive、错误/正确 Response、
+  Password/Private Key/System Agent + OTP、Saved Host 和 Jump 1/2/Target。
+- Browser：
+  `/home/u/dev/local/any_ssh/artifacts/agent-browser/smoke-1785239733`。
+- X11：
+  `/home/u/dev/local/any_ssh/artifacts/native-xvfb/smoke-1785240099-954190`。
+- Wayland：
+  `/home/u/dev/local/any_ssh/artifacts/native-wayland/smoke-1785239155-888591`。
+- Android ARM64：
+  `/home/u/dev/local/any_ssh/artifacts/android-build/build-1785239962-939026`。
+- Linux Container：
+  `/home/u/dev/local/any_ssh/artifacts/linux-build/build-1785240001-1`。
+- Android Container：
+  `/home/u/dev/local/any_ssh/artifacts/android-build/build-1785240065-1`。
+- Windows：脚本与 controlled Server 已完成，等待同 Commit Windows Runner
+  生成 Artifact。
 
 ## Outcomes & Retrospective
 

@@ -45,7 +45,7 @@ any_ssh/
 |   |-- anyssh-domain/                # Endpoint、TerminalSize 等领域值对象
 |   |-- anyssh-ssh/                   # russh Session、Host Key、PTY、背压
 |   |-- anyssh-vault/                 # VMK、PIN Key Slot、HKDF、Bootstrap
-|   `-- anyssh-storage/               # DB Actor、Schema v6、Repository、Record AEAD
+|   `-- anyssh-storage/               # DB Actor、Schema v7、Repository、Record AEAD
 |-- scripts/
 |   |-- build-in-container.sh          # 独立 Linux/Android Build Image 入口
 |   |-- check-android-build.sh         # Android ARM64 APK 与 bundled SQLCipher 构建
@@ -121,6 +121,13 @@ Proposed ADR 是待验证方案，不是不可变事实。若 Phase 0 验证结�
 - System SSH Agent Identity 枚举和签名只在 Rust 内执行。WebView 不得提交
   Agent Socket/Pipe Path、Public Key Blob 或签名 Payload；Credential 必须用
   SHA-256 Fingerprint 选择唯一 Identity，不得自动尝试 Agent 中全部 Key。
+- Keyboard-interactive Credential 只保存 Label/Username，不保存 OTP Seed、
+  Response、Prompt Rule 或 Saved Password 映射。Response 只允许存在于当前
+  Request-scoped React 表单、当前 Typed IPC 和 Rust `Zeroizing<String>`，并
+  必须绑定 Session/Request/Hop/Round；提交、取消、断开、锁定或切页立即清空。
+- Password/Private Key/System Agent 第一因子只有在 Server 明确返回 Partial
+  Success 且继续提供 Keyboard-interactive 时才进入第二因子；普通失败不得自动
+  降级或回退。
 - Host 只保存可选 Credential/Jump Route ID；Jump Route Step 只保存 Host ID。
   不得在 Host 或 Route 中复制 Username、Password、Private Key 或 Passphrase。
 - Saved Host Connect IPC 只传 Target Host ID 和 Terminal Size。Route 展开与
@@ -223,6 +230,9 @@ Evidence 复制回仓库。
   Target，并确认 Jump 2 认证失败按 Hop 归属。
 - 验证真实 `ssh-agent` Direct、Password Jump -> Agent Target、Agent Jump ->
   Private Key Target，以及错误 Fingerprint 不回退。
+- 验证 OpenSSH PAM 纯 Keyboard-interactive、Password/Private Key/System Agent
+  Partial-success + OTP、错误/正确 Response、Saved Host、Interactive Jump Hop
+  和 Response 明文扫描。
 - Fixture 凭据只能用于测试，不得替换为真实主机或真实密钥。
 
 ### Vault 检查
@@ -233,8 +243,8 @@ Evidence 复制回仓库。
 - DB Actor 有界 Queue、oneshot Response、串行生命周期和 Shutdown。
 - Schema v1 -> v2 Credential、Schema v2 -> v3 旧 Host Password 转
   Credential、Schema v3 -> v4 Group/三态 Override、Schema v4 -> v5 System
-  Agent Credential、Schema v5 -> v6 Known Host Migration 的成功、重启和
-  中断回滚。
+  Agent Credential、Schema v5 -> v6 Known Host、Schema v6 -> v7 Interactive
+  Credential Migration 的成功、重启和中断回滚。
 - Host/Jump Route 引用占用、顺序恢复、直接/间接循环和 Locked Repository 拒绝。
 - SQLCipher 重启解锁和 Credential 字段 AEAD。
 - 数据库、WAL、Sidecar 与 Bootstrap 明文扫描。
@@ -248,6 +258,8 @@ metadata。加密 Key 必须经过进程内 GTK Secure Entry、至少一次错�
 Evidence，且临时源文件在 SSH 流程前删除。
 Linux X11 检查还必须启动真实 `ssh-agent`，由原生 Tauri UI 枚举 Identity 并
 创建 Fingerprint-selected Credential，且 Agent Key/Fingerprint 不得明文落盘。
+它还必须通过独立 OpenSSH PAM Endpoint 完成 masked Keyboard-interactive
+Challenge，并确认 Response 不出现在 Vault 或 Native Log。
 
 `pnpm qa:native:windows` 只在 Windows 执行。它必须启动实际构建的 EXE、确认
 标题为 `AnySSH` 的非零窗口句柄，并通过
@@ -260,7 +272,9 @@ Named Pipe 和临时 standalone OpenSSH Server 完成真实 EXE SSH 交互；Age
 Private Key 文件必须在 AnySSH 启动前删除。加密 Private Key 变更还必须通过
 Native Picker、Windows Credential UI 错误/正确 Passphrase、源文件删除和真实
 OpenSSH Marker；QA Driver 的 Path/Passphrase 环境必须在 AnySSH 启动后设置，
-避免应用进程继承测试 Secret。
+避免应用进程继承测试 Secret。Keyboard-interactive 变更还必须通过 controlled
+russh Server 和真实 EXE/WebView2 完成 Challenge/Response；测试 Response 环境
+同样只能在 AnySSH 启动后提供给外部 QA Driver。
 
 `pnpm qa:native:wayland` 必须在 AnySSH 进程没有 `DISPLAY` 的条件下：
 
@@ -268,6 +282,8 @@ OpenSSH Marker；QA Driver 的 Path/Passphrase 环境必须在 AnySSH 启动后�
 - 通过 Weston Wayland Socket 启动真实 Tauri/WebKitGTK。
 - 使用 IBus/libpinyin 在 xterm.js 中提交中文组合文本。
 - 通过远端 OpenSSH 文件 Marker 验证 UTF-8 文本真正到达 SSH Shell。
+- 通过独立 OpenSSH PAM Endpoint 完成一次 masked Keyboard-interactive
+  Challenge，并扫描 Response 不进入 Vault/App Log。
 
 `pnpm check:android` 必须产出 ARM64 Debug APK，并验证：
 
@@ -318,6 +334,8 @@ pnpm qa:browser
 - 保存的密码、私钥、VMK、KEK、数据库密钥和长期 Token 留在 Rust/原生层。
 - Quick Connection 的一次性临时密码可以存在于局部表单并通过当前请求提交，但
   不得进入全局状态、日志或持久化，提交、取消、锁定和切页时必须清空。
+- Keyboard-interactive Response 同样只能存在于按 Request ID 重建的局部表单和
+  当前 IPC；所有 Prompt Response 都按临时秘密处理，即使 Server 要求回显。
 - 临时显示密码必须经过 step-up authentication，并设置短 TTL。
 - 秘密不得进入前端全局状态、日志、错误对象、崩溃报告或遥测。
 
@@ -372,6 +390,17 @@ Clear
   Public Key 留在 Rust。
 - Forget 只接受 Known Host ID，并必须经过 WebView 外的原生确认。
 - 未来同步把 Endpoint Trust Set 当作原子状态，冲突时阻断而不是取并集。
+
+### 8. Keyboard-interactive Response 是 Session-bound
+
+- Interactive Credential 只保存 Label、Username 和 Kind，Schema v7 的
+  Secret/Passphrase 四列必须全部为 `NULL`。
+- Server Prompt 是不可信纯文本，必须清理控制字符并限制 Name、Instructions、
+  Prompt Count/Text 和 Response Size。
+- 每次只允许一个 Pending Authentication Request；Stale、Duplicate、超时、
+  数量不匹配、取消和 UI 丢失都 Fail Closed。
+- 零 Prompt Round 自动提交空 Response，但仍计入最多 8 Round 的上限。
+- 不根据 Prompt 文本自动填充 Saved Password，也不保存 OTP Seed 或 Response。
 
 ## 文档规则
 
@@ -501,9 +530,11 @@ Evidence；不要直接跳到 WebDAV、Forwarding、多 Tab 或高级脚本系�
 | Native Key Import Design | `docs/design/native-private-key-import-v1.md` |
 | Encrypted Key Prompt Design | `docs/design/native-encrypted-private-key-passphrase-v1.md` |
 | Known Host Design | `docs/design/known-host-repository-v1.md` |
+| Keyboard-interactive Design | `docs/design/keyboard-interactive-authentication-v1.md` |
 | OpenSSH Known Hosts Reference | `docs/reference/openssh-known-hosts-baseline-2026.md` |
 | Threat Model | `docs/design/threat-model-v1.md` |
 | SSH Core | `crates/anyssh-ssh/src/lib.rs` |
+| Controlled Interactive Server | `crates/anyssh-ssh/examples/keyboard_interactive_server.rs` |
 | OpenSSH Fixture | `tests/fixtures/openssh/` |
 | Playwright E2E | `apps/client/e2e/connect-preview.spec.ts` |
 | agent-browser 检查 | `scripts/qa/agent-browser-smoke.sh` |

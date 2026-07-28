@@ -3,12 +3,18 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE_NAME="anyssh-openssh-fixture:phase0"
+PAM_IMAGE_NAME="anyssh-openssh-pam-fixture:phase1"
 RUN_SUFFIX="$RANDOM-$$"
 JUMP_CONTAINER="anyssh-jump-$RUN_SUFFIX"
 JUMP_TWO_CONTAINER="anyssh-jump-two-$RUN_SUFFIX"
 TARGET_CONTAINER="anyssh-target-$RUN_SUFFIX"
 DEEP_TARGET_CONTAINER="anyssh-deep-target-$RUN_SUFFIX"
 BLACKHOLE_CONTAINER="anyssh-blackhole-$RUN_SUFFIX"
+INTERACTIVE_CONTAINER="anyssh-interactive-$RUN_SUFFIX"
+INTERACTIVE_TARGET_CONTAINER="anyssh-interactive-target-$RUN_SUFFIX"
+INTERACTIVE_PASSWORD_TARGET_CONTAINER="anyssh-interactive-password-target-$RUN_SUFFIX"
+INTERACTIVE_JUMP_TARGET_CONTAINER="anyssh-interactive-jump-target-$RUN_SUFFIX"
+INTERACTIVE_JUMP_TWO_TARGET_CONTAINER="anyssh-interactive-jump-two-target-$RUN_SUFFIX"
 EDGE_NETWORK="anyssh-edge-$RUN_SUFFIX"
 INTERNAL_NETWORK="anyssh-internal-$RUN_SUFFIX"
 DEEP_NETWORK="anyssh-deep-$RUN_SUFFIX"
@@ -16,7 +22,12 @@ TARGET_ALIAS="ssh-target-internal"
 JUMP_TWO_ALIAS="ssh-jump-two"
 DEEP_TARGET_ALIAS="ssh-target-deep"
 BLACKHOLE_ALIAS="ssh-blackhole"
+INTERACTIVE_TARGET_ALIAS="ssh-interactive-target"
+INTERACTIVE_PASSWORD_TARGET_ALIAS="ssh-interactive-password-target"
+INTERACTIVE_JUMP_TARGET_ALIAS="ssh-interactive-jump-target"
+INTERACTIVE_JUMP_TWO_TARGET_ALIAS="ssh-interactive-jump-two-target"
 KEY_PASSPHRASE="anyssh-key-passphrase"
+INTERACTIVE_RESPONSE="otp-$RANDOM-$RANDOM"
 KEY_DIR=""
 AGENT_PID=""
 AGENT_SOCKET=""
@@ -32,7 +43,12 @@ cleanup() {
     "$JUMP_TWO_CONTAINER" \
     "$TARGET_CONTAINER" \
     "$DEEP_TARGET_CONTAINER" \
-    "$BLACKHOLE_CONTAINER" >/dev/null 2>&1 || true
+    "$BLACKHOLE_CONTAINER" \
+    "$INTERACTIVE_CONTAINER" \
+    "$INTERACTIVE_TARGET_CONTAINER" \
+    "$INTERACTIVE_PASSWORD_TARGET_CONTAINER" \
+    "$INTERACTIVE_JUMP_TARGET_CONTAINER" \
+    "$INTERACTIVE_JUMP_TWO_TARGET_CONTAINER" >/dev/null 2>&1 || true
   docker network rm \
     "$EDGE_NETWORK" \
     "$INTERNAL_NETWORK" \
@@ -109,6 +125,11 @@ fi
 docker build \
   --quiet \
   --tag "$IMAGE_NAME" \
+  tests/fixtures/openssh >/dev/null
+docker build \
+  --quiet \
+  --file tests/fixtures/openssh/Dockerfile.pam \
+  --tag "$PAM_IMAGE_NAME" \
   tests/fixtures/openssh >/dev/null
 
 docker network create "$EDGE_NETWORK" >/dev/null
@@ -197,6 +218,79 @@ docker run \
   'printf "#!/bin/sh\nsleep 60\n" >/tmp/hold-open && chmod +x /tmp/hold-open && exec nc -lk -p 22 -e /tmp/hold-open' \
   >/dev/null
 
+docker run \
+  --detach \
+  --name "$INTERACTIVE_CONTAINER" \
+  --network "$EDGE_NETWORK" \
+  --publish 127.0.0.1::22 \
+  --env "ANYSSH_OTP_TOKEN=$INTERACTIVE_RESPONSE" \
+  "$PAM_IMAGE_NAME" >/dev/null
+
+docker network connect "$INTERNAL_NETWORK" "$INTERACTIVE_CONTAINER"
+
+INTERACTIVE_PORT="$(
+  docker port "$INTERACTIVE_CONTAINER" 22/tcp |
+    awk -F: 'NR == 1 { print $NF }'
+)"
+INTERACTIVE_INTERNAL_IP="$(
+  docker inspect \
+    --format "{{(index .NetworkSettings.Networks \"$INTERNAL_NETWORK\").IPAddress}}" \
+    "$INTERACTIVE_CONTAINER"
+)"
+
+if [[ -z "$INTERACTIVE_PORT" || -z "$INTERACTIVE_INTERNAL_IP" ]]; then
+  echo "Unable to resolve the Keyboard-interactive fixture addresses." >&2
+  exit 1
+fi
+
+docker run \
+  --detach \
+  --name "$INTERACTIVE_TARGET_CONTAINER" \
+  --network "$INTERNAL_NETWORK" \
+  --network-alias "$INTERACTIVE_TARGET_ALIAS" \
+  --env "ANYSSH_ALLOW_FROM=$JUMP_INTERNAL_IP" \
+  --env "ANYSSH_AUTHENTICATION_METHODS=publickey,keyboard-interactive:pam" \
+  --env "ANYSSH_OTP_TOKEN=$INTERACTIVE_RESPONSE" \
+  "$PAM_IMAGE_NAME" >/dev/null
+
+docker network connect "$DEEP_NETWORK" "$INTERACTIVE_TARGET_CONTAINER"
+INTERACTIVE_TARGET_DEEP_IP="$(
+  docker inspect \
+    --format "{{(index .NetworkSettings.Networks \"$DEEP_NETWORK\").IPAddress}}" \
+    "$INTERACTIVE_TARGET_CONTAINER"
+)"
+if [[ -z "$INTERACTIVE_TARGET_DEEP_IP" ]]; then
+  echo "Unable to resolve the Interactive Jump 2 deep-network address." >&2
+  exit 1
+fi
+
+docker run \
+  --detach \
+  --name "$INTERACTIVE_PASSWORD_TARGET_CONTAINER" \
+  --network "$INTERNAL_NETWORK" \
+  --network-alias "$INTERACTIVE_PASSWORD_TARGET_ALIAS" \
+  --env "ANYSSH_ALLOW_FROM=$JUMP_INTERNAL_IP" \
+  --env "ANYSSH_AUTHENTICATION_METHODS=password,keyboard-interactive:pam" \
+  --env "ANYSSH_PASSWORD_AUTHENTICATION=yes" \
+  --env "ANYSSH_OTP_TOKEN=$INTERACTIVE_RESPONSE" \
+  "$PAM_IMAGE_NAME" >/dev/null
+
+docker run \
+  --detach \
+  --name "$INTERACTIVE_JUMP_TARGET_CONTAINER" \
+  --network "$INTERNAL_NETWORK" \
+  --network-alias "$INTERACTIVE_JUMP_TARGET_ALIAS" \
+  --env "ANYSSH_ALLOW_FROM=$INTERACTIVE_INTERNAL_IP" \
+  "$IMAGE_NAME" >/dev/null
+
+docker run \
+  --detach \
+  --name "$INTERACTIVE_JUMP_TWO_TARGET_CONTAINER" \
+  --network "$DEEP_NETWORK" \
+  --network-alias "$INTERACTIVE_JUMP_TWO_TARGET_ALIAS" \
+  --env "ANYSSH_ALLOW_FROM=$INTERACTIVE_TARGET_DEEP_IP" \
+  "$IMAGE_NAME" >/dev/null
+
 install_authorized_keys() {
   local container="$1"
   docker exec "$container" \
@@ -212,10 +306,12 @@ install_authorized_keys "$JUMP_CONTAINER"
 install_authorized_keys "$JUMP_TWO_CONTAINER"
 install_authorized_keys "$TARGET_CONTAINER"
 install_authorized_keys "$DEEP_TARGET_CONTAINER"
+install_authorized_keys "$INTERACTIVE_TARGET_CONTAINER"
 
 FIXTURES_READY=false
 for _ in $(seq 1 100); do
   if ssh-keyscan -p "$JUMP_PORT" 127.0.0.1 >/dev/null 2>&1 \
+    && ssh-keyscan -p "$INTERACTIVE_PORT" 127.0.0.1 >/dev/null 2>&1 \
     && docker exec "$JUMP_CONTAINER" \
       nc -z -w 1 "$TARGET_ALIAS" 22 >/dev/null 2>&1 \
     && docker exec "$JUMP_CONTAINER" \
@@ -223,7 +319,15 @@ for _ in $(seq 1 100); do
     && docker exec "$JUMP_TWO_CONTAINER" \
       nc -z -w 1 "$DEEP_TARGET_ALIAS" 22 >/dev/null 2>&1 \
     && docker exec "$JUMP_CONTAINER" \
-      nc -z -w 1 "$BLACKHOLE_ALIAS" 22 >/dev/null 2>&1; then
+      nc -z -w 1 "$BLACKHOLE_ALIAS" 22 >/dev/null 2>&1 \
+    && docker exec "$JUMP_CONTAINER" \
+      nc -z -w 1 "$INTERACTIVE_TARGET_ALIAS" 22 >/dev/null 2>&1 \
+    && docker exec "$JUMP_CONTAINER" \
+      nc -z -w 1 "$INTERACTIVE_PASSWORD_TARGET_ALIAS" 22 >/dev/null 2>&1 \
+    && docker exec "$INTERACTIVE_CONTAINER" \
+      nc -z -w 1 "$INTERACTIVE_JUMP_TARGET_ALIAS" 22 >/dev/null 2>&1 \
+    && docker exec "$INTERACTIVE_TARGET_CONTAINER" \
+      nc -z -w 1 "$INTERACTIVE_JUMP_TWO_TARGET_ALIAS" 22 >/dev/null 2>&1; then
     FIXTURES_READY=true
     break
   fi
@@ -236,6 +340,11 @@ if [[ "$FIXTURES_READY" != true ]]; then
   docker logs "$JUMP_TWO_CONTAINER" >&2 || true
   docker logs "$TARGET_CONTAINER" >&2 || true
   docker logs "$DEEP_TARGET_CONTAINER" >&2 || true
+  docker logs "$INTERACTIVE_CONTAINER" >&2 || true
+  docker logs "$INTERACTIVE_TARGET_CONTAINER" >&2 || true
+  docker logs "$INTERACTIVE_PASSWORD_TARGET_CONTAINER" >&2 || true
+  docker logs "$INTERACTIVE_JUMP_TARGET_CONTAINER" >&2 || true
+  docker logs "$INTERACTIVE_JUMP_TWO_TARGET_CONTAINER" >&2 || true
   exit 1
 fi
 
@@ -259,6 +368,38 @@ ANYSSH_TEST_SSH_PORT="$JUMP_PORT" \
   cargo test \
     --package anyssh-ssh \
     --test backpressure_smoke \
+    -- \
+    --ignored \
+    --nocapture \
+    --test-threads=1
+
+ANYSSH_TEST_INTERACTIVE_HOST=127.0.0.1 \
+ANYSSH_TEST_INTERACTIVE_PORT="$INTERACTIVE_PORT" \
+ANYSSH_TEST_INTERACTIVE_TARGET_HOST="$INTERACTIVE_TARGET_ALIAS" \
+ANYSSH_TEST_INTERACTIVE_PASSWORD_TARGET_HOST="$INTERACTIVE_PASSWORD_TARGET_ALIAS" \
+ANYSSH_TEST_INTERACTIVE_JUMP_TARGET_HOST="$INTERACTIVE_JUMP_TARGET_ALIAS" \
+ANYSSH_TEST_INTERACTIVE_JUMP_TWO_TARGET_HOST="$INTERACTIVE_JUMP_TWO_TARGET_ALIAS" \
+ANYSSH_TEST_INTERACTIVE_RESPONSE="$INTERACTIVE_RESPONSE" \
+ANYSSH_TEST_JUMP_HOST=127.0.0.1 \
+ANYSSH_TEST_JUMP_PORT="$JUMP_PORT" \
+ANYSSH_TEST_UNENCRYPTED_KEY="$KEY_DIR/id_ed25519_unencrypted" \
+ANYSSH_TEST_AGENT_FINGERPRINT="$AGENT_FINGERPRINT" \
+SSH_AUTH_SOCK="$AGENT_SOCKET" \
+  cargo test \
+    --package anyssh-ssh \
+    --test keyboard_interactive_smoke \
+    -- \
+    --ignored \
+    --nocapture \
+    --test-threads=1
+
+ANYSSH_TEST_INTERACTIVE_HOST=127.0.0.1 \
+ANYSSH_TEST_INTERACTIVE_PORT="$INTERACTIVE_PORT" \
+ANYSSH_TEST_INTERACTIVE_JUMP_TARGET_HOST="$INTERACTIVE_JUMP_TARGET_ALIAS" \
+ANYSSH_TEST_INTERACTIVE_RESPONSE="$INTERACTIVE_RESPONSE" \
+  cargo test \
+    --package anyssh-app \
+    --test keyboard_interactive_saved_host_smoke \
     -- \
     --ignored \
     --nocapture \
@@ -360,4 +501,4 @@ ANYSSH_TEST_JUMP_CONTAINER="$JUMP_CONTAINER" \
     --nocapture \
     --test-threads=1
 
-echo "OpenSSH password, Private Key, System Agent, Vault Credential ID, saved Host Route, host-key, backpressure, and Jump Host smoke tests passed."
+echo "OpenSSH password, Keyboard-interactive/OTP, Private Key, System Agent, Vault Credential ID, saved Host Route, host-key, backpressure, and Jump Host smoke tests passed."

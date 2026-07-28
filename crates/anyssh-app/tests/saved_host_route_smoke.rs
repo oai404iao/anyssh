@@ -163,6 +163,11 @@ async fn saved_host_id_executes_two_jump_route_with_rust_only_credentials() {
                 SessionEvent::HostKeyChanged(info) => {
                     panic!("saved route host key unexpectedly changed: {info:?}")
                 }
+                SessionEvent::AuthenticationChallenge(info) => {
+                    panic!(
+                        "saved route unexpectedly requested interactive authentication: {info:?}"
+                    )
+                }
                 SessionEvent::Authenticated => saw_authenticated = true,
                 SessionEvent::Connected => {
                     saw_connected = true;
@@ -253,6 +258,11 @@ async fn saved_host_id_executes_two_jump_route_with_rust_only_credentials() {
                 }
                 SessionEvent::HostKeyChanged(info) => {
                     panic!("saved route host key unexpectedly changed: {info:?}")
+                }
+                SessionEvent::AuthenticationChallenge(info) => {
+                    panic!(
+                        "saved route unexpectedly requested interactive authentication: {info:?}"
+                    )
                 }
                 SessionEvent::Error(message) => error = Some(message),
                 SessionEvent::Closed => break,

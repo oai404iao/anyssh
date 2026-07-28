@@ -127,6 +127,9 @@ async fn encrypted_private_key_flows_from_credential_id_to_ssh_core() {
                 SessionEvent::HostKeyChanged(info) => {
                     panic!("fixture host key unexpectedly changed: {info:?}")
                 }
+                SessionEvent::AuthenticationChallenge(info) => {
+                    panic!("fixture unexpectedly requested interactive authentication: {info:?}")
+                }
                 SessionEvent::Authenticated => saw_authenticated = true,
                 SessionEvent::Connected => {
                     saw_connected = true;
@@ -189,6 +192,9 @@ async fn encrypted_private_key_flows_from_credential_id_to_ssh_core() {
                 SessionEvent::HostKeyChanged(info) => {
                     panic!("fixture host key unexpectedly changed after restart: {info:?}")
                 }
+                SessionEvent::AuthenticationChallenge(info) => {
+                    panic!("fixture unexpectedly requested interactive authentication: {info:?}")
+                }
                 SessionEvent::Connected => {
                     control
                         .send_input("printf 'ANYSSH_DURABLE_TOFU_OK\\n'; exit\r")
@@ -249,6 +255,9 @@ async fn encrypted_private_key_flows_from_credential_id_to_ssh_core() {
                 }
                 SessionEvent::HostKeyChanged(info) => {
                     panic!("new logical endpoint unexpectedly had saved Trust: {info:?}")
+                }
+                SessionEvent::AuthenticationChallenge(info) => {
+                    panic!("fixture unexpectedly requested interactive authentication: {info:?}")
                 }
                 SessionEvent::Authenticated | SessionEvent::Connected => {
                     panic!("SSH advanced after TOFU persistence failed")

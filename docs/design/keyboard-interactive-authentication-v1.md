@@ -1,6 +1,6 @@
 # Keyboard-interactive Authentication v1
 
-> 状态：设计中
+> 状态：已实现，等待同 Commit Windows/CI Artifact 复核与 ADR 评审
 > 日期：2026-07-28
 
 本文定义 Phase 1 Desktop MVP 的 RFC 4256 Keyboard-interactive/OTP
@@ -173,7 +173,8 @@ Host Public Key。
 
 ## React UI
 
-- Challenge 使用独立 Modal，标题显示 Target 或 Jump Index。
+- Challenge 使用独立、按 Request ID 重建的局部表单 Modal，标题显示 Target
+  或 Jump Index。
 - 显示受限 Name/Instructions 和 Prompt Label。
 - `echo=false` 使用 Password Input；`echo=true` 使用 Text Input。
 - 主操作为 `Continue`，次操作为 `Cancel authentication`。
@@ -237,6 +238,19 @@ PAM Stack 不稳定表达全部协议边界。
 - Wayland/IBus 回归，并至少完成一次 Interactive Challenge。
 - Windows 真实 EXE/WebView2 使用受控 Test Server 完成 Challenge。
 - Android/Linux Container、Workspace 和同 Commit CI。
+
+## 当前实现结果
+
+- Schema v7、Interactive Credential CRUD/Resolve、Quick/Saved/Jump/Target
+  Application Boundary 已实现。
+- russh Core 已覆盖多 Round、多 Prompt、`echo`、零 Prompt、Count/Size/
+  Timeout/Cancel、Stale Request 和普通失败不降级。
+- Alpine OpenSSH PAM 已覆盖纯 Interactive、Password/Private Key/System Agent
+  Partial-success + OTP、Saved Host，以及 Jump 1、Jump 2 和 Target Prompt
+  归属。
+- Browser、Playwright、agent-browser、X11 与无 `DISPLAY` Wayland/IBus Native
+  Evidence 已通过并检查；Windows controlled russh Server/真实 EXE 代码已接入，
+  等待同 Commit Windows Runner 复核。
 
 ## 相关文档
 

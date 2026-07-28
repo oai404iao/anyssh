@@ -55,6 +55,75 @@ test("connects through the host-key preview flow", async ({ page }) => {
   ).toBeVisible();
 });
 
+test("completes a session-bound keyboard-interactive challenge", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page
+    .getByRole("textbox", { name: "Host", exact: true })
+    .fill("multi-otp.example");
+  await page.getByRole("spinbutton", { name: "Port" }).fill("22");
+  await page.getByLabel("Username").fill("anyssh");
+  await page.getByLabel("Authentication").selectOption("keyboardInteractive");
+  await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Connect" }).click();
+
+  const hostKey = page.getByRole("dialog", {
+    name: "Verify server identity",
+  });
+  await hostKey.getByRole("button", { name: "Trust and continue" }).click();
+
+  const challenge = page.getByRole("dialog", {
+    name: "Multi-factor authentication",
+  });
+  await expect(challenge).toContainText("Target host");
+  await expect(challenge).toContainText("multi-otp.example:22");
+  const response = challenge.getByLabel("Verification code:");
+  const device = challenge.getByLabel("Device name:");
+  await expect(response).toHaveAttribute("type", "password");
+  await expect(device).toHaveAttribute("type", "text");
+  await response.fill("654321");
+  await device.fill("qa-laptop");
+  await challenge.getByRole("button", { name: "Continue" }).click();
+
+  await expect(challenge).toHaveCount(0);
+  await expect(page.getByText("Interactive shell is active.")).toBeVisible();
+  await expect(page.getByText("654321", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("qa-laptop", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Disconnect" }).click();
+});
+
+test("cancels and clears a pending keyboard-interactive challenge", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page
+    .getByRole("textbox", { name: "Host", exact: true })
+    .fill("otp.example");
+  await page.getByLabel("Authentication").selectOption("keyboardInteractive");
+  await page.getByRole("button", { name: "Connect" }).click();
+  await page
+    .getByRole("dialog", { name: "Verify server identity" })
+    .getByRole("button", { name: "Trust and continue" })
+    .click();
+
+  const challenge = page.getByRole("dialog", {
+    name: "Multi-factor authentication",
+  });
+  await challenge.getByLabel("Verification code:").fill("cancelled-response");
+  await challenge
+    .getByRole("button", { name: "Cancel authentication" })
+    .click();
+
+  await expect(challenge).toHaveCount(0);
+  await expect(
+    page.getByText("Additional authentication was cancelled."),
+  ).toBeVisible();
+  await expect(
+    page.getByText("cancelled-response", { exact: true }),
+  ).toHaveCount(0);
+});
+
 test("blocks a changed Known Host without an accept action", async ({
   page,
 }) => {
@@ -137,6 +206,42 @@ test("manages Groups, Credentials, Hosts, and ordered Jump Routes", async ({
   await expect(agentCredential).toContainText("System Agent");
   await expect(agentCredential).toContainText("External signer");
   await expect(agentCredential).not.toContainText("SHA256:");
+
+  await page.getByRole("button", { name: "New interactive" }).click();
+  const interactiveDialog = page.getByRole("dialog", {
+    name: "New Interactive Credential",
+  });
+  await interactiveDialog
+    .getByLabel("Credential label")
+    .fill("QA production OTP");
+  await interactiveDialog.getByLabel("Username").fill("qa-otp-user");
+  await expect(interactiveDialog.getByLabel("Password")).toHaveCount(0);
+  await expect(
+    interactiveDialog.getByText("Session-only responses"),
+  ).toBeVisible();
+  await interactiveDialog
+    .getByRole("button", { name: "Save Interactive Credential" })
+    .click();
+  const interactiveCredential = page
+    .locator(".resource-card")
+    .filter({ hasText: "QA production OTP" });
+  await expect(interactiveCredential).toContainText("Keyboard-interactive");
+  await expect(interactiveCredential).toContainText(
+    "Responses are session-only",
+  );
+  await interactiveCredential
+    .getByRole("button", { name: "Edit metadata" })
+    .click();
+  const editInteractiveDialog = page.getByRole("dialog", {
+    name: "Edit Interactive Credential",
+  });
+  await editInteractiveDialog
+    .getByLabel("Credential label")
+    .fill("QA updated OTP");
+  await editInteractiveDialog
+    .getByRole("button", { name: "Save Interactive Credential" })
+    .click();
+  await expect(page.getByText("QA updated OTP")).toBeVisible();
 
   await page.getByRole("button", { name: /^Groups \d+$/ }).click();
   await page.getByRole("button", { name: "New group" }).click();

@@ -3,12 +3,15 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IMAGE_NAME="anyssh-openssh-fixture:phase0"
+PAM_IMAGE_NAME="anyssh-openssh-pam-fixture:phase1"
 CONTAINER_NAME="anyssh-native-xvfb-$RANDOM-$$"
+PAM_CONTAINER_NAME="anyssh-native-xvfb-pam-$RANDOM-$$"
 RUN_DIR="$ROOT_DIR/artifacts/native-xvfb/smoke-$(date +%s)-$$"
 DRIVER="$RUN_DIR/anyssh-x11-driver"
 PRIVATE_KEY_FIXTURE="/tmp/000-anyssh-native-import-key"
 PRIVATE_KEY_PASSPHRASE="native-key-passphrase"
 WRONG_PRIVATE_KEY_PASSPHRASE="wrong-key-passphrase"
+INTERACTIVE_RESPONSE="otp-$RANDOM-$RANDOM"
 APP_GROUP=""
 XVFB_PID=""
 AGENT_PID=""
@@ -29,7 +32,7 @@ cleanup() {
     kill "$AGENT_PID" >/dev/null 2>&1 || true
     wait "$AGENT_PID" >/dev/null 2>&1 || true
   fi
-  docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  docker rm -f "$CONTAINER_NAME" "$PAM_CONTAINER_NAME" >/dev/null 2>&1 || true
   rm -f "$PRIVATE_KEY_FIXTURE" "$PRIVATE_KEY_FIXTURE.pub"
   if [[ -n "$AGENT_SOCKET" ]]; then
     rm -f "$AGENT_SOCKET"
@@ -64,6 +67,10 @@ fi
 
 if ss -ltn 2>/dev/null | grep -Eq '127\.0\.0\.1:2222[[:space:]]'; then
   echo "Port 2222 is already in use; it is reserved by this smoke test." >&2
+  exit 1
+fi
+if ss -ltn 2>/dev/null | grep -Eq '127\.0\.0\.1:2223[[:space:]]'; then
+  echo "Port 2223 is already in use; it is reserved by this smoke test." >&2
   exit 1
 fi
 
@@ -114,12 +121,23 @@ docker build \
   --quiet \
   --tag "$IMAGE_NAME" \
   "$ROOT_DIR/tests/fixtures/openssh" >/dev/null
+docker build \
+  --quiet \
+  --file "$ROOT_DIR/tests/fixtures/openssh/Dockerfile.pam" \
+  --tag "$PAM_IMAGE_NAME" \
+  "$ROOT_DIR/tests/fixtures/openssh" >/dev/null
 
 docker run \
   --detach \
   --name "$CONTAINER_NAME" \
   --publish 127.0.0.1:2222:22 \
   "$IMAGE_NAME" >/dev/null
+docker run \
+  --detach \
+  --name "$PAM_CONTAINER_NAME" \
+  --publish 127.0.0.1:2223:22 \
+  --env "ANYSSH_OTP_TOKEN=$INTERACTIVE_RESPONSE" \
+  "$PAM_IMAGE_NAME" >/dev/null
 
 docker exec "$CONTAINER_NAME" \
   sh -c 'mkdir -p /home/anyssh/.ssh && chmod 700 /home/anyssh/.ssh'
@@ -137,13 +155,15 @@ ssh-keygen \
   -f "$PRIVATE_KEY_FIXTURE"
 
 for _ in $(seq 1 50); do
-  if ssh-keyscan -p 2222 127.0.0.1 >/dev/null 2>&1; then
+  if ssh-keyscan -p 2222 127.0.0.1 >/dev/null 2>&1 \
+    && ssh-keyscan -p 2223 127.0.0.1 >/dev/null 2>&1; then
     break
   fi
   sleep 0.1
 done
 
-if ! ssh-keyscan -p 2222 127.0.0.1 >/dev/null 2>&1; then
+if ! ssh-keyscan -p 2222 127.0.0.1 >/dev/null 2>&1 \
+  || ! ssh-keyscan -p 2223 127.0.0.1 >/dev/null 2>&1; then
   echo "OpenSSH fixture did not become ready." >&2
   exit 1
 fi
@@ -564,9 +584,57 @@ if docker exec "$CONTAINER_NAME" \
 fi
 "$DRIVER" click 455 590
 sleep 1
+
+"$DRIVER" click 1100 440
+"$DRIVER" shift-tab
+"$DRIVER" shift-tab
+"$DRIVER" shift-tab
+"$DRIVER" ctrl-a
+"$DRIVER" type "2223"
+"$DRIVER" tab
+"$DRIVER" tab
+"$DRIVER" down
+"$DRIVER" tab
+"$DRIVER" enter
+sleep 2
+"$DRIVER" probe "$RUN_DIR/22-interactive-host-key.bmp" >/dev/null
+"$DRIVER" click 700 532
+sleep 2
+"$DRIVER" probe "$RUN_DIR/23-interactive-challenge.bmp" >/dev/null
+"$DRIVER" type "$INTERACTIVE_RESPONSE"
+"$DRIVER" enter
+
+docker exec "$PAM_CONTAINER_NAME" rm -f /tmp/anyssh-native-interactive-ok
+INTERACTIVE_SUCCEEDED=0
+for _ in $(seq 1 40); do
+  "$DRIVER" click 500 260
+  "$DRIVER" type "touch /tmp/anyssh-native-interactive-ok"
+  "$DRIVER" enter
+  sleep 0.5
+  if docker exec "$PAM_CONTAINER_NAME" \
+    test -f /tmp/anyssh-native-interactive-ok >/dev/null 2>&1; then
+    INTERACTIVE_SUCCEEDED=1
+    break
+  fi
+done
+if [[ "$INTERACTIVE_SUCCEEDED" -ne 1 ]]; then
+  echo "The native Keyboard-interactive response did not reach OpenSSH PAM." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-interactive-authentication.bmp" >/dev/null || true
+  tail -n 120 "$RUN_DIR/native.log" >&2
+  exit 1
+fi
+if grep -R -a -F "$INTERACTIVE_RESPONSE" "$VAULT_ROOT" >/dev/null 2>&1 \
+  || grep -a -F "$INTERACTIVE_RESPONSE" "$RUN_DIR/native.log" >/dev/null 2>&1; then
+  echo "The Keyboard-interactive response leaked into native evidence or Vault files." >&2
+  exit 1
+fi
+"$DRIVER" probe "$RUN_DIR/24-interactive-connected.bmp" >/dev/null
+"$DRIVER" click 1117 44
+sleep 1
+"$DRIVER" probe "$RUN_DIR/25-interactive-disconnected.bmp" >/dev/null
 "$DRIVER" click 1208 44
 sleep 1
-"$DRIVER" probe "$RUN_DIR/22-vault-locked-after-session.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/26-vault-locked-after-session.bmp" >/dev/null
 
 if ! kill -0 "$APP_GROUP" >/dev/null 2>&1; then
   echo "The native process exited unexpectedly." >&2
@@ -614,6 +682,11 @@ cat >"$RUN_DIR/report.md" <<EOF
   to forget it, and the next connection required TOFU again.
 - Rotating the same OpenSSH Endpoint produced a hard-block dialog and no remote
   command could run through it.
+- The Quick Connection selector started a real RFC 4256 Keyboard-interactive
+  session against OpenSSH PAM on a separate Endpoint.
+- The masked Challenge response authenticated, created
+  \`/tmp/anyssh-native-interactive-ok\`, and remained absent from Vault files
+  and the native log.
 - Lock Vault returned to the PIN gate after the SSH session ended.
 
 ## Evidence
@@ -639,7 +712,11 @@ cat >"$RUN_DIR/report.md" <<EOF
 - \`19-known-host-forgotten.bmp\`
 - \`20-tofu-after-forget.bmp\`
 - \`21-changed-host-key.bmp\`
-- \`22-vault-locked-after-session.bmp\`
+- \`22-interactive-host-key.bmp\`
+- \`23-interactive-challenge.bmp\`
+- \`24-interactive-connected.bmp\`
+- \`25-interactive-disconnected.bmp\`
+- \`26-vault-locked-after-session.bmp\`
 - \`windows.txt\`
 - \`native.log\`
 EOF

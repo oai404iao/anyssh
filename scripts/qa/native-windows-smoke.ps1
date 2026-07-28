@@ -24,10 +24,17 @@ $SshMarkerPath = Join-Path $env:TEMP "anyssh-windows-agent-ok-$Timestamp-$PID.tx
 $PrivateKeyMarkerPath = Join-Path `
   $env:TEMP `
   "anyssh-windows-encrypted-key-ok-$Timestamp-$PID.txt"
+$InteractiveReadyPath = Join-Path `
+  $env:TEMP `
+  "anyssh-windows-interactive-ready-$Timestamp-$PID.txt"
+$InteractiveMarkerPath = Join-Path `
+  $env:TEMP `
+  "anyssh-windows-interactive-ok-$Timestamp-$PID.txt"
 $script:NativeProcess = $null
 $script:NativeWindowHandle = [IntPtr]::Zero
 $script:StageRecords = @()
 $script:SshdProcess = $null
+$script:InteractiveProcess = $null
 $script:SshAgentWasRunning = $false
 $script:AgentPublicKeyPath = ""
 $script:SshPort = 0
@@ -39,6 +46,9 @@ $script:SshHostKeyPath = ""
 $script:SshConfigPath = ""
 $script:PrivateKeyPassphrase = "windows-key-passphrase"
 $script:WrongPrivateKeyPassphrase = "windows-wrong-key-passphrase"
+$script:InteractivePort = 0
+$script:InteractiveResponse = "otp-$([Guid]::NewGuid().ToString('N'))"
+$script:InteractiveUsername = "windows-interactive-user"
 
 New-Item -ItemType Directory -Force -Path $RunDirectory | Out-Null
 Remove-Item -LiteralPath $VaultRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -46,6 +56,8 @@ Remove-Item -LiteralPath $WebViewDataRoot -Recurse -Force -ErrorAction SilentlyC
 Remove-Item -LiteralPath $SshFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $SshMarkerPath -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $PrivateKeyMarkerPath -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $InteractiveReadyPath -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $InteractiveMarkerPath -Force -ErrorAction SilentlyContinue
 
 Add-Type -TypeDefinition @"
 using System;
@@ -142,6 +154,111 @@ function Get-FreeTcpPort {
   finally {
     $Listener.Stop()
   }
+}
+
+function Start-KeyboardInteractiveFixture {
+  Push-Location $RootDirectory
+  try {
+    & cargo build --package anyssh-ssh --example keyboard_interactive_server
+    if ($LASTEXITCODE -ne 0) {
+      throw "Unable to build the controlled Keyboard-interactive fixture."
+    }
+  }
+  finally {
+    Pop-Location
+  }
+
+  $FixtureExecutable = (
+    Resolve-Path (
+      Join-Path `
+        $RootDirectory `
+        "target\debug\examples\keyboard_interactive_server.exe"
+    )
+  ).Path
+  $script:InteractivePort = Get-FreeTcpPort
+  $InteractiveStdout = Join-Path $RunDirectory "interactive-server.stdout.log"
+  $InteractiveStderr = Join-Path $RunDirectory "interactive-server.stderr.log"
+  Remove-Item -LiteralPath $InteractiveReadyPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $InteractiveMarkerPath -Force -ErrorAction SilentlyContinue
+
+  $env:ANYSSH_KBDINT_PORT = [string]$script:InteractivePort
+  $env:ANYSSH_KBDINT_RESPONSE = $script:InteractiveResponse
+  $env:ANYSSH_KBDINT_MARKER = $InteractiveMarkerPath
+  $env:ANYSSH_KBDINT_READY = $InteractiveReadyPath
+  try {
+    $script:InteractiveProcess = Start-Process `
+      -FilePath $FixtureExecutable `
+      -WorkingDirectory $RootDirectory `
+      -RedirectStandardOutput $InteractiveStdout `
+      -RedirectStandardError $InteractiveStderr `
+      -PassThru
+  }
+  finally {
+    Remove-Item Env:ANYSSH_KBDINT_PORT -ErrorAction SilentlyContinue
+    Remove-Item Env:ANYSSH_KBDINT_RESPONSE -ErrorAction SilentlyContinue
+    Remove-Item Env:ANYSSH_KBDINT_MARKER -ErrorAction SilentlyContinue
+    Remove-Item Env:ANYSSH_KBDINT_READY -ErrorAction SilentlyContinue
+  }
+
+  $FixtureReady = $false
+  for ($Attempt = 0; $Attempt -lt 80; $Attempt++) {
+    if ($script:InteractiveProcess.HasExited) {
+      $Details = Get-Content `
+        -LiteralPath $InteractiveStderr `
+        -Raw `
+        -ErrorAction SilentlyContinue
+      throw "The controlled Keyboard-interactive fixture exited early. $Details"
+    }
+    if (Test-Path -LiteralPath $InteractiveReadyPath -PathType Leaf) {
+      $Client = [System.Net.Sockets.TcpClient]::new()
+      try {
+        $Connect = $Client.ConnectAsync(
+          "127.0.0.1",
+          $script:InteractivePort
+        )
+        if ($Connect.Wait(250) -and $Client.Connected) {
+          $FixtureReady = $true
+          break
+        }
+      }
+      catch {
+        # Retry until the controlled server is listening.
+      }
+      finally {
+        $Client.Dispose()
+      }
+    }
+    Start-Sleep -Milliseconds 250
+  }
+  if (-not $FixtureReady) {
+    throw "The controlled Keyboard-interactive fixture did not become ready."
+  }
+
+  @"
+interactive_host=127.0.0.1
+interactive_port=$($script:InteractivePort)
+interactive_username=$($script:InteractiveUsername)
+"@ | Add-Content -Encoding UTF8 -Path (
+    Join-Path $RunDirectory "ssh-fixture.txt"
+  )
+}
+
+function Stop-KeyboardInteractiveFixture {
+  if ($null -ne $script:InteractiveProcess) {
+    try {
+      if (-not $script:InteractiveProcess.HasExited) {
+        Stop-Process -Id $script:InteractiveProcess.Id -Force
+        $script:InteractiveProcess.WaitForExit(10000) | Out-Null
+      }
+    }
+    catch {
+      # The controlled fixture may already have exited during cleanup.
+    }
+    finally {
+      $script:InteractiveProcess = $null
+    }
+  }
+  Remove-Item -LiteralPath $InteractiveReadyPath -Force -ErrorAction SilentlyContinue
 }
 
 function ConvertTo-OpenSshPath {
@@ -438,6 +555,14 @@ function Start-NativeStage {
   Wait-CdpPortAvailable
 
   $env:ANYSSH_QA_VAULT_ROOT = $VaultRoot
+  # Inputs used only by the external Playwright/native-dialog drivers must not
+  # survive from a previous stage into the next AnySSH process environment.
+  Remove-Item Env:ANYSSH_WINDOWS_ENCRYPTED_KEY_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_KEY_PASSPHRASE -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_WRONG_KEY_PASSPHRASE -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_PRIVATE_KEY_MARKER_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_INTERACTIVE_RESPONSE -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_INTERACTIVE_MARKER_PATH -ErrorAction SilentlyContinue
 
   $StandardOutput = Join-Path $RunDirectory "app-$Stage.stdout.log"
   $StandardError = Join-Path $RunDirectory "app-$Stage.stderr.log"
@@ -455,6 +580,11 @@ function Start-NativeStage {
   $env:ANYSSH_WINDOWS_KEY_PASSPHRASE = $script:PrivateKeyPassphrase
   $env:ANYSSH_WINDOWS_WRONG_KEY_PASSPHRASE = $script:WrongPrivateKeyPassphrase
   $env:ANYSSH_WINDOWS_PRIVATE_KEY_MARKER_PATH = $PrivateKeyMarkerPath
+  $env:ANYSSH_WINDOWS_INTERACTIVE_HOST = "127.0.0.1"
+  $env:ANYSSH_WINDOWS_INTERACTIVE_PORT = [string]$script:InteractivePort
+  $env:ANYSSH_WINDOWS_INTERACTIVE_USERNAME = $script:InteractiveUsername
+  $env:ANYSSH_WINDOWS_INTERACTIVE_RESPONSE = $script:InteractiveResponse
+  $env:ANYSSH_WINDOWS_INTERACTIVE_MARKER_PATH = $InteractiveMarkerPath
 
   $Targets = $null
   $Version = $null
@@ -585,6 +715,7 @@ function Assert-VaultFilesAreEncrypted {
     "Windows QA encrypted key",
     "Windows QA encrypted key host",
     "Windows QA system agent",
+    "Windows QA interactive",
     "Windows QA agent host",
     "Windows QA jump",
     "Windows QA target",
@@ -592,6 +723,8 @@ function Assert-VaultFilesAreEncrypted {
     "Windows QA route",
     "target.internal",
     "windows-user",
+    $script:InteractiveUsername,
+    $script:InteractiveResponse,
     $script:SshUsername,
     $script:AgentFingerprint
   )
@@ -622,6 +755,7 @@ function Assert-EvidenceContainsNoPrivateKeySecrets {
   $Needles = @(
     $script:PrivateKeyPassphrase,
     $script:WrongPrivateKeyPassphrase,
+    $script:InteractiveResponse,
     "BEGIN OPENSSH PRIVATE KEY"
   )
   foreach ($File in Get-ChildItem -LiteralPath $RunDirectory -Recurse -File) {
@@ -638,6 +772,7 @@ function Assert-EvidenceContainsNoPrivateKeySecrets {
 
 try {
   Start-SshFixture
+  Start-KeyboardInteractiveFixture
   Start-NativeStage -Stage "create"
   Stop-NativeProcess
   if (-not (Test-Path -LiteralPath $SshMarkerPath -PathType Leaf)) {
@@ -657,6 +792,13 @@ try {
   if (-not $PrivateKeyMarker.Contains("ANYSSH_WINDOWS_ENCRYPTED_KEY_OK")) {
     throw "The Windows encrypted Private Key remote marker was invalid."
   }
+  if (-not (Test-Path -LiteralPath $InteractiveMarkerPath -PathType Leaf)) {
+    throw "The Windows Keyboard-interactive session did not create its marker."
+  }
+  $InteractiveMarker = Get-Content -LiteralPath $InteractiveMarkerPath -Raw
+  if (-not $InteractiveMarker.Contains("interactive-ok")) {
+    throw "The Windows Keyboard-interactive marker was invalid."
+  }
   Assert-VaultFilesAreEncrypted
 
   Start-NativeStage -Stage "restart"
@@ -667,6 +809,7 @@ try {
   Start-NativeStage -Stage "changed"
   Stop-NativeProcess
 
+  Stop-KeyboardInteractiveFixture
   Stop-SshFixture
   Assert-VaultFilesAreEncrypted
   Assert-EvidenceContainsNoPrivateKeySecrets
@@ -714,6 +857,11 @@ try {
   through Rust; the temporary Private Key file was deleted before AnySSH launched.
 - The real EXE used the Agent Named Pipe to authenticate to a standalone Windows
   OpenSSH Server and created the remote marker ``$SshMarkerPath``.
+- The real EXE used Quick Connection against a controlled russh Server,
+  displayed a masked Keyboard-interactive Challenge, and created the marker
+  ``$InteractiveMarkerPath``.
+- The Interactive Credential persisted only Label/Username metadata, while the
+  session response remained absent from Vault files and QA evidence.
 - The first connection durably persisted TOFU before authentication; a second
   Credential using the same Endpoint connected without another prompt.
 - Known Hosts exposed only Endpoint, Algorithm, and SHA-256 Fingerprint
@@ -745,6 +893,8 @@ try {
 - ``02c-known-host-forget-confirmation.png``
 - ``02c2-known-host-forgotten.png``
 - ``02c3-tofu-after-forget.png``
+- ``02d-interactive-challenge.png``
+- ``02e-interactive-connected.png``
 - ``03-repository-created.png``
 - ``04-vault-wrong-pin.png``
 - ``05-vault-reunlocked.png``
@@ -779,6 +929,8 @@ try {
 - ``sshd-rotated.stdout.log``
 - ``sshd-rotated.stderr.log``
 - ``rotated-host-key-fingerprint.txt``
+- ``interactive-server.stdout.log``
+- ``interactive-server.stderr.log``
 - ``native-dialog-driver.txt``
 - ``known-host-forget-driver.txt``
 "@ | Set-Content -Encoding UTF8 -Path (Join-Path $RunDirectory "report.md")
@@ -793,6 +945,7 @@ catch {
 }
 finally {
   Stop-NativeProcess
+  Stop-KeyboardInteractiveFixture
   Stop-SshFixture
   Remove-Item Env:ANYSSH_QA_VAULT_ROOT -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_CDP_URL -ErrorAction SilentlyContinue
@@ -808,7 +961,14 @@ finally {
   Remove-Item Env:ANYSSH_WINDOWS_KEY_PASSPHRASE -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_WRONG_KEY_PASSPHRASE -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_PRIVATE_KEY_MARKER_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_INTERACTIVE_HOST -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_INTERACTIVE_PORT -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_INTERACTIVE_USERNAME -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_INTERACTIVE_RESPONSE -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_INTERACTIVE_MARKER_PATH -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $VaultRoot -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $WebViewDataRoot -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $PrivateKeyMarkerPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $InteractiveReadyPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $InteractiveMarkerPath -Force -ErrorAction SilentlyContinue
 }

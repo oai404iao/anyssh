@@ -13,8 +13,8 @@ use std::{
 use anyssh_domain::{SshEndpoint, TerminalSize};
 use bytes::Bytes;
 use russh::{
-    ChannelMsg, Disconnect,
-    client::{self, Config, Handle, Handler},
+    ChannelMsg, Disconnect, MethodKind,
+    client::{self, AuthResult, Config, Handle, Handler, KeyboardInteractiveAuthResponse},
     keys::{
         PrivateKeyWithHashAlg,
         agent::{
@@ -38,6 +38,8 @@ pub const SESSION_EVENT_BUFFER_CAPACITY: usize = 64;
 pub const SESSION_COMMAND_BUFFER_CAPACITY: usize = 64;
 const HOST_KEY_DECISION_BUFFER: usize = 4;
 const HOST_KEY_DECISION_TIMEOUT: Duration = Duration::from_secs(60);
+const AUTHENTICATION_RESPONSE_BUFFER: usize = 4;
+const AUTHENTICATION_RESPONSE_TIMEOUT: Duration = Duration::from_secs(120);
 pub const DEFAULT_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
 pub const MAX_JUMP_HOSTS: usize = 32;
 pub const MAX_SYSTEM_AGENT_IDENTITIES: usize = 64;
@@ -47,6 +49,13 @@ const CHANNEL_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 const SYSTEM_AGENT_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 pub const MAX_PRIVATE_KEY_BYTES: usize = 1024 * 1024;
 pub const MAX_PRIVATE_KEY_PASSPHRASE_BYTES: usize = 64 * 1024;
+pub const MAX_KEYBOARD_INTERACTIVE_ROUNDS: usize = 8;
+pub const MAX_KEYBOARD_INTERACTIVE_PROMPTS: usize = 16;
+pub const MAX_KEYBOARD_INTERACTIVE_NAME_BYTES: usize = 1024;
+pub const MAX_KEYBOARD_INTERACTIVE_INSTRUCTIONS_BYTES: usize = 4 * 1024;
+pub const MAX_KEYBOARD_INTERACTIVE_PROMPT_BYTES: usize = 1024;
+pub const MAX_KEYBOARD_INTERACTIVE_RESPONSE_BYTES: usize = 16 * 1024;
+pub const MAX_KEYBOARD_INTERACTIVE_RESPONSES_BYTES: usize = 64 * 1024;
 const MAX_SYSTEM_AGENT_COMMENT_BYTES: usize = 512;
 #[cfg(windows)]
 const WINDOWS_OPENSSH_AGENT_PIPE: &str = r"\\.\pipe\openssh-ssh-agent";
@@ -139,6 +148,7 @@ pub enum SessionAuthentication {
     SystemAgent {
         identity_fingerprint_sha256: String,
     },
+    KeyboardInteractive,
 }
 
 impl fmt::Debug for SessionAuthentication {
@@ -157,6 +167,9 @@ impl fmt::Debug for SessionAuthentication {
                 .debug_struct("SystemAgent")
                 .field("identity_fingerprint_sha256", &"<selected>")
                 .finish(),
+            Self::KeyboardInteractive => formatter
+                .debug_struct("KeyboardInteractive")
+                .finish_non_exhaustive(),
         }
     }
 }
@@ -341,11 +354,52 @@ pub struct HostKeyChangedInfo {
     pub trusted_fingerprints_sha256: Vec<String>,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct AuthenticationPrompt {
+    pub text: String,
+    pub echo: bool,
+}
+
+impl fmt::Debug for AuthenticationPrompt {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthenticationPrompt")
+            .field("text", &"<server-provided>")
+            .field("echo", &self.echo)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct AuthenticationChallengeInfo {
+    pub request_id: u64,
+    pub hop: SessionHop,
+    pub endpoint: SshEndpoint,
+    pub name: String,
+    pub instructions: String,
+    pub prompts: Vec<AuthenticationPrompt>,
+}
+
+impl fmt::Debug for AuthenticationChallengeInfo {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthenticationChallengeInfo")
+            .field("request_id", &self.request_id)
+            .field("hop", &self.hop)
+            .field("endpoint", &self.endpoint)
+            .field("name", &"<server-provided>")
+            .field("instructions", &"<server-provided>")
+            .field("prompt_count", &self.prompts.len())
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionEvent {
     Connecting,
     HostKey(HostKeyInfo),
     HostKeyChanged(HostKeyChangedInfo),
+    AuthenticationChallenge(AuthenticationChallengeInfo),
     Authenticated,
     Connected,
     Data(Bytes),
@@ -364,6 +418,25 @@ enum SessionCommand {
 struct HostKeyDecision {
     request_id: u64,
     accepted: bool,
+}
+
+struct AuthenticationResponse {
+    request_id: u64,
+    responses: Option<Vec<Zeroizing<String>>>,
+}
+
+impl fmt::Debug for AuthenticationResponse {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthenticationResponse")
+            .field("request_id", &self.request_id)
+            .field(
+                "response_count",
+                &self.responses.as_ref().map_or(0, Vec::len),
+            )
+            .field("responses", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Clone, Default)]
@@ -402,7 +475,9 @@ impl SessionCancellation {
 struct SessionControlInner {
     commands: mpsc::Sender<SessionCommand>,
     host_key_decisions: mpsc::Sender<HostKeyDecision>,
+    authentication_responses: mpsc::Sender<AuthenticationResponse>,
     pending_host_key_request: Arc<AtomicU64>,
+    pending_authentication_request: Arc<AtomicU64>,
     pending_observed_host_key: Arc<Mutex<Option<ObservedHostKey>>>,
     cancellation: SessionCancellation,
 }
@@ -471,6 +546,30 @@ impl SessionControl {
             .map_err(|_| SessionControlError::SessionClosed)
     }
 
+    pub async fn respond_authentication(
+        &self,
+        request_id: u64,
+        responses: Option<Vec<Zeroizing<String>>>,
+    ) -> Result<(), SessionControlError> {
+        if self.inner.cancellation.is_cancelled() {
+            return Err(SessionControlError::SessionClosed);
+        }
+
+        self.inner
+            .pending_authentication_request
+            .compare_exchange(request_id, 0, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| SessionControlError::AuthenticationRequestExpired)?;
+
+        self.inner
+            .authentication_responses
+            .send(AuthenticationResponse {
+                request_id,
+                responses,
+            })
+            .await
+            .map_err(|_| SessionControlError::SessionClosed)
+    }
+
     pub async fn send_input(&self, input: impl Into<Bytes>) -> Result<(), SessionControlError> {
         if self.inner.cancellation.is_cancelled() {
             return Err(SessionControlError::SessionClosed);
@@ -508,6 +607,16 @@ impl SessionControl {
 pub struct SpawnedSession {
     pub control: SessionControl,
     pub events: mpsc::Receiver<SessionEvent>,
+}
+
+#[derive(Clone)]
+struct AuthenticationInteraction {
+    events: mpsc::Sender<SessionEvent>,
+    responses: Arc<Mutex<mpsc::Receiver<AuthenticationResponse>>>,
+    pending_request: Arc<AtomicU64>,
+    next_request: Arc<AtomicU64>,
+    response_timeout: Duration,
+    cancellation: SessionCancellation,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -636,16 +745,29 @@ pub fn spawn_session(config: SshSessionConfig) -> SpawnedSession {
     let (event_sender, event_receiver) = mpsc::channel(SESSION_EVENT_BUFFER_CAPACITY);
     let (command_sender, command_receiver) = mpsc::channel(SESSION_COMMAND_BUFFER_CAPACITY);
     let (host_key_sender, host_key_receiver) = mpsc::channel(HOST_KEY_DECISION_BUFFER);
+    let (authentication_sender, authentication_receiver) =
+        mpsc::channel(AUTHENTICATION_RESPONSE_BUFFER);
     let cancellation = SessionCancellation::default();
     let pending_host_key_request = Arc::new(AtomicU64::new(0));
+    let pending_authentication_request = Arc::new(AtomicU64::new(0));
     let pending_observed_host_key = Arc::new(Mutex::new(None));
     let next_host_key_request = Arc::new(AtomicU64::new(1));
+    let authentication_interaction = AuthenticationInteraction {
+        events: event_sender.clone(),
+        responses: Arc::new(Mutex::new(authentication_receiver)),
+        pending_request: pending_authentication_request.clone(),
+        next_request: Arc::new(AtomicU64::new(1)),
+        response_timeout: AUTHENTICATION_RESPONSE_TIMEOUT,
+        cancellation: cancellation.clone(),
+    };
 
     let control = SessionControl {
         inner: Arc::new(SessionControlInner {
             commands: command_sender,
             host_key_decisions: host_key_sender,
+            authentication_responses: authentication_sender,
             pending_host_key_request: pending_host_key_request.clone(),
+            pending_authentication_request,
             pending_observed_host_key: pending_observed_host_key.clone(),
             cancellation: cancellation.clone(),
         }),
@@ -659,6 +781,7 @@ pub fn spawn_session(config: SshSessionConfig) -> SpawnedSession {
         pending_host_key_request,
         pending_observed_host_key,
         next_host_key_request,
+        authentication_interaction,
         cancellation,
     ));
 
@@ -677,6 +800,7 @@ async fn run_session(
     pending_host_key_request: Arc<AtomicU64>,
     pending_observed_host_key: Arc<Mutex<Option<ObservedHostKey>>>,
     next_host_key_request: Arc<AtomicU64>,
+    authentication_interaction: AuthenticationInteraction,
     cancellation: SessionCancellation,
 ) {
     if emit_event(&events, &cancellation, SessionEvent::Connecting)
@@ -694,6 +818,7 @@ async fn run_session(
         pending_host_key_request,
         pending_observed_host_key,
         next_host_key_request,
+        &authentication_interaction,
         &cancellation,
     )
     .await;
@@ -735,6 +860,7 @@ async fn connect_and_run(
     pending_host_key_request: Arc<AtomicU64>,
     pending_observed_host_key: Arc<Mutex<Option<ObservedHostKey>>>,
     next_host_key_request: Arc<AtomicU64>,
+    authentication_interaction: &AuthenticationInteraction,
     cancellation: &SessionCancellation,
 ) -> Result<(), SessionError> {
     let SshSessionConfig {
@@ -778,6 +904,7 @@ async fn connect_and_run(
             terminal_size,
             events,
             commands,
+            authentication_interaction,
             cancellation,
             connection_timeout,
         )
@@ -852,6 +979,8 @@ async fn connect_and_run(
                 &jump_hop,
                 &username,
                 authentication,
+                &endpoint,
+                authentication_interaction,
                 cancellation,
                 connection_timeout,
             )
@@ -915,6 +1044,7 @@ async fn connect_and_run(
             terminal_size,
             events,
             commands,
+            authentication_interaction,
             cancellation,
             connection_timeout,
         )
@@ -1049,16 +1179,19 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_target_session(
     mut session: Handle<ClientHandler>,
     config: SshConnectionConfig,
     terminal_size: TerminalSize,
     events: &mpsc::Sender<SessionEvent>,
     commands: &mut mpsc::Receiver<SessionCommand>,
+    authentication_interaction: &AuthenticationInteraction,
     cancellation: &SessionCancellation,
     connection_timeout: Duration,
 ) -> Result<(), SessionError> {
     let SshConnectionConfig {
+        endpoint,
         username,
         authentication,
         ..
@@ -1070,6 +1203,8 @@ async fn run_target_session(
             &SessionHop::Target,
             &username,
             authentication,
+            &endpoint,
+            authentication_interaction,
             cancellation,
             connection_timeout,
         )
@@ -1131,11 +1266,14 @@ async fn run_target_session(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn authenticate(
     session: &mut Handle<ClientHandler>,
     hop: &SessionHop,
     username: &str,
     authentication: SessionAuthentication,
+    endpoint: &SshEndpoint,
+    interaction: &AuthenticationInteraction,
     cancellation: &SessionCancellation,
     connection_timeout: Duration,
 ) -> Result<(), SessionError> {
@@ -1143,7 +1281,7 @@ async fn authenticate(
         return Err(SessionError::InvalidUsername { hop: hop.clone() });
     }
 
-    match authentication {
+    let outcome = match authentication {
         SessionAuthentication::Password { password } => {
             authenticate_password(
                 session,
@@ -1183,6 +1321,56 @@ async fn authenticate(
             )
             .await
         }
+        SessionAuthentication::KeyboardInteractive => {
+            return authenticate_keyboard_interactive(
+                session,
+                hop,
+                endpoint,
+                username,
+                interaction,
+                cancellation,
+                connection_timeout,
+            )
+            .await;
+        }
+    }?;
+
+    match outcome {
+        PrimaryAuthenticationOutcome::Success => Ok(()),
+        PrimaryAuthenticationOutcome::ContinueKeyboardInteractive => {
+            authenticate_keyboard_interactive(
+                session,
+                hop,
+                endpoint,
+                username,
+                interaction,
+                cancellation,
+                connection_timeout,
+            )
+            .await
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PrimaryAuthenticationOutcome {
+    Success,
+    ContinueKeyboardInteractive,
+}
+
+fn classify_primary_authentication(
+    authentication: AuthResult,
+    hop: &SessionHop,
+) -> Result<PrimaryAuthenticationOutcome, SessionError> {
+    match authentication {
+        AuthResult::Success => Ok(PrimaryAuthenticationOutcome::Success),
+        AuthResult::Failure {
+            remaining_methods,
+            partial_success: true,
+        } if remaining_methods.contains(&MethodKind::KeyboardInteractive) => {
+            Ok(PrimaryAuthenticationOutcome::ContinueKeyboardInteractive)
+        }
+        AuthResult::Failure { .. } => Err(SessionError::AuthenticationFailed { hop: hop.clone() }),
     }
 }
 
@@ -1193,7 +1381,7 @@ async fn authenticate_password(
     password: Zeroizing<String>,
     cancellation: &SessionCancellation,
     connection_timeout: Duration,
-) -> Result<(), SessionError> {
+) -> Result<PrimaryAuthenticationOutcome, SessionError> {
     let authentication = await_ssh_operation(
         session.authenticate_password(username, password.as_str()),
         cancellation,
@@ -1203,11 +1391,132 @@ async fn authenticate_password(
     )
     .await?;
 
-    if authentication.success() {
-        Ok(())
-    } else {
-        Err(SessionError::AuthenticationFailed { hop: hop.clone() })
+    classify_primary_authentication(authentication, hop)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn authenticate_keyboard_interactive(
+    session: &mut Handle<ClientHandler>,
+    hop: &SessionHop,
+    endpoint: &SshEndpoint,
+    username: &str,
+    interaction: &AuthenticationInteraction,
+    cancellation: &SessionCancellation,
+    connection_timeout: Duration,
+) -> Result<(), SessionError> {
+    let mut response = await_ssh_operation(
+        session.authenticate_keyboard_interactive_start(username, None),
+        cancellation,
+        connection_timeout,
+        hop.clone(),
+        "keyboard-interactive authentication",
+    )
+    .await?;
+    let mut rounds = 0usize;
+
+    loop {
+        match response {
+            KeyboardInteractiveAuthResponse::Success => return Ok(()),
+            KeyboardInteractiveAuthResponse::Failure { .. } => {
+                return Err(SessionError::KeyboardInteractiveAuthenticationFailed {
+                    hop: hop.clone(),
+                });
+            }
+            KeyboardInteractiveAuthResponse::InfoRequest {
+                name,
+                instructions,
+                prompts,
+            } => {
+                rounds += 1;
+                if rounds > MAX_KEYBOARD_INTERACTIVE_ROUNDS {
+                    return Err(SessionError::AuthenticationChallengeRoundsExceeded {
+                        hop: hop.clone(),
+                        maximum: MAX_KEYBOARD_INTERACTIVE_ROUNDS,
+                    });
+                }
+
+                let (name, instructions, prompts) =
+                    sanitize_authentication_challenge(name, instructions, prompts, hop)?;
+                let responses = if prompts.is_empty() {
+                    Vec::new()
+                } else {
+                    interaction
+                        .request(hop, endpoint, name, instructions, prompts)
+                        .await?
+                };
+
+                response = await_ssh_operation(
+                    session.authenticate_keyboard_interactive_respond(responses),
+                    cancellation,
+                    connection_timeout,
+                    hop.clone(),
+                    "keyboard-interactive response",
+                )
+                .await?;
+            }
+        }
     }
+}
+
+fn sanitize_authentication_challenge(
+    name: String,
+    instructions: String,
+    prompts: Vec<russh::client::Prompt>,
+    hop: &SessionHop,
+) -> Result<(String, String, Vec<AuthenticationPrompt>), SessionError> {
+    if prompts.len() > MAX_KEYBOARD_INTERACTIVE_PROMPTS {
+        return Err(SessionError::AuthenticationChallengeTooLarge { hop: hop.clone() });
+    }
+
+    let name =
+        sanitize_authentication_text(&name, MAX_KEYBOARD_INTERACTIVE_NAME_BYTES, false, hop)?;
+    let instructions = sanitize_authentication_text(
+        &instructions,
+        MAX_KEYBOARD_INTERACTIVE_INSTRUCTIONS_BYTES,
+        true,
+        hop,
+    )?;
+    let prompts = prompts
+        .into_iter()
+        .map(|prompt| {
+            sanitize_authentication_text(
+                &prompt.prompt,
+                MAX_KEYBOARD_INTERACTIVE_PROMPT_BYTES,
+                false,
+                hop,
+            )
+            .map(|text| AuthenticationPrompt {
+                text,
+                echo: prompt.echo,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok((name, instructions, prompts))
+}
+
+fn sanitize_authentication_text(
+    value: &str,
+    maximum_bytes: usize,
+    allow_newlines: bool,
+    hop: &SessionHop,
+) -> Result<String, SessionError> {
+    if value.len() > maximum_bytes {
+        return Err(SessionError::AuthenticationChallengeTooLarge { hop: hop.clone() });
+    }
+
+    Ok(value
+        .chars()
+        .map(|character| {
+            if allow_newlines && character == '\n' {
+                '\n'
+            } else if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1219,7 +1528,7 @@ async fn authenticate_private_key(
     passphrase: Option<Zeroizing<String>>,
     cancellation: &SessionCancellation,
     connection_timeout: Duration,
-) -> Result<(), SessionError> {
+) -> Result<PrimaryAuthenticationOutcome, SessionError> {
     if private_key.is_empty()
         || private_key.len() > MAX_PRIVATE_KEY_BYTES
         || passphrase
@@ -1274,11 +1583,7 @@ async fn authenticate_private_key(
     )
     .await?;
 
-    if authentication.success() {
-        Ok(())
-    } else {
-        Err(SessionError::AuthenticationFailed { hop: hop.clone() })
-    }
+    classify_primary_authentication(authentication, hop)
 }
 
 async fn authenticate_system_agent(
@@ -1288,7 +1593,7 @@ async fn authenticate_system_agent(
     identity_fingerprint_sha256: String,
     cancellation: &SessionCancellation,
     connection_timeout: Duration,
-) -> Result<(), SessionError> {
+) -> Result<PrimaryAuthenticationOutcome, SessionError> {
     if identity_fingerprint_sha256.trim().is_empty() {
         return Err(SessionError::SystemAgentIdentityUnavailable { hop: hop.clone() });
     }
@@ -1375,11 +1680,7 @@ async fn authenticate_system_agent(
         }
     };
 
-    if authentication.success() {
-        Ok(())
-    } else {
-        Err(SessionError::AuthenticationFailed { hop: hop.clone() })
-    }
+    classify_primary_authentication(authentication, hop)
 }
 
 type DynamicSystemAgent = AgentClient<Box<dyn AgentStream + Send + Unpin>>;
@@ -1564,6 +1865,123 @@ async fn emit_event(
     }
 }
 
+impl AuthenticationInteraction {
+    async fn request(
+        &self,
+        hop: &SessionHop,
+        endpoint: &SshEndpoint,
+        name: String,
+        instructions: String,
+        prompts: Vec<AuthenticationPrompt>,
+    ) -> Result<Vec<String>, SessionError> {
+        let request_id = self.next_request.fetch_add(1, Ordering::Relaxed);
+        let Some(_pending_request) =
+            PendingAuthenticationRequest::begin(request_id, self.pending_request.clone())
+        else {
+            return Err(SessionError::AuthenticationChallengeAlreadyPending { hop: hop.clone() });
+        };
+        let expected_response_count = prompts.len();
+        let info = AuthenticationChallengeInfo {
+            request_id,
+            hop: hop.clone(),
+            endpoint: endpoint.clone(),
+            name,
+            instructions,
+            prompts,
+        };
+
+        emit_event(
+            &self.events,
+            &self.cancellation,
+            SessionEvent::AuthenticationChallenge(info),
+        )
+        .await?;
+
+        let receive_response = async {
+            let mut responses = self.responses.lock().await;
+            loop {
+                match responses.recv().await {
+                    Some(response) if response.request_id == request_id => return Some(response),
+                    Some(response) => {
+                        warn!(
+                            expected_request_id = request_id,
+                            received_request_id = response.request_id,
+                            "ignored stale authentication response"
+                        );
+                    }
+                    None => return None,
+                }
+            }
+        };
+
+        let response = tokio::select! {
+            biased;
+            _ = self.cancellation.cancelled() => return Err(SessionError::Cancelled),
+            response = tokio::time::timeout(
+                self.response_timeout,
+                receive_response,
+            ) => {
+                response
+                    .ok()
+                    .flatten()
+                    .ok_or_else(|| SessionError::AuthenticationChallengeExpired {
+                        hop: hop.clone(),
+                    })?
+            }
+        };
+
+        let Some(mut responses) = response.responses else {
+            return Err(SessionError::AuthenticationCancelled { hop: hop.clone() });
+        };
+        if responses.len() != expected_response_count {
+            return Err(SessionError::AuthenticationResponseCountMismatch { hop: hop.clone() });
+        }
+
+        let mut total_bytes = 0usize;
+        for response in &responses {
+            if response.len() > MAX_KEYBOARD_INTERACTIVE_RESPONSE_BYTES {
+                return Err(SessionError::AuthenticationResponseTooLarge { hop: hop.clone() });
+            }
+            total_bytes = total_bytes
+                .checked_add(response.len())
+                .ok_or_else(|| SessionError::AuthenticationResponseTooLarge { hop: hop.clone() })?;
+            if total_bytes > MAX_KEYBOARD_INTERACTIVE_RESPONSES_BYTES {
+                return Err(SessionError::AuthenticationResponseTooLarge { hop: hop.clone() });
+            }
+        }
+
+        Ok(responses
+            .iter_mut()
+            .map(|response| std::mem::take(&mut **response))
+            .collect())
+    }
+}
+
+struct PendingAuthenticationRequest {
+    request_id: u64,
+    pending: Arc<AtomicU64>,
+}
+
+impl PendingAuthenticationRequest {
+    fn begin(request_id: u64, pending: Arc<AtomicU64>) -> Option<Self> {
+        pending
+            .compare_exchange(0, request_id, Ordering::AcqRel, Ordering::Acquire)
+            .ok()?;
+        Some(Self {
+            request_id,
+            pending,
+        })
+    }
+}
+
+impl Drop for PendingAuthenticationRequest {
+    fn drop(&mut self) {
+        let _ =
+            self.pending
+                .compare_exchange(self.request_id, 0, Ordering::AcqRel, Ordering::Acquire);
+    }
+}
+
 struct PendingHostKeyRequest {
     request_id: u64,
     pending: Arc<AtomicU64>,
@@ -1734,6 +2152,8 @@ pub enum SessionControlError {
     SessionClosed,
     #[error("host-key confirmation request is no longer active")]
     HostKeyRequestExpired,
+    #[error("authentication challenge request is no longer active")]
+    AuthenticationRequestExpired,
 }
 
 #[derive(Debug, Error)]
@@ -1752,6 +2172,22 @@ enum SessionError {
     },
     #[error("{hop} authentication failed")]
     AuthenticationFailed { hop: SessionHop },
+    #[error("{hop} keyboard-interactive authentication failed")]
+    KeyboardInteractiveAuthenticationFailed { hop: SessionHop },
+    #[error("{hop} authentication challenge was cancelled")]
+    AuthenticationCancelled { hop: SessionHop },
+    #[error("{hop} authentication challenge expired")]
+    AuthenticationChallengeExpired { hop: SessionHop },
+    #[error("{hop} authentication challenge is already pending")]
+    AuthenticationChallengeAlreadyPending { hop: SessionHop },
+    #[error("{hop} authentication challenge exceeded {maximum} rounds")]
+    AuthenticationChallengeRoundsExceeded { hop: SessionHop, maximum: usize },
+    #[error("{hop} authentication challenge is too large")]
+    AuthenticationChallengeTooLarge { hop: SessionHop },
+    #[error("{hop} authentication response count does not match")]
+    AuthenticationResponseCountMismatch { hop: SessionHop },
+    #[error("{hop} authentication response is too large")]
+    AuthenticationResponseTooLarge { hop: SessionHop },
     #[error("{hop} host key changed for {host}:{port}")]
     HostKeyChanged {
         hop: SessionHop,
@@ -1802,6 +2238,224 @@ pub struct PrivateKeyValidationError;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::borrow::Cow;
+
+    use russh::server::{self, Server as _};
+    use tokio::net::TcpListener;
+
+    #[derive(Clone, Copy)]
+    enum TestServerMode {
+        MultiRound,
+        EndlessEmpty,
+    }
+
+    #[derive(Clone)]
+    struct KeyboardInteractiveTestServer {
+        mode: TestServerMode,
+        round: usize,
+    }
+
+    impl server::Server for KeyboardInteractiveTestServer {
+        type Handler = Self;
+
+        fn new_client(&mut self, _peer_addr: Option<std::net::SocketAddr>) -> Self::Handler {
+            Self {
+                mode: self.mode,
+                round: 0,
+            }
+        }
+    }
+
+    impl server::Handler for KeyboardInteractiveTestServer {
+        type Error = russh::Error;
+
+        async fn auth_keyboard_interactive<'a>(
+            &'a mut self,
+            _user: &str,
+            _submethods: &str,
+            response: Option<server::Response<'a>>,
+        ) -> Result<server::Auth, Self::Error> {
+            let responses = response
+                .map(|responses| {
+                    responses
+                        .map(|response| String::from_utf8_lossy(&response).into_owned())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+
+            if matches!(self.mode, TestServerMode::EndlessEmpty) {
+                self.round += 1;
+                return Ok(server::Auth::Partial {
+                    name: Cow::Borrowed(""),
+                    instructions: Cow::Borrowed(""),
+                    prompts: Cow::Borrowed(&[]),
+                });
+            }
+
+            match (self.round, responses.as_slice()) {
+                (0, []) => {
+                    self.round = 1;
+                    Ok(server::Auth::Partial {
+                        name: Cow::Borrowed("AnySSH MFA"),
+                        instructions: Cow::Borrowed("Enter both values"),
+                        prompts: Cow::Borrowed(&[
+                            (Cow::Borrowed("Verification code:"), false),
+                            (Cow::Borrowed("Device name:"), true),
+                        ]),
+                    })
+                }
+                (1, [code, device]) if code == "654321" && device == "laptop" => {
+                    self.round = 2;
+                    Ok(server::Auth::Partial {
+                        name: Cow::Borrowed("Recovery"),
+                        instructions: Cow::Borrowed("Enter the backup code"),
+                        prompts: Cow::Borrowed(&[(Cow::Borrowed("Backup code:"), false)]),
+                    })
+                }
+                (2, [backup]) if backup == "backup-7" => {
+                    self.round = 3;
+                    Ok(server::Auth::Partial {
+                        name: Cow::Borrowed(""),
+                        instructions: Cow::Borrowed(""),
+                        prompts: Cow::Borrowed(&[]),
+                    })
+                }
+                (3, []) => Ok(server::Auth::Accept),
+                _ => Ok(server::Auth::reject()),
+            }
+        }
+
+        async fn channel_open_session(
+            &mut self,
+            _channel: russh::Channel<server::Msg>,
+            reply: server::ChannelOpenHandle,
+            _session: &mut server::Session,
+        ) -> Result<(), Self::Error> {
+            reply.accept().await;
+            Ok(())
+        }
+
+        async fn pty_request(
+            &mut self,
+            _channel: russh::ChannelId,
+            _term: &str,
+            _col_width: u32,
+            _row_height: u32,
+            _pix_width: u32,
+            _pix_height: u32,
+            _modes: &[(russh::Pty, u32)],
+            session: &mut server::Session,
+        ) -> Result<(), Self::Error> {
+            session.request_success();
+            Ok(())
+        }
+
+        async fn shell_request(
+            &mut self,
+            _channel: russh::ChannelId,
+            session: &mut server::Session,
+        ) -> Result<(), Self::Error> {
+            session.request_success();
+            Ok(())
+        }
+    }
+
+    async fn spawn_keyboard_interactive_test_server(
+        mode: TestServerMode,
+    ) -> (u16, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind test server");
+        let port = listener.local_addr().expect("test address").port();
+        let config = Arc::new(server::Config {
+            auth_rejection_time: Duration::ZERO,
+            auth_rejection_time_initial: Some(Duration::ZERO),
+            keys: vec![
+                ssh_key::PrivateKey::random(&mut rand::rng(), ssh_key::Algorithm::Ed25519)
+                    .expect("server host key"),
+            ],
+            ..Default::default()
+        });
+        let task = tokio::spawn(async move {
+            let mut server = KeyboardInteractiveTestServer { mode, round: 0 };
+            server
+                .run_on_socket(config, &listener)
+                .await
+                .expect("test server");
+        });
+        (port, task)
+    }
+
+    async fn complete_keyboard_interactive_session(
+        authentication: SessionAuthentication,
+        expected_rounds: &[&[&str]],
+    ) {
+        let (port, server) =
+            spawn_keyboard_interactive_test_server(TestServerMode::MultiRound).await;
+        let SpawnedSession {
+            control,
+            mut events,
+        } = spawn_session(SshSessionConfig {
+            target: SshConnectionConfig {
+                endpoint: SshEndpoint::new("127.0.0.1", port).expect("endpoint"),
+                username: "anyssh".to_owned(),
+                authentication,
+                host_key_policy: HostKeyPolicy::Prompt,
+            },
+            jump_hosts: Vec::new(),
+            terminal_size: TerminalSize::default(),
+            connection_timeout: Duration::from_secs(5),
+        });
+        let mut round = 0usize;
+        let mut authenticated = false;
+
+        while let Some(event) = tokio::time::timeout(Duration::from_secs(10), events.recv())
+            .await
+            .expect("session event timeout")
+        {
+            match event {
+                SessionEvent::Connecting => {}
+                SessionEvent::HostKey(info) => control
+                    .confirm_host_key(info.request_id, true)
+                    .await
+                    .expect("accept test Host Key"),
+                SessionEvent::AuthenticationChallenge(info) => {
+                    let responses = expected_rounds
+                        .get(round)
+                        .unwrap_or_else(|| panic!("unexpected challenge round {round}"));
+                    assert_eq!(info.hop, SessionHop::Target);
+                    assert_eq!(info.prompts.len(), responses.len());
+                    control
+                        .respond_authentication(
+                            info.request_id,
+                            Some(
+                                responses
+                                    .iter()
+                                    .map(|response| Zeroizing::new((*response).to_owned()))
+                                    .collect(),
+                            ),
+                        )
+                        .await
+                        .expect("answer challenge");
+                    round += 1;
+                }
+                SessionEvent::Authenticated => {
+                    authenticated = true;
+                    control.disconnect().await.expect("disconnect test session");
+                }
+                SessionEvent::Error(error) => panic!("unexpected SSH error: {error}"),
+                SessionEvent::Closed => break,
+                SessionEvent::HostKeyChanged(_)
+                | SessionEvent::Connected
+                | SessionEvent::Data(_)
+                | SessionEvent::ExitStatus(_) => {}
+            }
+        }
+
+        server.abort();
+        assert!(authenticated);
+        assert_eq!(round, expected_rounds.len());
+    }
 
     #[test]
     fn password_debug_output_is_redacted() {
@@ -1873,6 +2527,155 @@ mod tests {
     }
 
     #[test]
+    fn keyboard_interactive_debug_output_does_not_contain_responses_or_server_text() {
+        let authentication = SessionAuthentication::KeyboardInteractive;
+        let challenge = AuthenticationChallengeInfo {
+            request_id: 9,
+            hop: SessionHop::Target,
+            endpoint: SshEndpoint::new("example.com", 22).expect("endpoint"),
+            name: "Sensitive account notice".to_owned(),
+            instructions: "Enter a one-time code".to_owned(),
+            prompts: vec![AuthenticationPrompt {
+                text: "Verification code:".to_owned(),
+                echo: false,
+            }],
+        };
+
+        let authentication_debug = format!("{authentication:?}");
+        let challenge_debug = format!("{challenge:?}");
+        assert!(authentication_debug.contains("KeyboardInteractive"));
+        assert!(!challenge_debug.contains("Sensitive account notice"));
+        assert!(!challenge_debug.contains("Enter a one-time code"));
+        assert!(!challenge_debug.contains("Verification code"));
+        assert!(challenge_debug.contains("prompt_count"));
+    }
+
+    #[test]
+    fn primary_authentication_only_continues_after_explicit_partial_success() {
+        let hop = SessionHop::Target;
+        let keyboard_interactive = russh::MethodSet::from(&[MethodKind::KeyboardInteractive][..]);
+
+        assert_eq!(
+            classify_primary_authentication(AuthResult::Success, &hop)
+                .expect("successful primary authentication"),
+            PrimaryAuthenticationOutcome::Success
+        );
+        assert!(matches!(
+            classify_primary_authentication(
+                AuthResult::Failure {
+                    remaining_methods: keyboard_interactive.clone(),
+                    partial_success: false,
+                },
+                &hop,
+            ),
+            Err(SessionError::AuthenticationFailed { .. })
+        ));
+        assert_eq!(
+            classify_primary_authentication(
+                AuthResult::Failure {
+                    remaining_methods: keyboard_interactive,
+                    partial_success: true,
+                },
+                &hop,
+            )
+            .expect("partial success should continue"),
+            PrimaryAuthenticationOutcome::ContinueKeyboardInteractive
+        );
+    }
+
+    #[test]
+    fn authentication_challenge_is_bounded_and_sanitized() {
+        let hop = SessionHop::Target;
+        let (name, instructions, prompts) = sanitize_authentication_challenge(
+            "OTP\u{1b}[31m".to_owned(),
+            "Line one\r\nLine two\u{7}".to_owned(),
+            vec![russh::client::Prompt {
+                prompt: "Verification\u{1b} code:".to_owned(),
+                echo: false,
+            }],
+            &hop,
+        )
+        .expect("bounded challenge");
+
+        assert_eq!(name, "OTP [31m");
+        assert_eq!(instructions, "Line one \nLine two ");
+        assert_eq!(prompts[0].text, "Verification  code:");
+        assert!(!prompts[0].echo);
+
+        assert!(matches!(
+            sanitize_authentication_challenge(
+                "name".to_owned(),
+                "instructions".to_owned(),
+                (0..=MAX_KEYBOARD_INTERACTIVE_PROMPTS)
+                    .map(|_| russh::client::Prompt {
+                        prompt: "code".to_owned(),
+                        echo: false,
+                    })
+                    .collect(),
+                &hop,
+            ),
+            Err(SessionError::AuthenticationChallengeTooLarge { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn keyboard_interactive_authentication_supports_multiple_rounds_and_prompts() {
+        complete_keyboard_interactive_session(
+            SessionAuthentication::KeyboardInteractive,
+            &[&["654321", "laptop"], &["backup-7"]],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn keyboard_interactive_zero_prompt_rounds_are_bounded() {
+        let (port, server) =
+            spawn_keyboard_interactive_test_server(TestServerMode::EndlessEmpty).await;
+        let SpawnedSession {
+            control,
+            mut events,
+        } = spawn_session(SshSessionConfig {
+            target: SshConnectionConfig {
+                endpoint: SshEndpoint::new("127.0.0.1", port).expect("endpoint"),
+                username: "anyssh".to_owned(),
+                authentication: SessionAuthentication::KeyboardInteractive,
+                host_key_policy: HostKeyPolicy::Prompt,
+            },
+            jump_hosts: Vec::new(),
+            terminal_size: TerminalSize::default(),
+            connection_timeout: Duration::from_secs(5),
+        });
+        let mut error = None;
+
+        while let Some(event) = tokio::time::timeout(Duration::from_secs(10), events.recv())
+            .await
+            .expect("session event timeout")
+        {
+            match event {
+                SessionEvent::HostKey(info) => control
+                    .confirm_host_key(info.request_id, true)
+                    .await
+                    .expect("accept test Host Key"),
+                SessionEvent::AuthenticationChallenge(_) => {
+                    panic!("zero Prompt rounds must not open a UI challenge")
+                }
+                SessionEvent::Error(message) => error = Some(message),
+                SessionEvent::Closed => break,
+                SessionEvent::Connecting
+                | SessionEvent::Authenticated
+                | SessionEvent::Connected
+                | SessionEvent::Data(_)
+                | SessionEvent::ExitStatus(_)
+                | SessionEvent::HostKeyChanged(_) => {}
+            }
+        }
+
+        server.abort();
+        let error = error.expect("round limit error");
+        assert!(error.contains("exceeded 8 rounds"));
+    }
+
+    #[test]
     fn agent_identity_summaries_skip_certificates_and_sanitize_comments() {
         let key = ssh_key::PrivateKey::random(&mut rand::rng(), ssh_key::Algorithm::Ed25519)
             .expect("fixture key");
@@ -1921,12 +2724,15 @@ mod tests {
     async fn host_key_confirmation_requires_the_active_request() {
         let (command_sender, _command_receiver) = mpsc::channel(1);
         let (decision_sender, mut decision_receiver) = mpsc::channel(1);
+        let (authentication_sender, _authentication_receiver) = mpsc::channel(1);
         let pending = Arc::new(AtomicU64::new(17));
         let control = SessionControl {
             inner: Arc::new(SessionControlInner {
                 commands: command_sender,
                 host_key_decisions: decision_sender,
+                authentication_responses: authentication_sender,
                 pending_host_key_request: pending.clone(),
+                pending_authentication_request: Arc::new(AtomicU64::new(0)),
                 pending_observed_host_key: Arc::new(Mutex::new(None)),
                 cancellation: SessionCancellation::default(),
             }),
@@ -1951,9 +2757,197 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn authentication_response_requires_the_active_request_and_redacts_debug() {
+        let (command_sender, _command_receiver) = mpsc::channel(1);
+        let (decision_sender, _decision_receiver) = mpsc::channel(1);
+        let (authentication_sender, mut authentication_receiver) = mpsc::channel(1);
+        let pending_authentication = Arc::new(AtomicU64::new(41));
+        let control = SessionControl {
+            inner: Arc::new(SessionControlInner {
+                commands: command_sender,
+                host_key_decisions: decision_sender,
+                authentication_responses: authentication_sender,
+                pending_host_key_request: Arc::new(AtomicU64::new(0)),
+                pending_authentication_request: pending_authentication.clone(),
+                pending_observed_host_key: Arc::new(Mutex::new(None)),
+                cancellation: SessionCancellation::default(),
+            }),
+        };
+
+        assert_eq!(
+            control.respond_authentication(40, None).await,
+            Err(SessionControlError::AuthenticationRequestExpired)
+        );
+        control
+            .respond_authentication(41, Some(vec![Zeroizing::new("one-time-secret".to_owned())]))
+            .await
+            .expect("active response");
+
+        let response = authentication_receiver
+            .recv()
+            .await
+            .expect("response should reach SSH worker");
+        let debug = format!("{response:?}");
+        assert!(debug.contains("response_count"));
+        assert!(!debug.contains("one-time-secret"));
+        assert_eq!(pending_authentication.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test]
+    async fn authentication_interaction_binds_response_count_and_request_id() {
+        let (event_sender, mut event_receiver) = mpsc::channel(1);
+        let (response_sender, response_receiver) = mpsc::channel(1);
+        let pending = Arc::new(AtomicU64::new(0));
+        let interaction = AuthenticationInteraction {
+            events: event_sender,
+            responses: Arc::new(Mutex::new(response_receiver)),
+            pending_request: pending.clone(),
+            next_request: Arc::new(AtomicU64::new(7)),
+            response_timeout: AUTHENTICATION_RESPONSE_TIMEOUT,
+            cancellation: SessionCancellation::default(),
+        };
+        let endpoint = SshEndpoint::new("example.com", 22).expect("endpoint");
+        let request = tokio::spawn({
+            let interaction = interaction.clone();
+            let endpoint = endpoint.clone();
+            async move {
+                interaction
+                    .request(
+                        &SessionHop::Target,
+                        &endpoint,
+                        "OTP".to_owned(),
+                        "Enter both values".to_owned(),
+                        vec![
+                            AuthenticationPrompt {
+                                text: "Code:".to_owned(),
+                                echo: false,
+                            },
+                            AuthenticationPrompt {
+                                text: "Device:".to_owned(),
+                                echo: true,
+                            },
+                        ],
+                    )
+                    .await
+            }
+        });
+
+        let Some(SessionEvent::AuthenticationChallenge(challenge)) = event_receiver.recv().await
+        else {
+            panic!("challenge event");
+        };
+        assert_eq!(challenge.request_id, 7);
+        assert_eq!(challenge.prompts.len(), 2);
+        assert_eq!(pending.load(Ordering::Acquire), 7);
+
+        response_sender
+            .send(AuthenticationResponse {
+                request_id: 7,
+                responses: Some(vec![Zeroizing::new("only-one".to_owned())]),
+            })
+            .await
+            .expect("response");
+        assert!(matches!(
+            request.await.expect("request task"),
+            Err(SessionError::AuthenticationResponseCountMismatch { .. })
+        ));
+        assert_eq!(pending.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test]
+    async fn authentication_interaction_times_out_and_rejects_oversized_responses() {
+        let endpoint = SshEndpoint::new("example.com", 22).expect("endpoint");
+
+        let (event_sender, mut event_receiver) = mpsc::channel(1);
+        let (_response_sender, response_receiver) = mpsc::channel(1);
+        let pending = Arc::new(AtomicU64::new(0));
+        let interaction = AuthenticationInteraction {
+            events: event_sender,
+            responses: Arc::new(Mutex::new(response_receiver)),
+            pending_request: pending.clone(),
+            next_request: Arc::new(AtomicU64::new(1)),
+            response_timeout: Duration::from_millis(20),
+            cancellation: SessionCancellation::default(),
+        };
+        let request = tokio::spawn({
+            let interaction = interaction.clone();
+            let endpoint = endpoint.clone();
+            async move {
+                interaction
+                    .request(
+                        &SessionHop::Target,
+                        &endpoint,
+                        String::new(),
+                        String::new(),
+                        vec![AuthenticationPrompt {
+                            text: "OTP:".to_owned(),
+                            echo: false,
+                        }],
+                    )
+                    .await
+            }
+        });
+        assert!(matches!(
+            event_receiver.recv().await,
+            Some(SessionEvent::AuthenticationChallenge(_))
+        ));
+        assert!(matches!(
+            request.await.expect("request task"),
+            Err(SessionError::AuthenticationChallengeExpired { .. })
+        ));
+        assert_eq!(pending.load(Ordering::Acquire), 0);
+
+        let (event_sender, mut event_receiver) = mpsc::channel(1);
+        let (response_sender, response_receiver) = mpsc::channel(1);
+        let interaction = AuthenticationInteraction {
+            events: event_sender,
+            responses: Arc::new(Mutex::new(response_receiver)),
+            pending_request: Arc::new(AtomicU64::new(0)),
+            next_request: Arc::new(AtomicU64::new(2)),
+            response_timeout: AUTHENTICATION_RESPONSE_TIMEOUT,
+            cancellation: SessionCancellation::default(),
+        };
+        let request = tokio::spawn({
+            let interaction = interaction.clone();
+            async move {
+                interaction
+                    .request(
+                        &SessionHop::Target,
+                        &endpoint,
+                        String::new(),
+                        String::new(),
+                        vec![AuthenticationPrompt {
+                            text: "OTP:".to_owned(),
+                            echo: false,
+                        }],
+                    )
+                    .await
+            }
+        });
+        let Some(SessionEvent::AuthenticationChallenge(challenge)) = event_receiver.recv().await
+        else {
+            panic!("challenge event");
+        };
+        response_sender
+            .send(AuthenticationResponse {
+                request_id: challenge.request_id,
+                responses: Some(vec![Zeroizing::new(
+                    "x".repeat(MAX_KEYBOARD_INTERACTIVE_RESPONSE_BYTES + 1),
+                )]),
+            })
+            .await
+            .expect("oversized response");
+        assert!(matches!(
+            request.await.expect("request task"),
+            Err(SessionError::AuthenticationResponseTooLarge { .. })
+        ));
+    }
+
+    #[tokio::test]
     async fn observed_host_key_evidence_requires_the_active_request_and_stays_out_of_debug() {
         let (command_sender, _command_receiver) = mpsc::channel(1);
         let (decision_sender, _decision_receiver) = mpsc::channel(1);
+        let (authentication_sender, _authentication_receiver) = mpsc::channel(1);
         let pending = Arc::new(AtomicU64::new(23));
         let observed = ObservedHostKey {
             request_id: 23,
@@ -1967,7 +2961,9 @@ mod tests {
             inner: Arc::new(SessionControlInner {
                 commands: command_sender,
                 host_key_decisions: decision_sender,
+                authentication_responses: authentication_sender,
                 pending_host_key_request: pending,
+                pending_authentication_request: Arc::new(AtomicU64::new(0)),
                 pending_observed_host_key: Arc::new(Mutex::new(Some(observed))),
                 cancellation: SessionCancellation::default(),
             }),

@@ -1,7 +1,8 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { browserCredentialIsReferenced } from "./host-bridge";
 
-export type CredentialKind = "password" | "privateKey" | "systemAgent";
+export type CredentialKind =
+  "password" | "privateKey" | "systemAgent" | "keyboardInteractive";
 
 export interface CredentialSummary {
   id: string;
@@ -35,6 +36,15 @@ export interface SystemAgentCredentialInput {
   label: string;
   username: string;
   identityFingerprintSha256: string;
+}
+
+export interface KeyboardInteractiveCredentialInput {
+  label: string;
+  username: string;
+}
+
+export interface KeyboardInteractiveCredentialUpdate extends KeyboardInteractiveCredentialInput {
+  credentialId: string;
 }
 
 const BROWSER_SYSTEM_AGENT_IDENTITIES: SystemAgentIdentitySummary[] = [
@@ -174,6 +184,51 @@ export async function createSystemAgentCredential(
     return { ...summary };
   }
   return invoke<CredentialSummary>("credential_create_system_agent", {
+    request: input,
+  });
+}
+
+export async function createKeyboardInteractiveCredential(
+  input: KeyboardInteractiveCredentialInput,
+): Promise<CredentialSummary> {
+  if (!isTauri()) {
+    const summary = {
+      id: `browser-credential-${nextBrowserCredentialId++}`,
+      label: input.label,
+      username: input.username,
+      kind: "keyboardInteractive" as const,
+    };
+    browserCredentials.push(summary);
+    return { ...summary };
+  }
+  return invoke<CredentialSummary>("credential_create_keyboard_interactive", {
+    request: input,
+  });
+}
+
+export async function updateKeyboardInteractiveCredential(
+  input: KeyboardInteractiveCredentialUpdate,
+): Promise<CredentialSummary> {
+  if (!isTauri()) {
+    const index = browserCredentials.findIndex(
+      (credential) => credential.id === input.credentialId,
+    );
+    if (
+      index < 0 ||
+      browserCredentials[index]?.kind !== "keyboardInteractive"
+    ) {
+      throw new Error("Keyboard-interactive Credential was not found");
+    }
+    const summary = {
+      id: input.credentialId,
+      label: input.label,
+      username: input.username,
+      kind: "keyboardInteractive" as const,
+    };
+    browserCredentials[index] = summary;
+    return { ...summary };
+  }
+  return invoke<CredentialSummary>("credential_update_keyboard_interactive", {
     request: input,
   });
 }

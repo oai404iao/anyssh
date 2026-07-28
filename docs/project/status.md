@@ -86,7 +86,7 @@
 - Phase 1 首个计划已确定为 Group Schema v4 与 `Inherit / Set / Clear` 三态继承。
 - SQLCipher Schema v4 已引入 Group Repository、32 层 Parent 限制、三态
   Override、Rust-only Effective Connection Plan 和 Group/Host 配置 UI；当前
-  Schema v6 继续保留该模型。
+  Schema v7 继续保留该模型。
 - Group 继承的 Credential/Jump Route 已通过两跳 OpenSSH Saved Host Smoke；
   Browser、X11、Wayland/IBus 和 Workspace 回归通过。
 - Group Feature Commit `ece4fe7` 的 GitHub Actions Run `30279500562` 全部
@@ -126,12 +126,26 @@
   `30344638562` 全部九个 Job 通过；Browser、Linux Native、Windows Native、
   Android/Linux Build Hash、Error Log 和 Secret Scan 已人工检查。
 - ADR-0015 已接受，Known Host Repository and Durable TOFU ExecPlan 已完成。
+- SQLCipher Schema v7 已新增 `keyboard_interactive` Credential。该 Kind 只保存
+  Label/Username，Secret/Passphrase 四列必须全部为 `NULL`；v6 -> v7 迁移、
+  重启、引用/Known Host 保持、中断回滚和明文扫描已通过。
+- russh Core 已实现最多 8 Round/16 Prompt 的 RFC 4256 Challenge/Response、
+  `echo`、零 Prompt、Request/Hop/Round 绑定、Timeout、Cancel 和响应大小上限。
+  Password/Private Key/System Agent 仅在明确 Partial Success 后继续 OTP，普通
+  失败不降级。
+- Tauri/React 已实现 Typed Challenge Event/Response Command、局部 Request-scoped
+  Modal、Quick Auth Selector 和 metadata-only Interactive Credential Editor。
+- Alpine OpenSSH PAM 已验证纯 Interactive、Password/Private Key/System Agent
+  + OTP、Saved Host 和 Interactive Jump Hop。Browser、X11 和无 `DISPLAY`
+  Wayland/IBus Native Evidence 已通过并人工检查。
+- Windows QA 已接入 controlled russh Server、真实 EXE/WebView2 Challenge、
+  Interactive Credential 重启和 Response/Vault/Evidence 扫描；等待同 Commit
+  Windows Runner 复核后评审 ADR-0016。
 - CI 工作流。
 
 当前仓库尚未完成：
 
-- OpenSSH `known_hosts` 导入/导出、Keyboard-interactive/OTP、Forwarding 和
-  后续 Key 管理。
+- OpenSSH `known_hosts` 导入/导出、Forwarding、多 Tab 和后续 Key 管理。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
 - Android Runtime、Content URI、软键盘与生命周期验证。
 - iOS 构建验证；当前没有 macOS/Xcode 环境，按维护者指示暂缓。

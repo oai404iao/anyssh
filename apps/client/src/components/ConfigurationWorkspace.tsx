@@ -1,10 +1,12 @@
 import { FormEvent, useMemo, useState } from "react";
 import {
+  createKeyboardInteractiveCredential,
   createPasswordCredential,
   createSystemAgentCredential,
   deleteCredential,
   importPrivateKeyCredential,
   listSystemAgentIdentities,
+  updateKeyboardInteractiveCredential,
   updatePasswordCredential,
   type CredentialSummary,
   type SystemAgentIdentitySummary,
@@ -863,6 +865,12 @@ type CredentialDraft =
       label: string;
       username: string;
       identityFingerprintSha256: string;
+    }
+  | {
+      kind: "keyboardInteractive";
+      credentialId: string | null;
+      label: string;
+      username: string;
     };
 
 function CredentialManager({
@@ -894,6 +902,17 @@ function CredentialManager({
       label: credential.label,
       username: credential.username,
       password: "",
+    });
+  }
+
+  function editKeyboardInteractive(credential: CredentialSummary) {
+    setError(null);
+    setNotice(null);
+    setDraft({
+      kind: "keyboardInteractive",
+      credentialId: credential.id,
+      label: credential.label,
+      username: credential.username,
     });
   }
 
@@ -966,6 +985,19 @@ function CredentialManager({
           username: draft.username,
           identityFingerprintSha256: draft.identityFingerprintSha256,
         });
+      } else if (draft.kind === "keyboardInteractive") {
+        if (draft.credentialId) {
+          await updateKeyboardInteractiveCredential({
+            credentialId: draft.credentialId,
+            label: draft.label,
+            username: draft.username,
+          });
+        } else {
+          await createKeyboardInteractiveCredential({
+            label: draft.label,
+            username: draft.username,
+          });
+        }
       } else if (draft.credentialId) {
         await updatePasswordCredential({
           credentialId: draft.credentialId,
@@ -1017,6 +1049,22 @@ function CredentialManager({
     <ManagerShell
       action={
         <div className="manager-actions">
+          <button
+            className="secondary-button compact-button"
+            onClick={() => {
+              setError(null);
+              setNotice(null);
+              setDraft({
+                kind: "keyboardInteractive",
+                credentialId: null,
+                label: "",
+                username: "",
+              });
+            }}
+            type="button"
+          >
+            New interactive
+          </button>
           <button
             className="secondary-button compact-button"
             onClick={() => void openSystemAgentEditor()}
@@ -1077,7 +1125,9 @@ function CredentialManager({
                   ? "PK"
                   : credential.kind === "systemAgent"
                     ? "AG"
-                    : "PW"}
+                    : credential.kind === "keyboardInteractive"
+                      ? "KI"
+                      : "PW"}
               </div>
               <div className="resource-main">
                 <strong>{credential.label}</strong>
@@ -1087,7 +1137,9 @@ function CredentialManager({
                   <span>
                     {credential.kind === "systemAgent"
                       ? "External signer"
-                      : "Secret hidden"}
+                      : credential.kind === "keyboardInteractive"
+                        ? "Responses are session-only"
+                        : "Secret hidden"}
                   </span>
                 </div>
               </div>
@@ -1098,6 +1150,14 @@ function CredentialManager({
                     type="button"
                   >
                     Replace password
+                  </button>
+                )}
+                {credential.kind === "keyboardInteractive" && (
+                  <button
+                    onClick={() => editKeyboardInteractive(credential)}
+                    type="button"
+                  >
+                    Edit metadata
                   </button>
                 )}
                 <button
@@ -1126,9 +1186,13 @@ function CredentialManager({
               ? "Import Private Key"
               : draft.kind === "systemAgent"
                 ? "New System Agent Credential"
-                : draft.credentialId
-                  ? "Replace Password"
-                  : "New Password Credential"
+                : draft.kind === "keyboardInteractive"
+                  ? draft.credentialId
+                    ? "Edit Interactive Credential"
+                    : "New Interactive Credential"
+                  : draft.credentialId
+                    ? "Replace Password"
+                    : "New Password Credential"
           }
         >
           <form className="editor-form" onSubmit={saveCredential}>
@@ -1187,7 +1251,7 @@ function CredentialManager({
                   that also stays outside the WebView.
                 </p>
               </div>
-            ) : (
+            ) : draft.kind === "systemAgent" ? (
               <>
                 <label>
                   SSH Agent identity
@@ -1231,6 +1295,15 @@ function CredentialManager({
                   </p>
                 </div>
               </>
+            ) : (
+              <div className="security-note">
+                <strong>Session-only responses</strong>
+                <p>
+                  AnySSH stores only this label and username. Verification
+                  codes, challenge responses, OTP seeds, and prompt rules are
+                  never saved.
+                </p>
+              </div>
             )}
             {error && <ManagerError message={error} />}
             <EditorActions
@@ -1240,7 +1313,9 @@ function CredentialManager({
                   ? "Choose private key"
                   : draft.kind === "systemAgent"
                     ? "Save Agent Credential"
-                    : "Save Credential"
+                    : draft.kind === "keyboardInteractive"
+                      ? "Save Interactive Credential"
+                      : "Save Credential"
               }
             />
           </form>
@@ -1800,6 +1875,8 @@ function kindLabel(kind: CredentialSummary["kind"]) {
       return "Private Key";
     case "systemAgent":
       return "System Agent";
+    case "keyboardInteractive":
+      return "Keyboard-interactive";
     case "password":
       return "Password";
   }

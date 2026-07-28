@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  createKeyboardInteractiveCredential,
   createPasswordCredential,
   createSystemAgentCredential,
   deleteCredential,
@@ -7,6 +8,7 @@ import {
   listCredentials,
   listSystemAgentIdentities,
   resetBrowserCredentialsForTests,
+  updateKeyboardInteractiveCredential,
   updatePasswordCredential,
 } from "./credential-bridge";
 import { resetBrowserHostsAndRoutesForTests } from "./host-bridge";
@@ -95,5 +97,34 @@ describe("browser preview credential bridge", () => {
         identityFingerprintSha256: "SHA256:missing",
       }),
     ).rejects.toThrow("no longer available");
+  });
+
+  it("stores only metadata for Keyboard-interactive Credentials", async () => {
+    const created = await createKeyboardInteractiveCredential({
+      label: "Production OTP",
+      username: "interactive-user",
+    });
+    const updated = await updateKeyboardInteractiveCredential({
+      credentialId: created.id,
+      label: "Updated OTP",
+      username: "updated-interactive-user",
+    });
+
+    expect(created).toMatchObject({
+      label: "Production OTP",
+      username: "interactive-user",
+      kind: "keyboardInteractive",
+    });
+    expect(updated).toMatchObject({
+      id: created.id,
+      label: "Updated OTP",
+      username: "updated-interactive-user",
+      kind: "keyboardInteractive",
+    });
+    const serialized = JSON.stringify([created, updated]);
+    expect(serialized).not.toContain("otpSeed");
+    expect(serialized).not.toContain("response");
+    expect(serialized).not.toContain("promptRule");
+    await expect(listCredentials()).resolves.toEqual([updated]);
   });
 });

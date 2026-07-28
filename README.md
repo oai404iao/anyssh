@@ -26,22 +26,24 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
 - 未加密/口令保护 OpenSSH 私钥认证，以及密码 Jump + 私钥 Target 混合路由。
 - Endpoint-scoped Known Host Repository、Durable TOFU、重启免提示、原生
   Forget 和 Changed-Key 硬阻断。
+- RFC 4256 Keyboard-interactive/OTP、多轮 Challenge/Response、Partial-success
+  第二因子和 Session-bound Response。
 - 4 MiB 终端输出下的 64 项 Core Queue、8 项 WebView Window 和 xterm Ack 背压。
 - 随机 VMK、Argon2id PIN Slot、HKDF 子密钥和版本化 Bootstrap。
 - SQLCipher 4.10 整库加密与 XChaCha20-Poly1305 Credential 字段加密。
 - 专用 DB Actor Thread、16 项有界 Command Queue 和 oneshot Response。
-- Schema v6 Credential/Group/Host/Jump Route/Known Host Repository；Group 与 Host 使用显式
+- Schema v7 Credential/Group/Host/Jump Route/Known Host Repository；Group 与 Host 使用显式
   `Inherit / Set / Clear` 引用状态，Route 只保存有序 Host ID。
 - Group Parent Chain 最多 32 层；有效 Credential/Route 在 DB Actor 内解析，
   WebView 只获得 metadata-only Summary。
 - Saved Host 连接 IPC 只提交 Host ID；DB Actor 在 Rust 内解析 Credential 和
   Route，SSH Core 最多执行 32 个有序 Jump Host。
 - Schema v2 Credential Repository，以及 Credential ID -> Vault -> SSH Core
-  的 Rust-only Private Key/System Agent 路径。
+  的 Rust-only Private Key/System Agent/Keyboard-interactive 路径。
 - Linux `SSH_AUTH_SOCK` 和 Windows OpenSSH Agent Named Pipe 的
   Fingerprint-selected 外部签名；Agent Private Key 不进入 Vault/WebView。
-- Group、Host、Password/Private Key/System Agent Credential 和有序 Jump
-  Route 的产品配置 UI。
+- Group、Host、Password/Private Key/System Agent/Keyboard-interactive
+  Credential 和有序 Jump Route 的产品配置 UI。
 - Rust-owned Native File Picker 私钥导入；Path 和 Key 内容不进入 WebView IPC，
   Linux/Windows Desktop 的加密 OpenSSH Key 使用原生 Secure Passphrase Prompt。
 - 原生 Vault 创建、锁定和解锁界面。
@@ -58,6 +60,9 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
   OpenSSH Key；错误 Passphrase 重试、源文件删除、真实 SSH 和重启恢复均通过。
 - Linux X11 和 Windows 2025 Runner 已验证首次 TOFU、二次免提示、原生 Forget、
   重新 TOFU、进程重启和同 Endpoint OpenSSH Host Key Rotation 硬阻断。
+- Linux X11/Wayland 已通过真实 OpenSSH PAM 完成纯 Keyboard-interactive
+  Challenge；Docker OpenSSH 还覆盖 Password/Private Key/System Agent
+  Partial-success + OTP、Saved Host 和 Interactive Jump Hop。
 - Head `a75da9cf6d4ba73f8b93257c683fb97ad2c0b90f` 的 GitHub Actions Run
   `30344638562` 九个 Job 全部通过，关键截图、Error Log、Build Hash 和测试
   Secret Scan 已人工检查。

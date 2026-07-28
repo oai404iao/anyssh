@@ -83,6 +83,9 @@ async fn changed_host_key_is_blocked_without_a_second_prompt() {
                 SessionEvent::Connecting => {}
                 SessionEvent::HostKey(_) => saw_host_key_prompt = true,
                 SessionEvent::HostKeyChanged(info) => changed = Some(info),
+                SessionEvent::AuthenticationChallenge(info) => {
+                    panic!("fixture unexpectedly requested interactive authentication: {info:?}")
+                }
                 SessionEvent::Authenticated => saw_authenticated = true,
                 SessionEvent::Connected => saw_connected = true,
                 SessionEvent::Error(message) => {
@@ -134,6 +137,9 @@ async fn expect_success(spawned: SpawnedSession, expect_prompt: bool) -> Option<
                 }
                 SessionEvent::HostKeyChanged(info) => {
                     panic!("verified host unexpectedly changed: {info:?}")
+                }
+                SessionEvent::AuthenticationChallenge(info) => {
+                    panic!("fixture unexpectedly requested interactive authentication: {info:?}")
                 }
                 SessionEvent::Connected => {
                     saw_connected = true;

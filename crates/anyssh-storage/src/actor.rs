@@ -1306,9 +1306,17 @@ mod tests {
             )
             .await
             .expect("create system-agent credential");
+        let interactive_summary = actor
+            .create_credential(
+                "Interactive credential".to_owned(),
+                "interactive-user".to_owned(),
+                CredentialSecret::KeyboardInteractive,
+            )
+            .await
+            .expect("create keyboard-interactive credential");
 
         let summaries = actor.list_credentials().await.expect("list credentials");
-        assert_eq!(summaries.len(), 3);
+        assert_eq!(summaries.len(), 4);
         let debug = format!("{summaries:?}");
         assert!(!debug.contains("password-secret"));
         assert!(!debug.contains("private-key-secret"));
@@ -1331,6 +1339,14 @@ mod tests {
         let debug = format!("{resolved:?}");
         assert!(debug.contains("<selected>"));
         assert!(!debug.contains("actor-agent-selector"));
+
+        let (username, secret) = actor
+            .resolve_credential(interactive_summary.id().to_owned())
+            .await
+            .expect("resolve keyboard-interactive credential")
+            .into_parts();
+        assert_eq!(username, "interactive-user");
+        assert!(matches!(secret, CredentialSecret::KeyboardInteractive));
 
         actor
             .update_credential(

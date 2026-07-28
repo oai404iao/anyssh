@@ -265,7 +265,8 @@ static void type_character(Display *display, char character) {
 static int usage(const char *program) {
   fprintf(stderr,
           "usage: %s probe [SCREENSHOT.bmp] | click X Y | type TEXT | "
-          "enter | ctrl-a | ctrl-l | backspace | space | tab\n",
+          "enter | ctrl-a | ctrl-l | backspace | space | tab | shift-tab | "
+          "down | up\n",
           program);
   return 1;
 }
@@ -319,6 +320,12 @@ int main(int argc, char **argv) {
     send_key(display, XK_space, 0);
   } else if (argc == 2 && strcmp(argv[1], "tab") == 0) {
     send_key(display, XK_Tab, 0);
+  } else if (argc == 2 && strcmp(argv[1], "shift-tab") == 0) {
+    send_key(display, XK_Tab, 1);
+  } else if (argc == 2 && strcmp(argv[1], "down") == 0) {
+    send_key(display, XK_Down, 0);
+  } else if (argc == 2 && strcmp(argv[1], "up") == 0) {
+    send_key(display, XK_Up, 0);
   } else {
     result = usage(argv[0]);
   }

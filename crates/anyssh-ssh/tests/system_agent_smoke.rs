@@ -54,6 +54,9 @@ async fn selected_system_agent_identity_authenticates_without_private_key_materi
                 SessionEvent::HostKeyChanged(info) => {
                     panic!("fixture host key unexpectedly changed: {info:?}")
                 }
+                SessionEvent::AuthenticationChallenge(info) => {
+                    panic!("fixture unexpectedly requested interactive authentication: {info:?}")
+                }
                 SessionEvent::Connected => {
                     connected = true;
                     control
@@ -114,6 +117,9 @@ async fn selected_system_agent_identity_authenticates_without_private_key_materi
                 | SessionEvent::Data(_)
                 | SessionEvent::ExitStatus(_)
                 | SessionEvent::HostKeyChanged(_) => {}
+                SessionEvent::AuthenticationChallenge(info) => {
+                    panic!("fixture unexpectedly requested interactive authentication: {info:?}")
+                }
             }
         }
     })

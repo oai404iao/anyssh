@@ -8,6 +8,7 @@ import {
   connectSavedHost,
   connectSsh,
   disconnectSsh,
+  respondAuthentication,
   sendSshInput,
   type SshClientEvent,
 } from "./ssh-bridge";
@@ -150,6 +151,69 @@ describe("browser preview SSH bridge", () => {
       "authenticated",
       "connected",
     ]);
+
+    await disconnectSsh(sessionId);
+    vi.useRealTimers();
+  });
+
+  it("binds browser preview authentication responses to the active challenge", async () => {
+    vi.useFakeTimers();
+    const events: SshClientEvent[] = [];
+    const sessionId = await connectSsh(
+      {
+        host: "multi-otp.example",
+        port: 22,
+        authentication: {
+          kind: "keyboardInteractive",
+          username: "anyssh",
+        },
+        columns: 80,
+        rows: 24,
+      },
+      {
+        onEvent: (event) => events.push(event),
+        onData: () => {},
+      },
+    );
+
+    await vi.runAllTimersAsync();
+    const hostKey = events.find((event) => event.type === "hostKey");
+    if (hostKey?.type !== "hostKey") {
+      throw new Error("OTP preview Host Key was not emitted");
+    }
+    await confirmHostKey(sessionId, hostKey.requestId, true);
+    await vi.runAllTimersAsync();
+
+    const challenge = events.find(
+      (event) => event.type === "authenticationChallenge",
+    );
+    if (challenge?.type !== "authenticationChallenge") {
+      throw new Error("authentication challenge was not emitted");
+    }
+    expect(challenge).toMatchObject({
+      hop: { kind: "target" },
+      host: "multi-otp.example",
+      prompts: [
+        { text: "Verification code:", echo: false },
+        { text: "Device name:", echo: true },
+      ],
+    });
+    expect(events.some((event) => event.type === "authenticated")).toBe(false);
+
+    await respondAuthentication(sessionId, challenge.requestId, [
+      "654321",
+      "qa-laptop",
+    ]);
+    await vi.runAllTimersAsync();
+    expect(events.map((event) => event.type)).toEqual([
+      "connecting",
+      "hostKey",
+      "authenticationChallenge",
+      "authenticated",
+      "connected",
+    ]);
+    expect(JSON.stringify(events)).not.toContain("654321");
+    expect(JSON.stringify(events)).not.toContain("qa-laptop");
 
     await disconnectSsh(sessionId);
     vi.useRealTimers();

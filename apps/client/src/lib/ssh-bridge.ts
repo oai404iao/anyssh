@@ -34,6 +34,10 @@ export type SshAuthenticationRequest =
       password: string;
     }
   | {
+      kind: "keyboardInteractive";
+      username: string;
+    }
+  | {
       kind: "credential";
       credentialId: string;
     };
@@ -61,10 +65,27 @@ export interface HostKeyChangedEvent {
   trustedFingerprintsSha256: string[];
 }
 
+export interface AuthenticationPrompt {
+  text: string;
+  echo: boolean;
+}
+
+export interface AuthenticationChallengeEvent {
+  type: "authenticationChallenge";
+  requestId: number;
+  hop: SshSessionHop;
+  host: string;
+  port: number;
+  name: string;
+  instructions: string;
+  prompts: AuthenticationPrompt[];
+}
+
 export type SshClientEvent =
   | { type: "connecting" }
   | HostKeyEvent
   | HostKeyChangedEvent
+  | AuthenticationChallengeEvent
   | { type: "authenticated" }
   | { type: "connected" }
   | { type: "exitStatus"; code: number }
@@ -82,12 +103,14 @@ interface PreviewSession {
   hostKeys: HostKeyEvent[];
   hostKeyIndex: number;
   changedHostKey: HostKeyChangedEvent | null;
+  authenticationChallenge: AuthenticationChallengeEvent | null;
   connected: boolean;
 }
 
 const previewSessions = new Map<string, PreviewSession>();
 let nextPreviewId = 1;
 let nextHostKeyRequestId = 1;
+let nextAuthenticationRequestId = 1;
 const encoder = new TextEncoder();
 
 export async function connectSsh(
@@ -172,6 +195,21 @@ export async function confirmHostKey(
   await invoke("ssh_confirm_host_key", { sessionId, requestId, accepted });
 }
 
+export async function respondAuthentication(
+  sessionId: string,
+  requestId: number,
+  responses: string[] | null,
+): Promise<void> {
+  if (!isNativeRuntime) {
+    respondPreviewAuthentication(sessionId, requestId, responses);
+    return;
+  }
+
+  await invoke("ssh_respond_authentication", {
+    request: { sessionId, requestId, responses },
+  });
+}
+
 export async function sendSshInput(
   sessionId: string,
   input: string,
@@ -219,12 +257,14 @@ function connectPreview(
 ): Promise<string> {
   const sessionId = `preview-${nextPreviewId++}`;
   const { hostKeys, changedHostKey } = createPreviewHostKeys(request);
+  const authenticationChallenge = createPreviewAuthenticationChallenge(request);
   previewSessions.set(sessionId, {
     callbacks,
     commandBuffer: "",
     hostKeys,
     hostKeyIndex: 0,
     changedHostKey,
+    authenticationChallenge,
     connected: false,
   });
 
@@ -238,6 +278,34 @@ function connectPreview(
   );
 
   return Promise.resolve(sessionId);
+}
+
+function respondPreviewAuthentication(
+  sessionId: string,
+  requestId: number,
+  responses: string[] | null,
+) {
+  const session = previewSessions.get(sessionId);
+  const challenge = session?.authenticationChallenge;
+  if (!session || challenge?.requestId !== requestId) return;
+
+  session.authenticationChallenge = null;
+  if (responses === null) {
+    session.callbacks.onEvent({ type: "closed" });
+    previewSessions.delete(sessionId);
+    return;
+  }
+  if (responses.length !== challenge.prompts.length) {
+    session.callbacks.onEvent({
+      type: "error",
+      message: "Authentication response count does not match.",
+    });
+    session.callbacks.onEvent({ type: "closed" });
+    previewSessions.delete(sessionId);
+    return;
+  }
+
+  window.setTimeout(() => finishPreviewAuthentication(sessionId), 120);
 }
 
 function confirmPreviewHostKey(
@@ -375,6 +443,42 @@ function createPreviewHostKeys(request: ConnectRequest): {
   return { hostKeys, changedHostKey: null };
 }
 
+function createPreviewAuthenticationChallenge(
+  request: ConnectRequest,
+): AuthenticationChallengeEvent | null {
+  const host = request.host.trim().replace(/\.$/, "").toLowerCase();
+  if (host !== "otp.example" && host !== "multi-otp.example") {
+    return null;
+  }
+
+  if (host === "multi-otp.example") {
+    return {
+      type: "authenticationChallenge",
+      requestId: nextAuthenticationRequestId++,
+      hop: { kind: "target" },
+      host: request.host,
+      port: request.port,
+      name: "Multi-factor authentication",
+      instructions: "Enter the verification code and device name.",
+      prompts: [
+        { text: "Verification code:", echo: false },
+        { text: "Device name:", echo: true },
+      ],
+    };
+  }
+
+  return {
+    type: "authenticationChallenge",
+    requestId: nextAuthenticationRequestId++,
+    hop: { kind: "target" },
+    host: request.host,
+    port: request.port,
+    name: "Multi-factor authentication",
+    instructions: "Enter the current verification code.",
+    prompts: [{ text: "Verification code:", echo: false }],
+  };
+}
+
 function advancePreviewHandshake(sessionId: string) {
   const session = previewSessions.get(sessionId);
   const hostKey = session?.hostKeys[session.hostKeyIndex];
@@ -386,6 +490,10 @@ function advancePreviewHandshake(sessionId: string) {
     session.callbacks.onEvent(session.changedHostKey);
     session.callbacks.onEvent({ type: "closed" });
     previewSessions.delete(sessionId);
+    return;
+  }
+  if (session?.authenticationChallenge) {
+    session.callbacks.onEvent(session.authenticationChallenge);
     return;
   }
   if (session) {

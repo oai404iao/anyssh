@@ -43,6 +43,9 @@ async fn terminal_output_applies_bounded_backpressure() {
                 SessionEvent::HostKeyChanged(info) => {
                     panic!("fixture host key unexpectedly changed: {info:?}")
                 }
+                SessionEvent::AuthenticationChallenge(info) => {
+                    panic!("fixture unexpectedly requested interactive authentication: {info:?}")
+                }
                 SessionEvent::Connected => {
                     saw_connected = true;
                     control

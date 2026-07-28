@@ -147,6 +147,9 @@ async fn expect_shell_success(spawned: SpawnedSession, marker: &str) -> Vec<Sess
                 SessionEvent::HostKeyChanged(info) => {
                     panic!("fixture host key unexpectedly changed: {info:?}")
                 }
+                SessionEvent::AuthenticationChallenge(info) => {
+                    panic!("fixture unexpectedly requested interactive authentication: {info:?}")
+                }
                 SessionEvent::Authenticated => saw_authenticated = true,
                 SessionEvent::Connected => {
                     saw_connected = true;
@@ -197,6 +200,9 @@ async fn expect_failure(spawned: SpawnedSession) -> String {
                 }
                 SessionEvent::HostKeyChanged(info) => {
                     panic!("fixture host key unexpectedly changed: {info:?}")
+                }
+                SessionEvent::AuthenticationChallenge(info) => {
+                    panic!("fixture unexpectedly requested interactive authentication: {info:?}")
                 }
                 SessionEvent::Authenticated => saw_authenticated = true,
                 SessionEvent::Connected => saw_connected = true,

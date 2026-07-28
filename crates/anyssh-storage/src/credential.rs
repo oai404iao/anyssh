@@ -17,12 +17,14 @@ const MAX_SYSTEM_AGENT_FINGERPRINT_BYTES: usize = 256;
 const PASSWORD_KIND: &str = "password";
 const PRIVATE_KEY_KIND: &str = "private_key";
 const SYSTEM_AGENT_KIND: &str = "system_agent";
+const KEYBOARD_INTERACTIVE_KIND: &str = "keyboard_interactive";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CredentialKind {
     Password,
     PrivateKey,
     SystemAgent,
+    KeyboardInteractive,
 }
 
 impl CredentialKind {
@@ -31,6 +33,7 @@ impl CredentialKind {
             Self::Password => PASSWORD_KIND,
             Self::PrivateKey => PRIVATE_KEY_KIND,
             Self::SystemAgent => SYSTEM_AGENT_KIND,
+            Self::KeyboardInteractive => KEYBOARD_INTERACTIVE_KIND,
         }
     }
 
@@ -39,6 +42,7 @@ impl CredentialKind {
             PASSWORD_KIND => Ok(Self::Password),
             PRIVATE_KEY_KIND => Ok(Self::PrivateKey),
             SYSTEM_AGENT_KIND => Ok(Self::SystemAgent),
+            KEYBOARD_INTERACTIVE_KIND => Ok(Self::KeyboardInteractive),
             _ => Err(StorageError::RecordIntegrity),
         }
     }
@@ -55,6 +59,7 @@ pub enum CredentialSecret {
     SystemAgent {
         identity_fingerprint_sha256: Zeroizing<String>,
     },
+    KeyboardInteractive,
 }
 
 impl CredentialSecret {
@@ -63,6 +68,7 @@ impl CredentialSecret {
             Self::Password { .. } => CredentialKind::Password,
             Self::PrivateKey { .. } => CredentialKind::PrivateKey,
             Self::SystemAgent { .. } => CredentialKind::SystemAgent,
+            Self::KeyboardInteractive => CredentialKind::KeyboardInteractive,
         }
     }
 
@@ -83,6 +89,7 @@ impl CredentialSecret {
             Self::SystemAgent {
                 identity_fingerprint_sha256,
             } if valid_system_agent_fingerprint(identity_fingerprint_sha256) => Ok(()),
+            Self::KeyboardInteractive => Ok(()),
             Self::Password { .. } | Self::PrivateKey { .. } | Self::SystemAgent { .. } => {
                 Err(StorageError::InvalidCredential)
             }
@@ -106,6 +113,9 @@ impl fmt::Debug for CredentialSecret {
                 .debug_struct("SystemAgent")
                 .field("identity_fingerprint_sha256", &"<selected>")
                 .finish(),
+            Self::KeyboardInteractive => formatter
+                .debug_struct("KeyboardInteractive")
+                .finish_non_exhaustive(),
         }
     }
 }
@@ -279,10 +289,12 @@ mod tests {
                 "SHA256:agent-fingerprint-do-not-log".to_owned(),
             ),
         };
+        let interactive = CredentialSecret::KeyboardInteractive;
 
-        let debug = format!("{password:?} {key:?} {agent:?}");
+        let debug = format!("{password:?} {key:?} {agent:?} {interactive:?}");
         assert!(debug.contains("<redacted>"));
         assert!(debug.contains("<selected>"));
+        assert!(debug.contains("KeyboardInteractive"));
         assert!(!debug.contains("password-do-not-log"));
         assert!(!debug.contains("private-key-do-not-log"));
         assert!(!debug.contains("passphrase-do-not-log"));

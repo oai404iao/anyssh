@@ -17,6 +17,9 @@
 | Known Host | 绑定逻辑 SSH Endpoint 与一个受信任 Host Public Key Set 的记录 |
 | Changed-Key | 已知 Endpoint 收到未匹配 Host Key 时必须硬阻断的状态 |
 | Jump Host | 通过 SSH `direct-tcpip` Channel 访问下一跳的主机 |
+| Keyboard-interactive | RFC 4256 定义的多轮 SSH Challenge/Response 认证方法 |
+| Partial Success | 第一认证因子成功，但 Server 仍要求后续认证方法的 SSH 状态 |
+| Session-bound Response | 只可用于创建它的 Session/Request/Hop/Round 的临时响应 |
 | Dynamic Forward | 通过 SSH 暴露本地 SOCKS 服务的转发方式 |
 | Step-up Authentication | 查看或导出秘密前再次要求用户认证 |
 | WebView | Tauri 中运行 React/xterm.js UI 的平台网页视图 |
