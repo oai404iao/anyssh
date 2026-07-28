@@ -153,6 +153,9 @@ pnpm format:check
   Secret。
 - 2026-07-28：GTK Rust Binding `0.18.2` 为 MIT，Windows Rust Binding
   `0.61.3` 为 MIT OR Apache-2.0；两者只在目标平台链接，未扩大移动端依赖。
+- 2026-07-28：CI Run `30324013273` 首次 Windows 失败不是 Prompt 或 SSH
+  错误；`pnpm --filter ... exec` 把 Node CWD 切到 `apps/client`，导致 QA Driver
+  被错误解析为 `apps/client/scripts/...`。改为从 `import.meta.url` 解析仓库根。
 
 ## Decision Log
 

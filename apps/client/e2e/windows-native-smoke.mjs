@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { chromium, expect } from "@playwright/test";
 
 const assert = expect.configure({ timeout: 30_000 });
@@ -453,8 +454,14 @@ async function connectWithEncryptedPrivateKey(targetPage) {
 }
 
 function runNativeDialogDriver() {
+  const repositoryRoot = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    "..",
+  );
   const driverPath = path.join(
-    process.cwd(),
+    repositoryRoot,
     "scripts",
     "qa",
     "windows-native-dialog-driver.ps1",
@@ -473,7 +480,7 @@ function runNativeDialogDriver() {
         driverPath,
       ],
       {
-        cwd: process.cwd(),
+        cwd: repositoryRoot,
         env: process.env,
         windowsHide: true,
       },
