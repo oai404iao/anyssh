@@ -1,6 +1,6 @@
 # Known Host Repository v1
 
-> 状态：规划中
+> 状态：已实现，等待同 Commit CI 与 ADR-0015 状态评审
 > 日期：2026-07-28
 
 本文定义 Phase 1 Desktop MVP 的 Endpoint-scoped Known Host Repository、持久化

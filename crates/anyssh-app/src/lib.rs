@@ -8,28 +8,34 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyssh_domain::{SshEndpoint, TerminalSize};
+use anyssh_domain::{SshEndpoint, SshEndpointIdentity, TerminalSize};
 use anyssh_ssh::{
     DEFAULT_CONNECTION_TIMEOUT, HostKeyPolicy, MAX_PRIVATE_KEY_BYTES, PrivateKeyTextEncryption,
-    SessionAuthentication, SpawnedSession, SshConnectionConfig, SshSessionConfig, SystemAgentError,
-    SystemAgentIdentitySummary, inspect_openssh_private_key_text, list_system_agent_identities,
-    spawn_session, validate_private_key_text,
+    SessionAuthentication, SessionControl, SessionControlError, SpawnedSession,
+    SshConnectionConfig, SshSessionConfig, SystemAgentError, SystemAgentIdentitySummary,
+    inspect_openssh_private_key_text, list_system_agent_identities, spawn_session,
+    validate_private_key_text,
 };
 use anyssh_storage::{
     CredentialSecret, DatabaseActorError, DatabaseActorHandle, ResolvedCredential,
-    ResolvedHostConnection,
+    ResolvedHostConnection, ResolvedKnownHostPolicy,
 };
 use thiserror::Error;
 use zeroize::Zeroizing;
 
 const _: () = assert!(anyssh_storage::MAX_JUMP_ROUTE_STEPS == anyssh_ssh::MAX_JUMP_HOSTS);
+const _: () = assert!(anyssh_storage::MAX_KNOWN_HOST_KEYS == anyssh_ssh::MAX_TRUSTED_HOST_KEYS);
+const _: () = assert!(
+    anyssh_storage::MAX_KNOWN_HOST_PUBLIC_KEY_BYTES == anyssh_ssh::MAX_HOST_PUBLIC_KEY_BYTES
+);
 pub const PRIVATE_KEY_PASSPHRASE_MAX_ATTEMPTS: u8 = 3;
 const MAX_PRIVATE_KEY_PROMPT_LABEL_CHARS: usize = 128;
 const DEFAULT_PRIVATE_KEY_PROMPT_LABEL: &str = "Imported private key";
 
 pub use anyssh_storage::{
     CredentialKind, CredentialSummary, DatabaseActorConfig, DatabaseActorStartError, GroupSummary,
-    HostSummary, JumpRouteSummary, MAX_GROUP_DEPTH, Override, VaultState, VaultStatus,
+    HostSummary, JumpRouteSummary, KnownHostKeySummary, KnownHostSummary, MAX_GROUP_DEPTH,
+    Override, VaultState, VaultStatus,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -63,6 +69,34 @@ pub trait PrivateKeyPassphrasePrompt: Send + Sync {
         &self,
         context: PrivateKeyPromptContext,
     ) -> impl Future<Output = Result<Option<Zeroizing<String>>, PrivateKeyPromptError>> + Send;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KnownHostForgetPromptContext {
+    host: String,
+    port: u16,
+    fingerprints_sha256: Vec<String>,
+}
+
+impl KnownHostForgetPromptContext {
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub const fn port(&self) -> u16 {
+        self.port
+    }
+
+    pub fn fingerprints_sha256(&self) -> &[String] {
+        &self.fingerprints_sha256
+    }
+}
+
+pub trait KnownHostForgetPrompt: Send + Sync {
+    fn confirm(
+        &self,
+        context: KnownHostForgetPromptContext,
+    ) -> impl Future<Output = Result<bool, KnownHostForgetPromptError>> + Send;
 }
 
 #[derive(Clone)]
@@ -446,6 +480,41 @@ impl ApplicationCore {
             .map_err(ApplicationError::from)
     }
 
+    pub async fn list_known_hosts(&self) -> Result<Vec<KnownHostSummary>, ApplicationError> {
+        self.database
+            .list_known_hosts()
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn forget_known_host_with_prompt(
+        &self,
+        id: String,
+        prompt: &impl KnownHostForgetPrompt,
+    ) -> Result<bool, ApplicationError> {
+        let summary = self
+            .database
+            .get_known_host(id.clone())
+            .await
+            .map_err(ApplicationError::from)?;
+        let context = KnownHostForgetPromptContext {
+            host: summary.host().to_owned(),
+            port: summary.port(),
+            fingerprints_sha256: summary
+                .keys()
+                .iter()
+                .map(|key| key.fingerprint_sha256().to_owned())
+                .collect(),
+        };
+        if !prompt.confirm(context).await? {
+            return Ok(false);
+        }
+        self.database
+            .delete_known_host(id)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
     pub async fn create_jump_route(
         &self,
         label: String,
@@ -516,6 +585,38 @@ impl ApplicationCore {
             .map(spawn_session)
     }
 
+    pub async fn decide_host_key(
+        &self,
+        control: &SessionControl,
+        request_id: u64,
+        accepted: bool,
+    ) -> Result<(), ApplicationError> {
+        if !accepted {
+            return control
+                .confirm_host_key(request_id, false)
+                .await
+                .map_err(ApplicationError::from);
+        }
+
+        let observed = control.observed_host_key(request_id).await?;
+        let (endpoint, algorithm, fingerprint_sha256, public_key) = observed.into_parts();
+        let identity = SshEndpointIdentity::from_endpoint(&endpoint)
+            .map_err(|_| ApplicationError::InvalidStoredHost)?;
+        if let Err(error) = self
+            .database
+            .trust_observed_host_key(identity, algorithm, fingerprint_sha256, public_key)
+            .await
+        {
+            let _ = control.confirm_host_key(request_id, false).await;
+            return Err(ApplicationError::from(error));
+        }
+
+        control
+            .confirm_host_key(request_id, true)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
     async fn resolve_saved_session_config(
         &self,
         host_id: String,
@@ -559,11 +660,19 @@ impl ApplicationCore {
             ),
         };
 
+        let identity = SshEndpointIdentity::from_endpoint(&endpoint)
+            .map_err(|_| ApplicationError::InvalidStoredHost)?;
+        let known_host_policy = self
+            .database
+            .resolve_known_host_policy(identity)
+            .await
+            .map_err(ApplicationError::from)?;
+
         Ok(SshConnectionConfig {
             endpoint,
             username,
             authentication,
-            host_key_policy: HostKeyPolicy::Prompt,
+            host_key_policy: ssh_host_key_policy(known_host_policy),
         })
     }
 }
@@ -637,7 +746,11 @@ pub enum ApplicationError {
     #[error(transparent)]
     PrivateKeyPrompt(#[from] PrivateKeyPromptError),
     #[error(transparent)]
+    KnownHostForgetPrompt(#[from] KnownHostForgetPromptError),
+    #[error(transparent)]
     SystemAgent(#[from] SystemAgentError),
+    #[error(transparent)]
+    SessionControl(#[from] SessionControlError),
     #[error(transparent)]
     Database(#[from] DatabaseActorError),
 }
@@ -665,6 +778,12 @@ pub enum PrivateKeyImportError {
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum PrivateKeyPromptError {
     #[error("private key passphrase prompt is unavailable")]
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum KnownHostForgetPromptError {
+    #[error("known Host forget confirmation is unavailable")]
     Unavailable,
 }
 
@@ -776,15 +895,24 @@ fn resolved_authentication(resolved: ResolvedCredential) -> (String, SessionAuth
 fn resolved_host_connection(
     connection: ResolvedHostConnection,
 ) -> Result<SshConnectionConfig, ApplicationError> {
-    let (_, host, port, credential) = connection.into_parts();
+    let (_, host, port, credential, known_host_policy) = connection.into_parts();
     let endpoint = SshEndpoint::new(host, port).map_err(|_| ApplicationError::InvalidStoredHost)?;
     let (username, authentication) = resolved_authentication(credential);
     Ok(SshConnectionConfig {
         endpoint,
         username,
         authentication,
-        host_key_policy: HostKeyPolicy::Prompt,
+        host_key_policy: ssh_host_key_policy(known_host_policy),
     })
+}
+
+fn ssh_host_key_policy(policy: ResolvedKnownHostPolicy) -> HostKeyPolicy {
+    match policy {
+        ResolvedKnownHostPolicy::Prompt => HostKeyPolicy::Prompt,
+        ResolvedKnownHostPolicy::RequireSha256Set(fingerprints) => {
+            HostKeyPolicy::RequireSha256Set { fingerprints }
+        }
+    }
 }
 
 fn normalize_username(username: String) -> Result<String, ApplicationError> {
@@ -848,6 +976,44 @@ mod tests {
 
         fn contexts(&self) -> Vec<PrivateKeyPromptContext> {
             self.contexts.lock().expect("prompt contexts").clone()
+        }
+    }
+
+    struct TestKnownHostForgetPrompt {
+        approved: bool,
+        contexts: StdMutex<Vec<KnownHostForgetPromptContext>>,
+    }
+
+    impl TestKnownHostForgetPrompt {
+        fn new(approved: bool) -> Self {
+            Self {
+                approved,
+                contexts: StdMutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl KnownHostForgetPrompt for TestKnownHostForgetPrompt {
+        fn confirm(
+            &self,
+            context: KnownHostForgetPromptContext,
+        ) -> impl Future<Output = Result<bool, KnownHostForgetPromptError>> + Send {
+            self.contexts
+                .lock()
+                .expect("Known Host contexts")
+                .push(context);
+            std::future::ready(Ok(self.approved))
+        }
+    }
+
+    struct UnavailableKnownHostForgetPrompt;
+
+    impl KnownHostForgetPrompt for UnavailableKnownHostForgetPrompt {
+        fn confirm(
+            &self,
+            _context: KnownHostForgetPromptContext,
+        ) -> impl Future<Output = Result<bool, KnownHostForgetPromptError>> + Send {
+            std::future::ready(Err(KnownHostForgetPromptError::Unavailable))
         }
     }
 
@@ -984,6 +1150,86 @@ mod tests {
             identity_fingerprint_sha256,
             "SHA256:application-agent-selector"
         );
+    }
+
+    #[tokio::test]
+    async fn known_host_forget_requires_external_confirmation_and_uses_only_metadata() {
+        let (core, _directory) = test_core();
+        core.create_vault(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+        let key = fixture_private_key();
+        let public_key = key.public_key();
+        let summary = core
+            .database
+            .trust_observed_host_key(
+                SshEndpointIdentity::new("KNOWN.EXAMPLE.", 2222).expect("Known Host endpoint"),
+                public_key.algorithm().to_string(),
+                public_key
+                    .fingerprint(russh::keys::ssh_key::HashAlg::Sha256)
+                    .to_string(),
+                public_key.to_bytes().expect("Known Host key bytes"),
+            )
+            .await
+            .expect("create Known Host Trust");
+
+        let cancel = TestKnownHostForgetPrompt::new(false);
+        assert!(
+            !core
+                .forget_known_host_with_prompt(summary.id().to_owned(), &cancel)
+                .await
+                .expect("cancel Forget Trust")
+        );
+        assert_eq!(
+            core.list_known_hosts()
+                .await
+                .expect("Trust survives cancellation")
+                .len(),
+            1
+        );
+
+        let unavailable = core
+            .forget_known_host_with_prompt(
+                summary.id().to_owned(),
+                &UnavailableKnownHostForgetPrompt,
+            )
+            .await
+            .expect_err("unavailable native confirmation must fail closed");
+        assert!(matches!(
+            unavailable,
+            ApplicationError::KnownHostForgetPrompt(KnownHostForgetPromptError::Unavailable)
+        ));
+        assert_eq!(
+            core.list_known_hosts()
+                .await
+                .expect("Trust survives unavailable confirmation")
+                .len(),
+            1
+        );
+
+        let approve = TestKnownHostForgetPrompt::new(true);
+        assert!(
+            core.forget_known_host_with_prompt(summary.id().to_owned(), &approve)
+                .await
+                .expect("approve Forget Trust")
+        );
+        assert!(
+            core.list_known_hosts()
+                .await
+                .expect("list after Forget Trust")
+                .is_empty()
+        );
+        let contexts = approve
+            .contexts
+            .lock()
+            .expect("Known Host contexts after confirmation");
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(contexts[0].host(), "known.example");
+        assert_eq!(contexts[0].port(), 2222);
+        assert_eq!(contexts[0].fingerprints_sha256().len(), 1);
+        let debug = format!("{:?}", contexts[0]);
+        assert!(!debug.contains("public_key"));
+        assert!(!debug.contains("publicKey"));
     }
 
     #[tokio::test]

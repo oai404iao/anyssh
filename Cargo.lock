@@ -157,11 +157,14 @@ dependencies = [
 name = "anyssh-storage"
 version = "0.1.0"
 dependencies = [
+ "anyssh-domain",
  "anyssh-vault",
  "chacha20poly1305",
  "getrandom 0.3.4",
  "libsqlite3-sys",
+ "rand",
  "rusqlite",
+ "ssh-key",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",

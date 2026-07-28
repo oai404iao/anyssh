@@ -44,7 +44,7 @@ any_ssh/
 |   |-- anyssh-domain/                # Endpoint、TerminalSize 等领域值对象
 |   |-- anyssh-ssh/                   # russh Session、Host Key、PTY、背压
 |   |-- anyssh-vault/                 # VMK、PIN Key Slot、HKDF、Bootstrap
-|   `-- anyssh-storage/               # DB Actor、Schema v5、Repository、Record AEAD
+|   `-- anyssh-storage/               # DB Actor、Schema v6、Repository、Record AEAD
 |-- scripts/
 |   |-- build-in-container.sh          # 独立 Linux/Android Build Image 入口
 |   |-- check-android-build.sh         # Android ARM64 APK 与 bundled SQLCipher 构建
@@ -469,8 +469,10 @@ persist-before-continue、Changed-Key 硬阻断和 Linux/Windows Native Evidence
 | SSH Bridge | `apps/client/src/lib/ssh-bridge.ts` |
 | Credential Bridge | `apps/client/src/lib/credential-bridge.ts` |
 | Host/Route Bridge | `apps/client/src/lib/host-bridge.ts` |
+| Known Host Bridge | `apps/client/src/lib/known-host-bridge.ts` |
 | Tauri IPC | `apps/client/src-tauri/src/lib.rs` |
 | Native Passphrase Provider | `apps/client/src-tauri/src/native_passphrase.rs` |
+| Native Known Host Provider | `apps/client/src-tauri/src/native_known_host.rs` |
 | Application Core | `crates/anyssh-app/src/lib.rs` |
 | DB Actor | `crates/anyssh-storage/src/actor.rs` |
 | Credential Model | `crates/anyssh-storage/src/credential.rs` |
@@ -478,6 +480,7 @@ persist-before-continue、Changed-Key 硬阻断和 Linux/Windows Native Evidence
 | Group Model | `crates/anyssh-storage/src/group.rs` |
 | 三态 Override | `crates/anyssh-storage/src/inheritance.rs` |
 | Jump Route Model | `crates/anyssh-storage/src/jump_route.rs` |
+| Known Host Model | `crates/anyssh-storage/src/known_host.rs` |
 | Connection Plan | `crates/anyssh-storage/src/connection_plan.rs` |
 | Native Key Import Design | `docs/design/native-private-key-import-v1.md` |
 | Encrypted Key Prompt Design | `docs/design/native-encrypted-private-key-passphrase-v1.md` |

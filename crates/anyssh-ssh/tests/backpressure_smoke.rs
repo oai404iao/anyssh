@@ -40,6 +40,9 @@ async fn terminal_output_applies_bounded_backpressure() {
                         .await
                         .expect("host-key decision should reach the output fixture");
                 }
+                SessionEvent::HostKeyChanged(info) => {
+                    panic!("fixture host key unexpectedly changed: {info:?}")
+                }
                 SessionEvent::Connected => {
                     saw_connected = true;
                     control

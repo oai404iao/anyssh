@@ -8,6 +8,7 @@ mod group;
 mod host;
 mod inheritance;
 mod jump_route;
+mod known_host;
 
 pub use actor::{
     DEFAULT_DATABASE_COMMAND_QUEUE_CAPACITY, DatabaseActorConfig, DatabaseActorError,
@@ -19,6 +20,10 @@ pub use group::{GroupSummary, MAX_GROUP_DEPTH};
 pub use host::HostSummary;
 pub use inheritance::Override;
 pub use jump_route::{JumpRouteSummary, MAX_JUMP_ROUTE_STEPS};
+pub use known_host::{
+    KnownHostKeySummary, KnownHostSummary, MAX_KNOWN_HOST_KEYS, MAX_KNOWN_HOST_PUBLIC_KEY_BYTES,
+    ResolvedKnownHostPolicy,
+};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -28,6 +33,7 @@ use std::{
     time::Duration,
 };
 
+use anyssh_domain::SshEndpointIdentity;
 use anyssh_vault::{
     BootstrapDocument, DerivedVaultKeys, PinKdfParameters, UnlockedVault, VaultError,
 };
@@ -47,12 +53,13 @@ use crate::{
     host::validate_host_id,
     inheritance::SET_STATE,
     jump_route::validate_jump_route_id,
+    known_host::{ValidatedKnownHostKey, validate_known_host_id, validate_known_host_key},
 };
 
 pub const BOOTSTRAP_FILE_NAME: &str = "vault.bootstrap.json";
 pub const DATABASE_FILE_NAME: &str = "vault.db";
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 const KEY_BYTES: usize = 32;
 const NONCE_BYTES: usize = 24;
 
@@ -106,6 +113,12 @@ pub enum StorageError {
     CredentialNotFound,
     #[error("credential is referenced by a Host")]
     CredentialInUse,
+    #[error("known Host record is invalid")]
+    InvalidKnownHost,
+    #[error("known Host was not found")]
+    KnownHostNotFound,
+    #[error("known Host already trusts a different key")]
+    KnownHostConflict,
     #[error("vault schema migration was interrupted")]
     MigrationInterrupted,
     #[error(transparent)]
@@ -258,6 +271,35 @@ impl LocalVault {
         self.database.delete_host(id)
     }
 
+    fn resolve_known_host_policy(
+        &self,
+        endpoint: &SshEndpointIdentity,
+    ) -> Result<ResolvedKnownHostPolicy, StorageError> {
+        self.database.resolve_known_host_policy(endpoint)
+    }
+
+    fn trust_observed_host_key(
+        &mut self,
+        candidate_id: &str,
+        endpoint: &SshEndpointIdentity,
+        key: ValidatedKnownHostKey,
+    ) -> Result<KnownHostSummary, StorageError> {
+        self.database
+            .trust_observed_host_key(candidate_id, endpoint, key)
+    }
+
+    fn get_known_host(&self, id: &str) -> Result<KnownHostSummary, StorageError> {
+        self.database.get_known_host(id)
+    }
+
+    fn list_known_hosts(&self) -> Result<Vec<KnownHostSummary>, StorageError> {
+        self.database.list_known_hosts()
+    }
+
+    fn delete_known_host(&mut self, id: &str) -> Result<bool, StorageError> {
+        self.database.delete_known_host(id)
+    }
+
     fn create_jump_route(
         &mut self,
         route: &JumpRouteSummary,
@@ -337,6 +379,7 @@ impl VaultDatabase {
         database.migrate_to_v3(false)?;
         database.migrate_to_v4(false)?;
         database.migrate_to_v5(false)?;
+        database.migrate_to_v6(false)?;
         database.connection.execute(
             "INSERT INTO vault_meta(key, value) VALUES('vault_id', ?1)",
             [keys.vault_id()],
@@ -644,6 +687,118 @@ impl VaultDatabase {
         Ok(changed == 1)
     }
 
+    fn resolve_known_host_policy(
+        &self,
+        endpoint: &SshEndpointIdentity,
+    ) -> Result<ResolvedKnownHostPolicy, StorageError> {
+        let known_host_id = self
+            .connection
+            .query_row(
+                "SELECT id FROM known_hosts WHERE host = ?1 AND port = ?2",
+                params![endpoint.host(), i64::from(endpoint.port())],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let Some(known_host_id) = known_host_id else {
+            return Ok(ResolvedKnownHostPolicy::Prompt);
+        };
+
+        let fingerprints = load_known_host_keys(&self.connection, &known_host_id)?
+            .into_iter()
+            .map(|key| key.fingerprint_sha256().to_owned())
+            .collect();
+        ResolvedKnownHostPolicy::trusted(fingerprints)
+    }
+
+    fn trust_observed_host_key(
+        &mut self,
+        candidate_id: &str,
+        endpoint: &SshEndpointIdentity,
+        key: ValidatedKnownHostKey,
+    ) -> Result<KnownHostSummary, StorageError> {
+        validate_known_host_id(candidate_id)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let existing_id = transaction
+            .query_row(
+                "SELECT id FROM known_hosts WHERE host = ?1 AND port = ?2",
+                params![endpoint.host(), i64::from(endpoint.port())],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+
+        let known_host_id = if let Some(existing_id) = existing_id {
+            let existing_keys = load_known_host_keys(&transaction, &existing_id)?;
+            let same_key = existing_keys.iter().any(|existing| {
+                existing.fingerprint_sha256() == key.fingerprint_sha256()
+                    && existing.algorithm() == key.algorithm()
+                    && existing.public_key() == key.public_key()
+            });
+            if !same_key {
+                return Err(StorageError::KnownHostConflict);
+            }
+            existing_id
+        } else {
+            transaction.execute(
+                "INSERT INTO known_hosts(id, host, port) VALUES(?1, ?2, ?3)",
+                params![candidate_id, endpoint.host(), i64::from(endpoint.port())],
+            )?;
+            transaction.execute(
+                "
+                INSERT INTO known_host_keys(
+                    known_host_id, fingerprint_sha256, algorithm, public_key
+                )
+                VALUES(?1, ?2, ?3, ?4)
+                ",
+                params![
+                    candidate_id,
+                    key.fingerprint_sha256(),
+                    key.algorithm(),
+                    key.public_key(),
+                ],
+            )?;
+            candidate_id.to_owned()
+        };
+
+        transaction.commit()?;
+        self.get_known_host(&known_host_id)
+    }
+
+    fn get_known_host(&self, id: &str) -> Result<KnownHostSummary, StorageError> {
+        validate_known_host_id(id)?;
+        load_known_host_summary(&self.connection, id)?.ok_or(StorageError::KnownHostNotFound)
+    }
+
+    fn list_known_hosts(&self) -> Result<Vec<KnownHostSummary>, StorageError> {
+        let ids = {
+            let mut statement = self.connection.prepare(
+                "
+                SELECT id
+                FROM known_hosts
+                ORDER BY host COLLATE NOCASE, port, id
+                ",
+            )?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        ids.into_iter()
+            .map(|id| {
+                load_known_host_summary(&self.connection, &id)?.ok_or(StorageError::RecordIntegrity)
+            })
+            .collect()
+    }
+
+    fn delete_known_host(&mut self, id: &str) -> Result<bool, StorageError> {
+        validate_known_host_id(id)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = transaction.execute("DELETE FROM known_hosts WHERE id = ?1", [id])?;
+        transaction.commit()?;
+        Ok(changed == 1)
+    }
+
     fn create_jump_route(
         &mut self,
         route: &JumpRouteSummary,
@@ -808,11 +963,15 @@ impl VaultDatabase {
             .credential_id()
             .ok_or_else(|| StorageError::HostCredentialMissing(host.id().to_owned()))?;
         let credential = self.resolve_credential(credential_id)?;
+        let endpoint = SshEndpointIdentity::new(host.host().to_owned(), host.port())
+            .map_err(|_| StorageError::InvalidHost)?;
+        let known_host_policy = self.resolve_known_host_policy(&endpoint)?;
         Ok(ResolvedHostConnection::new(
             host.id().to_owned(),
             host.host().to_owned(),
             host.port(),
             credential,
+            known_host_policy,
         ))
     }
 
@@ -1199,18 +1358,25 @@ impl VaultDatabase {
                 migrate_to_v2(&mut self.connection, false)?;
                 self.migrate_to_v3(false)?;
                 self.migrate_to_v4(false)?;
-                self.migrate_to_v5(false)
+                self.migrate_to_v5(false)?;
+                self.migrate_to_v6(false)
             }
             2 => {
                 self.migrate_to_v3(false)?;
                 self.migrate_to_v4(false)?;
-                self.migrate_to_v5(false)
+                self.migrate_to_v5(false)?;
+                self.migrate_to_v6(false)
             }
             3 => {
                 self.migrate_to_v4(false)?;
-                self.migrate_to_v5(false)
+                self.migrate_to_v5(false)?;
+                self.migrate_to_v6(false)
             }
-            4 => self.migrate_to_v5(false),
+            4 => {
+                self.migrate_to_v5(false)?;
+                self.migrate_to_v6(false)
+            }
+            5 => self.migrate_to_v6(false),
             version => Err(StorageError::UnsupportedSchema(version)),
         }
     }
@@ -1590,6 +1756,43 @@ impl VaultDatabase {
             DROP TABLE legacy_credentials_v4;
             ",
         )?;
+        transaction.pragma_update(None, "user_version", 5_i64)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    fn migrate_to_v6(&mut self, simulate_interruption: bool) -> Result<(), StorageError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE known_hosts(
+                id TEXT PRIMARY KEY NOT NULL,
+                host TEXT NOT NULL,
+                port INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),
+                UNIQUE(host, port)
+            ) WITHOUT ROWID;
+
+            CREATE TABLE known_host_keys(
+                known_host_id TEXT NOT NULL,
+                fingerprint_sha256 TEXT NOT NULL,
+                algorithm TEXT NOT NULL,
+                public_key BLOB NOT NULL,
+                PRIMARY KEY(known_host_id, fingerprint_sha256),
+                FOREIGN KEY(known_host_id)
+                    REFERENCES known_hosts(id) ON DELETE CASCADE
+            ) WITHOUT ROWID;
+
+            CREATE INDEX known_host_keys_algorithm_idx
+                ON known_host_keys(known_host_id, algorithm);
+            ",
+        )?;
+
+        if simulate_interruption {
+            return Err(StorageError::MigrationInterrupted);
+        }
+
         transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         transaction.commit()?;
         Ok(())
@@ -1703,6 +1906,65 @@ impl VaultDatabase {
         let value = std::str::from_utf8(&plaintext).map_err(|_| StorageError::RecordIntegrity)?;
         Ok(Zeroizing::new(value.to_owned()))
     }
+}
+
+fn load_known_host_summary(
+    connection: &Connection,
+    id: &str,
+) -> Result<Option<KnownHostSummary>, StorageError> {
+    let endpoint = connection
+        .query_row(
+            "SELECT host, port FROM known_hosts WHERE id = ?1",
+            [id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()?;
+    let Some((host, port)) = endpoint else {
+        return Ok(None);
+    };
+    let port = u16::try_from(port).map_err(|_| StorageError::RecordIntegrity)?;
+    let endpoint =
+        SshEndpointIdentity::new(host.clone(), port).map_err(|_| StorageError::RecordIntegrity)?;
+    if endpoint.host() != host {
+        return Err(StorageError::RecordIntegrity);
+    }
+    let keys = load_known_host_keys(connection, id)?
+        .into_iter()
+        .map(|key| key.summary())
+        .collect();
+    KnownHostSummary::new(id.to_owned(), endpoint, keys).map(Some)
+}
+
+fn load_known_host_keys(
+    connection: &Connection,
+    known_host_id: &str,
+) -> Result<Vec<ValidatedKnownHostKey>, StorageError> {
+    let mut statement = connection.prepare(
+        "
+        SELECT algorithm, fingerprint_sha256, public_key
+        FROM known_host_keys
+        WHERE known_host_id = ?1
+        ORDER BY algorithm, fingerprint_sha256
+        ",
+    )?;
+    let rows = statement.query_map([known_host_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Vec<u8>>(2)?,
+        ))
+    })?;
+    let stored = rows.collect::<Result<Vec<_>, _>>()?;
+    if stored.is_empty() || stored.len() > MAX_KNOWN_HOST_KEYS {
+        return Err(StorageError::RecordIntegrity);
+    }
+    stored
+        .into_iter()
+        .map(|(algorithm, fingerprint, public_key)| {
+            validate_known_host_key(algorithm, fingerprint, public_key)
+                .map_err(|_| StorageError::RecordIntegrity)
+        })
+        .collect()
 }
 
 struct StoredLegacyHost {
@@ -2310,7 +2572,10 @@ fn is_regular_file_without_symlink(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inheritance::{CLEAR_STATE, INHERIT_STATE, SET_STATE};
+    use crate::{
+        inheritance::{CLEAR_STATE, INHERIT_STATE, SET_STATE},
+        known_host::generate_known_host_id,
+    };
 
     fn test_parameters() -> PinKdfParameters {
         PinKdfParameters::new(8 * 1024, 1, 1).expect("test parameters")
@@ -2418,6 +2683,18 @@ mod tests {
             },
         )
         .expect("system-agent credential")
+    }
+
+    fn fixture_known_host_key() -> (String, String, Vec<u8>) {
+        let private_key =
+            ssh_key::PrivateKey::random(&mut rand::rng(), ssh_key::Algorithm::Ed25519)
+                .expect("generate Known Host fixture key");
+        let public_key = private_key.public_key();
+        (
+            public_key.algorithm().to_string(),
+            public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string(),
+            public_key.to_bytes().expect("Known Host key bytes"),
+        )
     }
 
     #[test]
@@ -2807,6 +3084,201 @@ mod tests {
     }
 
     #[test]
+    fn known_host_repository_persists_trust_and_rejects_conflicting_tofu() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let mut vault =
+            LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+        let endpoint =
+            SshEndpointIdentity::new(" EXAMPLE.COM. ", 2222).expect("Known Host endpoint");
+        assert_eq!(
+            vault
+                .resolve_known_host_policy(&endpoint)
+                .expect("resolve unknown policy"),
+            ResolvedKnownHostPolicy::Prompt
+        );
+
+        let (algorithm, fingerprint, public_key) = fixture_known_host_key();
+        let summary = vault
+            .trust_observed_host_key(
+                &generate_known_host_id().expect("Known Host ID"),
+                &endpoint,
+                validate_known_host_key(algorithm.clone(), fingerprint.clone(), public_key.clone())
+                    .expect("valid observed key"),
+            )
+            .expect("trust first observed key");
+        assert_eq!(summary.host(), "example.com");
+        assert_eq!(summary.port(), 2222);
+        assert_eq!(summary.keys()[0].algorithm(), algorithm);
+        assert_eq!(summary.keys()[0].fingerprint_sha256(), fingerprint);
+
+        let duplicate = vault
+            .trust_observed_host_key(
+                &generate_known_host_id().expect("unused duplicate ID"),
+                &endpoint,
+                validate_known_host_key(algorithm.clone(), fingerprint.clone(), public_key.clone())
+                    .expect("duplicate key"),
+            )
+            .expect("same key is idempotent");
+        assert_eq!(duplicate.id(), summary.id());
+        assert_eq!(vault.list_known_hosts().expect("list Known Hosts").len(), 1);
+
+        let (_, conflicting_fingerprint, conflicting_public_key) = fixture_known_host_key();
+        assert!(matches!(
+            vault.trust_observed_host_key(
+                &generate_known_host_id().expect("conflicting ID"),
+                &endpoint,
+                validate_known_host_key(
+                    algorithm.clone(),
+                    conflicting_fingerprint,
+                    conflicting_public_key,
+                )
+                .expect("valid conflicting key"),
+            ),
+            Err(StorageError::KnownHostConflict)
+        ));
+
+        let policy = vault
+            .resolve_known_host_policy(
+                &SshEndpointIdentity::new("example.com", 2222).expect("canonical endpoint"),
+            )
+            .expect("resolve trusted policy");
+        assert_eq!(
+            policy,
+            ResolvedKnownHostPolicy::RequireSha256Set(vec![fingerprint.clone()])
+        );
+        assert_eq!(
+            vault
+                .resolve_known_host_policy(
+                    &SshEndpointIdentity::new("example.com", 22).expect("different port"),
+                )
+                .expect("resolve other port"),
+            ResolvedKnownHostPolicy::Prompt
+        );
+
+        vault
+            .create_credential(&password_credential("cred-known", "known-secret"))
+            .expect("create Known Host credential");
+        vault
+            .create_host(&fixture_host(
+                "host-known",
+                "Known",
+                "EXAMPLE.COM.",
+                Some("cred-known"),
+                None,
+            ))
+            .expect("create Host using canonical-equivalent endpoint");
+        let plan = vault
+            .resolve_host_connection_plan("host-known")
+            .expect("resolve Known Host plan");
+        assert_eq!(
+            plan.target().known_host_policy(),
+            &ResolvedKnownHostPolicy::RequireSha256Set(vec![fingerprint.clone()])
+        );
+
+        let summary_id = summary.id().to_owned();
+        drop(vault);
+        assert_files_do_not_contain(
+            &root,
+            &[
+                b"example.com",
+                fingerprint.as_bytes(),
+                public_key.as_slice(),
+            ],
+        );
+
+        let mut reopened = LocalVault::unlock(&root, "123456").expect("reopen Known Host vault");
+        assert_eq!(
+            reopened
+                .get_known_host(&summary_id)
+                .expect("recover Known Host")
+                .keys()[0]
+                .fingerprint_sha256(),
+            fingerprint
+        );
+        assert!(
+            reopened
+                .delete_known_host(&summary_id)
+                .expect("forget Known Host")
+        );
+        assert_eq!(
+            reopened
+                .resolve_known_host_policy(&endpoint)
+                .expect("policy after forget"),
+            ResolvedKnownHostPolicy::Prompt
+        );
+    }
+
+    #[test]
+    fn known_host_repository_recomputes_redundant_key_metadata_on_read() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let mut vault =
+            LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+        let endpoint =
+            SshEndpointIdentity::new("integrity.example", 22).expect("Known Host endpoint");
+        let (algorithm, fingerprint, public_key) = fixture_known_host_key();
+        let summary = vault
+            .trust_observed_host_key(
+                &generate_known_host_id().expect("Known Host ID"),
+                &endpoint,
+                validate_known_host_key(algorithm.clone(), fingerprint, public_key)
+                    .expect("valid observed key"),
+            )
+            .expect("trust observed key");
+
+        vault
+            .database
+            .connection
+            .execute(
+                "
+                UPDATE known_host_keys
+                SET algorithm = 'ssh-rsa'
+                WHERE known_host_id = ?1
+                ",
+                [summary.id()],
+            )
+            .expect("corrupt redundant algorithm");
+        assert!(matches!(
+            vault.get_known_host(summary.id()),
+            Err(StorageError::RecordIntegrity)
+        ));
+        assert!(matches!(
+            vault.resolve_known_host_policy(&endpoint),
+            Err(StorageError::RecordIntegrity)
+        ));
+
+        vault
+            .database
+            .connection
+            .execute(
+                "
+                UPDATE known_host_keys
+                SET algorithm = ?1
+                WHERE known_host_id = ?2
+                ",
+                params![algorithm, summary.id()],
+            )
+            .expect("restore redundant algorithm");
+        vault
+            .database
+            .connection
+            .execute(
+                "
+                UPDATE known_hosts
+                SET host = 'INTEGRITY.EXAMPLE.'
+                WHERE id = ?1
+                ",
+                [summary.id()],
+            )
+            .expect("corrupt canonical endpoint");
+        assert!(matches!(
+            vault.get_known_host(summary.id()),
+            Err(StorageError::RecordIntegrity)
+        ));
+    }
+
+    #[test]
     fn group_repository_resolves_three_state_inheritance_and_restricts_deletion() {
         let directory = tempfile::tempdir().expect("tempdir");
         let root = directory.path().join("vault");
@@ -3147,7 +3619,7 @@ mod tests {
             .into_iter()
             .chain(std::iter::once(target))
             .map(|connection| {
-                let (_, _, _, credential) = connection.into_parts();
+                let (_, _, _, credential, _) = connection.into_parts();
                 credential.into_parts().0
             })
             .collect::<Vec<_>>();
@@ -3522,6 +3994,56 @@ mod tests {
     }
 
     #[test]
+    fn interrupted_v6_migration_preserves_complete_v5_schema() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let mut vault =
+            LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+        vault
+            .create_credential(&system_agent_credential(
+                "cred-v5-agent",
+                "SHA256:v5-migration-agent",
+            ))
+            .expect("create v5 credential fixture");
+        downgrade_to_v5_schema(&vault);
+
+        let error = vault
+            .database
+            .migrate_to_v6(true)
+            .expect_err("migration must fail");
+        assert!(matches!(error, StorageError::MigrationInterrupted));
+
+        let version: i64 = vault
+            .database
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("schema version");
+        let known_host_tables: i64 = vault
+            .database
+            .connection
+            .query_row(
+                "
+                SELECT count(*)
+                FROM sqlite_schema
+                WHERE type = 'table'
+                  AND name IN ('known_hosts', 'known_host_keys')
+                ",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count Known Host tables");
+        let credential_count: i64 = vault
+            .database
+            .connection
+            .query_row("SELECT count(*) FROM credentials", [], |row| row.get(0))
+            .expect("count v5 credentials");
+
+        assert_eq!(version, 5);
+        assert_eq!(known_host_tables, 0);
+        assert_eq!(credential_count, 1);
+    }
+
+    #[test]
     fn schema_v4_rejects_invalid_override_state_value_pairs() {
         let directory = tempfile::tempdir().expect("tempdir");
         let root = directory.path().join("vault");
@@ -3770,7 +4292,44 @@ mod tests {
     }
 
     #[test]
-    fn unlocking_a_v1_vault_migrates_it_to_v5() {
+    fn unlocking_a_v5_vault_adds_an_empty_known_host_repository() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let mut vault =
+            LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+        vault
+            .create_credential(&system_agent_credential(
+                "cred-v5",
+                "SHA256:v5-preserved-selector",
+            ))
+            .expect("create v5 credential");
+        downgrade_to_v5_schema(&vault);
+        drop(vault);
+
+        let migrated = LocalVault::unlock(&root, "123456").expect("unlock and migrate v5");
+        assert_eq!(
+            migrated
+                .list_credentials()
+                .expect("list preserved credentials")
+                .len(),
+            1
+        );
+        assert!(
+            migrated
+                .list_known_hosts()
+                .expect("list new Known Host repository")
+                .is_empty()
+        );
+        let version: i64 = migrated
+            .database
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("schema version");
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn unlocking_a_v1_vault_migrates_it_to_v6() {
         let directory = tempfile::tempdir().expect("tempdir");
         let root = directory.path().join("vault");
         let vault = LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
@@ -3830,6 +4389,8 @@ mod tests {
             .connection
             .execute_batch(
                 "
+                DROP TABLE known_host_keys;
+                DROP TABLE known_hosts;
                 DROP TABLE jump_route_steps;
                 DROP TABLE hosts;
                 DROP TABLE group_overrides;
@@ -3856,6 +4417,8 @@ mod tests {
             .connection
             .execute_batch(
                 "
+                DROP TABLE known_host_keys;
+                DROP TABLE known_hosts;
                 DROP TABLE jump_route_steps;
                 DROP TABLE hosts;
                 DROP TABLE group_overrides;
@@ -3895,12 +4458,28 @@ mod tests {
             .expect("downgrade fixture to v3");
     }
 
+    fn downgrade_to_v5_schema(vault: &LocalVault) {
+        vault
+            .database
+            .connection
+            .execute_batch(
+                "
+                DROP TABLE known_host_keys;
+                DROP TABLE known_hosts;
+                PRAGMA user_version = 5;
+                ",
+            )
+            .expect("downgrade fixture to v5");
+    }
+
     fn downgrade_to_v4_schema(vault: &LocalVault) {
         vault
             .database
             .connection
             .execute_batch(
                 "
+                DROP TABLE known_host_keys;
+                DROP TABLE known_hosts;
                 DROP INDEX group_overrides_credential_id_idx;
                 DROP INDEX group_overrides_jump_route_id_idx;
                 DROP INDEX hosts_group_id_idx;

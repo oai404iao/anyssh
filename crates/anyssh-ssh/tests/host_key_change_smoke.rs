@@ -52,8 +52,11 @@ async fn changed_host_key_is_blocked_without_a_second_prompt() {
     let trusted_fingerprint = first.expect("TOFU connection must expose a fingerprint");
 
     let matching = expect_success(
-        fixture.session(HostKeyPolicy::RequireSha256 {
-            fingerprint: trusted_fingerprint.clone(),
+        fixture.session(HostKeyPolicy::RequireSha256Set {
+            fingerprints: vec![
+                "SHA256:another-trusted-algorithm-slot".to_owned(),
+                trusted_fingerprint.clone(),
+            ],
         }),
         false,
     )
@@ -65,11 +68,11 @@ async fn changed_host_key_is_blocked_without_a_second_prompt() {
 
     rotate_host_keys(&fixture).await;
 
-    let spawned = fixture.session(HostKeyPolicy::RequireSha256 {
-        fingerprint: trusted_fingerprint.clone(),
+    let spawned = fixture.session(HostKeyPolicy::RequireSha256Set {
+        fingerprints: vec![trusted_fingerprint.clone()],
     });
     let mut events = spawned.events;
-    let mut error = None;
+    let mut changed = None;
     let mut saw_host_key_prompt = false;
     let mut saw_authenticated = false;
     let mut saw_connected = false;
@@ -79,9 +82,12 @@ async fn changed_host_key_is_blocked_without_a_second_prompt() {
             match event {
                 SessionEvent::Connecting => {}
                 SessionEvent::HostKey(_) => saw_host_key_prompt = true,
+                SessionEvent::HostKeyChanged(info) => changed = Some(info),
                 SessionEvent::Authenticated => saw_authenticated = true,
                 SessionEvent::Connected => saw_connected = true,
-                SessionEvent::Error(message) => error = Some(message),
+                SessionEvent::Error(message) => {
+                    panic!("changed host key emitted an unexpected generic error: {message}")
+                }
                 SessionEvent::Closed => break,
                 SessionEvent::Data(_) | SessionEvent::ExitStatus(_) => {}
             }
@@ -96,15 +102,15 @@ async fn changed_host_key_is_blocked_without_a_second_prompt() {
     );
     assert!(!saw_authenticated);
     assert!(!saw_connected);
-    let error = error.expect("changed host key must emit an error");
+    let changed = changed.expect("changed host key must emit typed evidence");
+    assert_eq!(changed.hop, SessionHop::Target);
     assert!(
-        error.contains("target host key changed"),
-        "changed-key error was unexpected: {error}"
+        changed
+            .trusted_fingerprints_sha256
+            .contains(&trusted_fingerprint),
+        "changed-key evidence did not identify the trusted fingerprint"
     );
-    assert!(
-        error.contains(&trusted_fingerprint),
-        "changed-key error did not identify the trusted fingerprint"
-    );
+    assert_ne!(changed.received_fingerprint_sha256, trusted_fingerprint);
 }
 
 async fn expect_success(spawned: SpawnedSession, expect_prompt: bool) -> Option<String> {
@@ -125,6 +131,9 @@ async fn expect_success(spawned: SpawnedSession, expect_prompt: bool) -> Option<
                         .confirm_host_key(info.request_id, true)
                         .await
                         .expect("TOFU host-key decision should reach the session");
+                }
+                SessionEvent::HostKeyChanged(info) => {
+                    panic!("verified host unexpectedly changed: {info:?}")
                 }
                 SessionEvent::Connected => {
                     saw_connected = true;

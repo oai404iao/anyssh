@@ -44,6 +44,7 @@ secrecy = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10.9"
+ssh-key = { version = "=0.7.0-rc.11", features = ["ed25519", "p256", "p384", "p521", "rsa"] }
 tempfile = "3.23"
 thiserror = "2.0"
 tokio = { version = "1.47", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }

@@ -156,10 +156,12 @@ async fn saved_host_id_executes_two_jump_route_with_rust_only_credentials() {
                         info.endpoint.host.clone(),
                         info.fingerprint_sha256.clone(),
                     ));
-                    control
-                        .confirm_host_key(info.request_id, true)
+                    core.decide_host_key(&control, info.request_id, true)
                         .await
                         .expect("host-key decision should reach the active hop");
+                }
+                SessionEvent::HostKeyChanged(info) => {
+                    panic!("saved route host key unexpectedly changed: {info:?}")
                 }
                 SessionEvent::Authenticated => saw_authenticated = true,
                 SessionEvent::Connected => {
@@ -245,10 +247,12 @@ async fn saved_host_id_executes_two_jump_route_with_rust_only_credentials() {
                 SessionEvent::Connecting => {}
                 SessionEvent::HostKey(info) => {
                     failed_hops.push(info.hop.clone());
-                    control
-                        .confirm_host_key(info.request_id, true)
+                    core.decide_host_key(&control, info.request_id, true)
                         .await
                         .expect("host-key decision should reach the failing route");
+                }
+                SessionEvent::HostKeyChanged(info) => {
+                    panic!("saved route host key unexpectedly changed: {info:?}")
                 }
                 SessionEvent::Error(message) => error = Some(message),
                 SessionEvent::Closed => break,
@@ -262,12 +266,9 @@ async fn saved_host_id_executes_two_jump_route_with_rust_only_credentials() {
     .await
     .expect("Jump 2 authentication failure timed out");
 
-    assert_eq!(
-        failed_hops,
-        [
-            SessionHop::JumpHost { index: 1 },
-            SessionHop::JumpHost { index: 2 },
-        ]
+    assert!(
+        failed_hops.is_empty(),
+        "durably trusted Jump Hosts must not prompt again: {failed_hops:?}"
     );
     let error = error.expect("Jump 2 authentication failure must emit an error");
     assert!(

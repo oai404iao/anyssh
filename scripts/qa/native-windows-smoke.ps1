@@ -34,6 +34,9 @@ $script:SshPort = 0
 $script:SshUsername = ""
 $script:AgentFingerprint = ""
 $script:EncryptedKeyPath = ""
+$script:SshdExecutable = ""
+$script:SshHostKeyPath = ""
+$script:SshConfigPath = ""
 $script:PrivateKeyPassphrase = "windows-key-passphrase"
 $script:WrongPrivateKeyPassphrase = "windows-wrong-key-passphrase"
 
@@ -199,6 +202,9 @@ function Start-SshFixture {
   $SshPidPath = Join-Path $SshFixtureRoot "sshd.pid"
   $SshStdout = Join-Path $RunDirectory "sshd.stdout.log"
   $SshStderr = Join-Path $RunDirectory "sshd.stderr.log"
+  $script:SshdExecutable = $Sshd
+  $script:SshHostKeyPath = $HostKeyPath
+  $script:SshConfigPath = $SshConfigPath
 
   & $SshKeygen -q -t ed25519 -N '""' -C "anyssh-windows-agent" -f $AgentKeyPath
   if ($LASTEXITCODE -ne 0) {
@@ -330,6 +336,71 @@ username=$($script:SshUsername)
 agent_fingerprint=$($script:AgentFingerprint)
 encrypted_key_source=$($script:EncryptedKeyPath)
 "@ | Set-Content -Encoding UTF8 -Path (Join-Path $RunDirectory "ssh-fixture.txt")
+}
+
+function Rotate-SshFixtureHostKey {
+  if ($null -ne $script:SshdProcess -and -not $script:SshdProcess.HasExited) {
+    Stop-Process -Id $script:SshdProcess.Id -Force
+    $script:SshdProcess.WaitForExit(10000) | Out-Null
+  }
+  $script:SshdProcess = $null
+  Remove-Item `
+    -LiteralPath (Join-Path $SshFixtureRoot "sshd.pid") `
+    -Force `
+    -ErrorAction SilentlyContinue
+
+  Remove-Item -LiteralPath $script:SshHostKeyPath -Force
+  Remove-Item -LiteralPath "$($script:SshHostKeyPath).pub" -Force
+  & (Get-Command ssh-keygen.exe -ErrorAction Stop).Source `
+    -q `
+    -t ed25519 `
+    -N '""' `
+    -f $script:SshHostKeyPath
+  if ($LASTEXITCODE -ne 0) {
+    throw "Unable to rotate the Windows OpenSSH host key."
+  }
+
+  $RotatedStdout = Join-Path $RunDirectory "sshd-rotated.stdout.log"
+  $RotatedStderr = Join-Path $RunDirectory "sshd-rotated.stderr.log"
+  $script:SshdProcess = Start-Process `
+    -FilePath $script:SshdExecutable `
+    -ArgumentList @("-D", "-e", "-f", "`"$($script:SshConfigPath)`"") `
+    -RedirectStandardOutput $RotatedStdout `
+    -RedirectStandardError $RotatedStderr `
+    -PassThru
+
+  $SshReady = $false
+  for ($Attempt = 0; $Attempt -lt 80; $Attempt++) {
+    if ($script:SshdProcess.HasExited) {
+      $Details = Get-Content -LiteralPath $RotatedStderr -Raw -ErrorAction SilentlyContinue
+      throw "The rotated Windows OpenSSH fixture exited before listening. $Details"
+    }
+    $Client = [System.Net.Sockets.TcpClient]::new()
+    try {
+      $Connect = $Client.ConnectAsync("127.0.0.1", $script:SshPort)
+      if ($Connect.Wait(250) -and $Client.Connected) {
+        $SshReady = $true
+        break
+      }
+    }
+    catch {
+      # Retry until the rotated server is listening.
+    }
+    finally {
+      $Client.Dispose()
+    }
+    Start-Sleep -Milliseconds 250
+  }
+  if (-not $SshReady) {
+    throw "The rotated Windows OpenSSH fixture did not become ready."
+  }
+
+  & (Get-Command ssh-keygen.exe -ErrorAction Stop).Source `
+    -lf "$($script:SshHostKeyPath).pub" `
+    -E sha256 |
+    Set-Content -Encoding ASCII -Path (
+      Join-Path $RunDirectory "rotated-host-key-fingerprint.txt"
+    )
 }
 
 function Stop-NativeProcess {
@@ -586,12 +657,17 @@ try {
   if (-not $PrivateKeyMarker.Contains("ANYSSH_WINDOWS_ENCRYPTED_KEY_OK")) {
     throw "The Windows encrypted Private Key remote marker was invalid."
   }
-  Stop-SshFixture
   Assert-VaultFilesAreEncrypted
-  Assert-EvidenceContainsNoPrivateKeySecrets
 
   Start-NativeStage -Stage "restart"
   Stop-NativeProcess
+  Assert-VaultFilesAreEncrypted
+
+  Rotate-SshFixtureHostKey
+  Start-NativeStage -Stage "changed"
+  Stop-NativeProcess
+
+  Stop-SshFixture
   Assert-VaultFilesAreEncrypted
   Assert-EvidenceContainsNoPrivateKeySecrets
 
@@ -600,6 +676,9 @@ try {
     Select-Object -First 1
   $RestartRecord = $script:StageRecords |
     Where-Object { $_.stage -eq "restart" } |
+    Select-Object -First 1
+  $ChangedRecord = $script:StageRecords |
+    Where-Object { $_.stage -eq "changed" } |
     Select-Object -First 1
 
   @"
@@ -610,6 +689,7 @@ try {
 - Executable: ``target/debug/anyssh-client.exe``
 - Create window handle: ``$($CreateRecord.mainWindowHandle)``
 - Restart window handle: ``$($RestartRecord.mainWindowHandle)``
+- Changed-key window handle: ``$($ChangedRecord.mainWindowHandle)``
 - WebView2 browser: ``$($CreateRecord.webViewBrowser)``
 - CDP protocol: ``$($CreateRecord.protocolVersion)``
 
@@ -634,6 +714,16 @@ try {
   through Rust; the temporary Private Key file was deleted before AnySSH launched.
 - The real EXE used the Agent Named Pipe to authenticate to a standalone Windows
   OpenSSH Server and created the remote marker ``$SshMarkerPath``.
+- The first connection durably persisted TOFU before authentication; a second
+  Credential using the same Endpoint connected without another prompt.
+- Known Hosts exposed only Endpoint, Algorithm, and SHA-256 Fingerprint
+  metadata. Forget Trust required a native Windows confirmation with explicit
+  Forget/Cancel actions, and the next connection required TOFU again.
+- Durable Trust survived Vault lock/unlock and process restart without another
+  Host Key prompt.
+- Rotating the standalone OpenSSH Host Key at the same Endpoint produced a
+  typed hard-block dialog with Trusted and Received Fingerprints and no Accept
+  or Replace action.
 - Password/System Agent Credentials, Group, inherited/direct Hosts, and Jump Route
   metadata persisted across process restart.
 - PIN, Password, Private Key, Passphrases, Agent Fingerprint, Group, Host,
@@ -651,29 +741,46 @@ try {
 - ``02a4-private-key-imported.png``
 - ``02a5-private-key-connected.png``
 - ``02b-system-agent-connected.png``
+- ``02c-known-hosts.png``
+- ``02c-known-host-forget-confirmation.png``
+- ``02c2-known-host-forgotten.png``
+- ``02c3-tofu-after-forget.png``
 - ``03-repository-created.png``
 - ``04-vault-wrong-pin.png``
 - ``05-vault-reunlocked.png``
 - ``06-restart-locked.png``
 - ``07-restart-recovered.png``
+- ``07a-restart-trusted-connection.png``
+- ``08-changed-host-key.png``
 - ``process-create.json``
 - ``process-restart.json``
+- ``process-changed.json``
 - ``probe-create.json``
 - ``probe-restart.json``
+- ``probe-changed.json``
 - ``cdp-targets-create.json``
 - ``cdp-targets-restart.json``
+- ``cdp-targets-changed.json``
 - ``console-create.txt``
 - ``console-restart.txt``
+- ``console-changed.txt``
 - ``errors-create.txt``
 - ``errors-restart.txt``
+- ``errors-changed.txt``
 - ``app-create.stdout.log``
 - ``app-create.stderr.log``
 - ``app-restart.stdout.log``
 - ``app-restart.stderr.log``
+- ``app-changed.stdout.log``
+- ``app-changed.stderr.log``
 - ``ssh-fixture.txt``
 - ``sshd.stdout.log``
 - ``sshd.stderr.log``
+- ``sshd-rotated.stdout.log``
+- ``sshd-rotated.stderr.log``
+- ``rotated-host-key-fingerprint.txt``
 - ``native-dialog-driver.txt``
+- ``known-host-forget-driver.txt``
 "@ | Set-Content -Encoding UTF8 -Path (Join-Path $RunDirectory "report.md")
 
   Assert-EvidenceContainsNoPrivateKeySecrets

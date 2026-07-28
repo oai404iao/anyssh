@@ -1,4 +1,8 @@
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
+import {
+  browserKnownHostForEndpoint,
+  trustBrowserKnownHost,
+} from "./known-host-bridge";
 
 export const isNativeRuntime = isTauri();
 
@@ -47,9 +51,20 @@ export interface HostKeyEvent {
   fingerprintSha256: string;
 }
 
+export interface HostKeyChangedEvent {
+  type: "hostKeyChanged";
+  hop: SshSessionHop;
+  host: string;
+  port: number;
+  algorithm: string;
+  receivedFingerprintSha256: string;
+  trustedFingerprintsSha256: string[];
+}
+
 export type SshClientEvent =
   | { type: "connecting" }
   | HostKeyEvent
+  | HostKeyChangedEvent
   | { type: "authenticated" }
   | { type: "connected" }
   | { type: "exitStatus"; code: number }
@@ -66,6 +81,7 @@ interface PreviewSession {
   commandBuffer: string;
   hostKeys: HostKeyEvent[];
   hostKeyIndex: number;
+  changedHostKey: HostKeyChangedEvent | null;
   connected: boolean;
 }
 
@@ -202,17 +218,18 @@ function connectPreview(
   callbacks: SessionCallbacks,
 ): Promise<string> {
   const sessionId = `preview-${nextPreviewId++}`;
-  const hostKeys = createPreviewHostKeys(request);
+  const { hostKeys, changedHostKey } = createPreviewHostKeys(request);
   previewSessions.set(sessionId, {
     callbacks,
     commandBuffer: "",
     hostKeys,
     hostKeyIndex: 0,
+    changedHostKey,
     connected: false,
   });
 
   queueMicrotask(() => callbacks.onEvent({ type: "connecting" }));
-  window.setTimeout(() => emitPreviewHostKey(sessionId), 180);
+  window.setTimeout(() => advancePreviewHandshake(sessionId), 180);
 
   callbacks.onData(
     encoder.encode(
@@ -241,12 +258,32 @@ function confirmPreviewHostKey(
     return;
   }
 
-  session.hostKeyIndex += 1;
-  if (session.hostKeyIndex < session.hostKeys.length) {
-    window.setTimeout(() => emitPreviewHostKey(sessionId), 120);
+  try {
+    trustBrowserKnownHost(
+      activeHostKey.host,
+      activeHostKey.port,
+      activeHostKey.algorithm,
+      activeHostKey.fingerprintSha256,
+    );
+  } catch (error) {
+    session.callbacks.onEvent({ type: "error", message: String(error) });
+    session.callbacks.onEvent({ type: "closed" });
+    previewSessions.delete(sessionId);
     return;
   }
 
+  session.hostKeyIndex += 1;
+  if (session.hostKeyIndex < session.hostKeys.length) {
+    window.setTimeout(() => advancePreviewHandshake(sessionId), 120);
+    return;
+  }
+
+  window.setTimeout(() => advancePreviewHandshake(sessionId), 120);
+}
+
+function finishPreviewAuthentication(sessionId: string) {
+  const session = previewSessions.get(sessionId);
+  if (!session) return;
   session.callbacks.onEvent({ type: "authenticated" });
   window.setTimeout(() => {
     const activeSession = previewSessions.get(sessionId);
@@ -264,11 +301,15 @@ function confirmPreviewHostKey(
   }, 160);
 }
 
-function createPreviewHostKeys(request: ConnectRequest): HostKeyEvent[] {
+function createPreviewHostKeys(request: ConnectRequest): {
+  hostKeys: HostKeyEvent[];
+  changedHostKey: HostKeyChangedEvent | null;
+} {
+  const observedHostKeys: HostKeyEvent[] = [];
   const hostKeys: HostKeyEvent[] = [];
 
   if (request.jumpHost) {
-    hostKeys.push({
+    observedHostKeys.push({
       type: "hostKey",
       requestId: nextHostKeyRequestId++,
       hop: { kind: "jumpHost", index: 1 },
@@ -279,7 +320,7 @@ function createPreviewHostKeys(request: ConnectRequest): HostKeyEvent[] {
     });
   }
 
-  hostKeys.push({
+  observedHostKeys.push({
     type: "hostKey",
     requestId: nextHostKeyRequestId++,
     hop: { kind: "target" },
@@ -289,14 +330,66 @@ function createPreviewHostKeys(request: ConnectRequest): HostKeyEvent[] {
     fingerprintSha256: "SHA256:4G6Yp8sJ0B7x1uN3zR9Qm2cK5dL8vT6aW0fH3eP7nXs",
   });
 
-  return hostKeys;
+  for (const observed of observedHostKeys) {
+    let knownHost = browserKnownHostForEndpoint(observed.host, observed.port);
+    if (
+      !knownHost &&
+      observed.host.trim().replace(/\.$/, "").toLowerCase() ===
+        "changed.example"
+    ) {
+      trustBrowserKnownHost(
+        observed.host,
+        observed.port,
+        observed.algorithm,
+        "SHA256:trusted-browser-changed-key",
+      );
+      knownHost = browserKnownHostForEndpoint(observed.host, observed.port);
+    }
+    if (!knownHost) {
+      hostKeys.push(observed);
+      continue;
+    }
+    if (
+      knownHost.keys.some(
+        (key) => key.fingerprintSha256 === observed.fingerprintSha256,
+      )
+    ) {
+      continue;
+    }
+    return {
+      hostKeys,
+      changedHostKey: {
+        type: "hostKeyChanged",
+        hop: observed.hop,
+        host: observed.host,
+        port: observed.port,
+        algorithm: observed.algorithm,
+        receivedFingerprintSha256: observed.fingerprintSha256,
+        trustedFingerprintsSha256: knownHost.keys.map(
+          (key) => key.fingerprintSha256,
+        ),
+      },
+    };
+  }
+
+  return { hostKeys, changedHostKey: null };
 }
 
-function emitPreviewHostKey(sessionId: string) {
+function advancePreviewHandshake(sessionId: string) {
   const session = previewSessions.get(sessionId);
   const hostKey = session?.hostKeys[session.hostKeyIndex];
   if (session && hostKey) {
     session.callbacks.onEvent(hostKey);
+    return;
+  }
+  if (session?.changedHostKey) {
+    session.callbacks.onEvent(session.changedHostKey);
+    session.callbacks.onEvent({ type: "closed" });
+    previewSessions.delete(sessionId);
+    return;
+  }
+  if (session) {
+    finishPreviewAuthentication(sessionId);
   }
 }
 

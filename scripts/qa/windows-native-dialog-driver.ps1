@@ -1,23 +1,35 @@
-param()
+param(
+  [ValidateSet("PrivateKey", "KnownHostForget")]
+  [string]$Mode = "PrivateKey"
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $AppProcessId = [int]$env:ANYSSH_WINDOWS_APP_PID
-$PrivateKeyPath = $env:ANYSSH_WINDOWS_ENCRYPTED_KEY_PATH
-$Passphrase = $env:ANYSSH_WINDOWS_KEY_PASSPHRASE
-$WrongPassphrase = $env:ANYSSH_WINDOWS_WRONG_KEY_PASSPHRASE
 $RunDirectory = $env:ANYSSH_WINDOWS_RUN_DIR
 
 foreach ($RequiredValue in @(
   $AppProcessId,
-  $PrivateKeyPath,
-  $Passphrase,
-  $WrongPassphrase,
   $RunDirectory
 )) {
   if ($null -eq $RequiredValue -or [string]::IsNullOrWhiteSpace([string]$RequiredValue)) {
     throw "Windows native dialog automation is missing a required input."
+  }
+}
+
+if ($Mode -eq "PrivateKey") {
+  $PrivateKeyPath = $env:ANYSSH_WINDOWS_ENCRYPTED_KEY_PATH
+  $Passphrase = $env:ANYSSH_WINDOWS_KEY_PASSPHRASE
+  $WrongPassphrase = $env:ANYSSH_WINDOWS_WRONG_KEY_PASSPHRASE
+  foreach ($RequiredValue in @(
+    $PrivateKeyPath,
+    $Passphrase,
+    $WrongPassphrase
+  )) {
+    if ([string]::IsNullOrWhiteSpace([string]$RequiredValue)) {
+      throw "Windows native Private Key dialog automation is missing a required input."
+    }
   }
 }
 
@@ -160,6 +172,37 @@ public static class AnySshNativeDialogDriver
         SendKeys.SendWait("{ENTER}");
     }
 
+    public static void InvokeButton(IntPtr window, string expectedName)
+    {
+        Activate(window);
+        AutomationElement root = AutomationElement.FromHandle(window);
+        AutomationElementCollection buttons = root.FindAll(
+            TreeScope.Descendants,
+            new PropertyCondition(
+                AutomationElement.ControlTypeProperty,
+                ControlType.Button));
+        foreach (AutomationElement button in buttons)
+        {
+            string name = (button.Current.Name ?? String.Empty)
+                .Replace("&", String.Empty);
+            if (!name.Equals(expectedName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            InvokePattern invoke = button.GetCurrentPattern(
+                InvokePattern.Pattern) as InvokePattern;
+            if (invoke == null)
+            {
+                throw new InvalidOperationException(
+                    "The native confirmation button was not invokable.");
+            }
+            invoke.Invoke();
+            return;
+        }
+        throw new InvalidOperationException(
+            "The native confirmation dialog exposed no matching button.");
+    }
+
     public static void CaptureWindow(IntPtr window, string path)
     {
         RECT rectangle;
@@ -228,6 +271,32 @@ public static class AnySshNativeDialogDriver
     }
 }
 "@
+
+if ($Mode -eq "KnownHostForget") {
+  $Confirmation = [AnySshNativeDialogDriver]::WaitForWindow(
+    $AppProcessId,
+    "Forget trusted host keys",
+    60000
+  )
+  if ($Confirmation -eq [IntPtr]::Zero) {
+    throw "The native Windows Forget Trust confirmation did not appear."
+  }
+  [AnySshNativeDialogDriver]::CaptureWindow(
+    $Confirmation,
+    (Join-Path $RunDirectory "02c-known-host-forget-confirmation.png")
+  )
+  [AnySshNativeDialogDriver]::InvokeButton($Confirmation, "Forget trust")
+  if (-not [AnySshNativeDialogDriver]::WaitForWindowToClose(
+      $Confirmation,
+      30000
+    )) {
+    throw "The native Windows Forget Trust confirmation did not close."
+  }
+  "PASS" | Set-Content -Encoding ASCII -Path (
+    Join-Path $RunDirectory "known-host-forget-driver.txt"
+  )
+  exit 0
+}
 
 $FileDialog = [AnySshNativeDialogDriver]::WaitForWindow(
   $AppProcessId,

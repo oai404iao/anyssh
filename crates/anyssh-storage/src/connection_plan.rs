@@ -1,12 +1,13 @@
 use std::fmt;
 
-use crate::ResolvedCredential;
+use crate::{ResolvedCredential, ResolvedKnownHostPolicy};
 
 pub struct ResolvedHostConnection {
     host_id: String,
     host: String,
     port: u16,
     credential: ResolvedCredential,
+    known_host_policy: ResolvedKnownHostPolicy,
 }
 
 impl ResolvedHostConnection {
@@ -22,8 +23,26 @@ impl ResolvedHostConnection {
         self.port
     }
 
-    pub fn into_parts(self) -> (String, String, u16, ResolvedCredential) {
-        (self.host_id, self.host, self.port, self.credential)
+    pub const fn known_host_policy(&self) -> &ResolvedKnownHostPolicy {
+        &self.known_host_policy
+    }
+
+    pub fn into_parts(
+        self,
+    ) -> (
+        String,
+        String,
+        u16,
+        ResolvedCredential,
+        ResolvedKnownHostPolicy,
+    ) {
+        (
+            self.host_id,
+            self.host,
+            self.port,
+            self.credential,
+            self.known_host_policy,
+        )
     }
 
     pub(crate) fn new(
@@ -31,12 +50,14 @@ impl ResolvedHostConnection {
         host: String,
         port: u16,
         credential: ResolvedCredential,
+        known_host_policy: ResolvedKnownHostPolicy,
     ) -> Self {
         Self {
             host_id,
             host,
             port,
             credential,
+            known_host_policy,
         }
     }
 }
@@ -49,6 +70,7 @@ impl fmt::Debug for ResolvedHostConnection {
             .field("host", &self.host)
             .field("port", &self.port)
             .field("credential", &"<redacted>")
+            .field("known_host_policy", &self.known_host_policy)
             .finish()
     }
 }

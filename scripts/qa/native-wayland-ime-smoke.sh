@@ -422,6 +422,45 @@ fi
 sleep 1
 "$DRIVER" probe "$RUN_DIR/05-disconnected.bmp" >/dev/null
 
+docker exec "$CONTAINER_NAME" rm -f /tmp/anyssh-wayland-trusted-ok
+set_ibus_engine "xkb:us::eng"
+TRUSTED_RECONNECT_SUCCEEDED=0
+for attempt in 1 2 3; do
+  "$DRIVER" click 1100 440
+  "$DRIVER" ctrl-a
+  "$DRIVER" type "anyssh-test"
+  sleep 0.5
+  if [[ "$attempt" -eq 1 ]]; then
+    "$DRIVER" click 1100 495
+  else
+    "$DRIVER" click 1100 540
+  fi
+  sleep 3
+  "$DRIVER" click 500 260
+  "$DRIVER" type "touch /tmp/anyssh-wayland-trusted-ok"
+  "$DRIVER" enter
+  for _ in $(seq 1 12); do
+    if docker exec "$CONTAINER_NAME" \
+      test -f /tmp/anyssh-wayland-trusted-ok >/dev/null 2>&1; then
+      TRUSTED_RECONNECT_SUCCEEDED=1
+      break
+    fi
+    sleep 0.25
+  done
+  if [[ "$TRUSTED_RECONNECT_SUCCEEDED" -eq 1 ]]; then
+    break
+  fi
+done
+if [[ "$TRUSTED_RECONNECT_SUCCEEDED" -ne 1 ]]; then
+  echo "The Wayland session prompted again for a durably trusted Endpoint." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-wayland-trusted-reconnect.bmp" >/dev/null || true
+  exit 1
+fi
+"$DRIVER" probe "$RUN_DIR/06-durable-tofu-reconnect.bmp" >/dev/null
+"$DRIVER" click 1117 44
+sleep 1
+"$DRIVER" probe "$RUN_DIR/07-disconnected-after-reconnect.bmp" >/dev/null
+
 if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
   echo "The AnySSH process exited unexpectedly." >&2
   exit 1
@@ -449,6 +488,8 @@ cat >"$RUN_DIR/report.md" <<EOF
   that the committed text reached SSH. The suffix may vary with the packaged
   libpinyin candidate behavior used by the automation environment.
 - Disconnect returned the application to the disconnected state.
+- A second native Wayland connection used durable Trust without another Host
+  Key prompt.
 
 ## Evidence
 
@@ -457,6 +498,8 @@ cat >"$RUN_DIR/report.md" <<EOF
 - \`03-host-key-dialog.bmp\`
 - \`04-terminal-ime-command.bmp\`
 - \`05-disconnected.bmp\`
+- \`06-durable-tofu-reconnect.bmp\`
+- \`07-disconnected-after-reconnect.bmp\`
 - \`app-backend-environment.txt\`
 - \`ibus-engines.txt\`
 - \`remote-ime-path.txt\`

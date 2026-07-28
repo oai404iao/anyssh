@@ -21,7 +21,7 @@ test("connects through the host-key preview flow", async ({ page }) => {
   await expect(dialog).toContainText("SHA256:");
   await expect(password).toHaveValue("");
 
-  await dialog.getByRole("button", { name: "Trust for this session" }).click();
+  await dialog.getByRole("button", { name: "Trust and continue" }).click();
   await expect(page.getByText("Interactive shell is active.")).toBeVisible();
 
   const terminalInput = page.getByRole("textbox", { name: "Terminal input" });
@@ -32,6 +32,51 @@ test("connects through the host-key preview flow", async ({ page }) => {
   await page.getByRole("button", { name: "Disconnect" }).click();
   await expect(page.getByText("The SSH session has ended.")).toBeVisible();
   await expect(password).toHaveValue("");
+
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByText("Interactive shell is active.")).toBeVisible();
+  await expect(
+    page.getByRole("dialog", { name: "Verify server identity" }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Disconnect" }).click();
+
+  await page.getByRole("button", { name: /^Known hosts \d+$/ }).click();
+  const localTrust = page
+    .locator(".known-host-card")
+    .filter({ hasText: "127.0.0.1:2222" });
+  await expect(localTrust).toContainText("SHA256:");
+  await localTrust.getByRole("button", { name: "Forget trust…" }).click();
+  await expect(localTrust).toHaveCount(0);
+
+  await page.getByRole("button", { name: /^Terminal \d+$/ }).click();
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Verify server identity" }),
+  ).toBeVisible();
+});
+
+test("blocks a changed Known Host without an accept action", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page
+    .getByRole("textbox", { name: "Host", exact: true })
+    .fill("changed.example");
+  await page.getByRole("spinbutton", { name: "Port" }).fill("22");
+  await page.getByLabel("Username").fill("anyssh");
+  await page.getByLabel("Password", { exact: true }).fill("fixture");
+  await page.getByRole("button", { name: "Connect" }).click();
+
+  const changed = page.getByRole("alertdialog", { name: "Host key changed" });
+  await expect(changed).toBeVisible();
+  await expect(changed).toContainText("SHA256:trusted-browser-changed-key");
+  await expect(changed).toContainText("Received");
+  await expect(changed.getByRole("button", { name: /accept/i })).toHaveCount(0);
+  await changed.getByRole("button", { name: "Open Known Hosts" }).click();
+  await expect(
+    page.getByRole("heading", { level: 2, name: "Known Hosts" }),
+  ).toBeVisible();
+  await expect(page.getByText("changed.example:22")).toBeVisible();
 });
 
 test("manages Groups, Credentials, Hosts, and ordered Jump Routes", async ({

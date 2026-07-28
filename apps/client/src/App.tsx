@@ -20,6 +20,7 @@ import {
   isNativeRuntime,
   resizeSsh,
   sendSshInput,
+  type HostKeyChangedEvent,
   type HostKeyEvent,
   type SshClientEvent,
 } from "./lib/ssh-bridge";
@@ -35,6 +36,7 @@ import {
   type HostSummary,
   type JumpRouteSummary,
 } from "./lib/host-bridge";
+import { listKnownHosts, type KnownHostSummary } from "./lib/known-host-bridge";
 import {
   createVault,
   getVaultStatus,
@@ -95,6 +97,8 @@ function App() {
   const [pendingHostKey, setPendingHostKey] = useState<HostKeyEvent | null>(
     null,
   );
+  const [changedHostKey, setChangedHostKey] =
+    useState<HostKeyChangedEvent | null>(null);
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
@@ -104,6 +108,7 @@ function App() {
   const [groups, setGroups] = useState<GroupSummary[]>([]);
   const [hosts, setHosts] = useState<HostSummary[]>([]);
   const [routes, setRoutes] = useState<JumpRouteSummary[]>([]);
+  const [knownHosts, setKnownHosts] = useState<KnownHostSummary[]>([]);
   const [repositoryLoading, setRepositoryLoading] = useState(false);
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
   const [selectedSavedHostId, setSelectedSavedHostId] = useState<string | null>(
@@ -114,17 +119,24 @@ function App() {
     setRepositoryLoading(true);
     setRepositoryError(null);
     try {
-      const [nextCredentials, nextGroups, nextHosts, nextRoutes] =
-        await Promise.all([
-          listCredentials(),
-          listGroups(),
-          listHosts(),
-          listJumpRoutes(),
-        ]);
+      const [
+        nextCredentials,
+        nextGroups,
+        nextHosts,
+        nextRoutes,
+        nextKnownHosts,
+      ] = await Promise.all([
+        listCredentials(),
+        listGroups(),
+        listHosts(),
+        listJumpRoutes(),
+        listKnownHosts(),
+      ]);
       setCredentials(nextCredentials);
       setGroups(nextGroups);
       setHosts(nextHosts);
       setRoutes(nextRoutes);
+      setKnownHosts(nextKnownHosts);
       setSelectedSavedHostId((current) =>
         current && nextHosts.some((host) => host.id === current)
           ? current
@@ -220,6 +232,22 @@ function App() {
           );
           setPendingHostKey(event);
           break;
+        case "hostKeyChanged": {
+          const hop =
+            event.hop.kind === "target"
+              ? "Target host"
+              : `Jump host ${event.hop.index}`;
+          const message = `${hop} key changed for ${event.host}:${event.port}. Connection blocked.`;
+          setPendingHostKey(null);
+          setChangedHostKey(event);
+          setStatus("error");
+          setStatusDetail(message);
+          setError(message);
+          setForm((current) => ({ ...current, password: "" }));
+          setPasswordVisible(false);
+          writeSystemLine(message);
+          break;
+        }
         case "authenticated":
           setStatus("authenticated");
           setStatusDetail("Opening an interactive PTY…");
@@ -268,6 +296,7 @@ function App() {
 
     setError(null);
     setPendingHostKey(null);
+    setChangedHostKey(null);
     setStatus("connecting");
     setStatusDetail("Preparing connection…");
     terminalRef.current?.reset();
@@ -332,6 +361,9 @@ function App() {
     setPendingHostKey(null);
     try {
       await confirmHostKey(sessionId, pendingHostKey.requestId, accepted);
+      if (accepted) {
+        await refreshRepository();
+      }
       if (!accepted) {
         setStatus("closed");
         setStatusDetail("Host key was rejected.");
@@ -371,12 +403,14 @@ function App() {
     setForm((current) => ({ ...current, password: "" }));
     setPasswordVisible(false);
     setPendingHostKey(null);
+    setChangedHostKey(null);
     setSessionId(null);
     setSelectedSavedHostId(null);
     setCredentials([]);
     setGroups([]);
     setHosts([]);
     setRoutes([]);
+    setKnownHosts([]);
     setWorkspaceView("terminal");
     setStatus("closed");
     setStatusDetail("The Vault is locked.");
@@ -411,6 +445,7 @@ function App() {
     setSelectedSavedHostId(host.id);
     setWorkspaceView("terminal");
     setError(null);
+    setChangedHostKey(null);
     setPasswordVisible(false);
     setForm((current) => ({
       ...current,
@@ -425,6 +460,7 @@ function App() {
     setSelectedSavedHostId(null);
     setForm(INITIAL_FORM);
     setError(null);
+    setChangedHostKey(null);
     setPasswordVisible(false);
   }
 
@@ -433,6 +469,7 @@ function App() {
     hosts: "Hosts",
     credentials: "Credentials",
     routes: "Jump Routes",
+    knownHosts: "Known Hosts",
   };
   const workspaceTitle =
     workspaceView === "terminal"
@@ -508,6 +545,15 @@ function App() {
             <NavIcon name="routes" />
             Jump routes
             <span className="nav-count">{routes.length}</span>
+          </button>
+          <button
+            className={`nav-item ${workspaceView === "knownHosts" ? "active" : ""}`}
+            onClick={() => setWorkspaceView("knownHosts")}
+            type="button"
+          >
+            <NavIcon name="knownHosts" />
+            Known hosts
+            <span className="nav-count">{knownHosts.length}</span>
           </button>
         </nav>
 
@@ -624,6 +670,7 @@ function App() {
               ["hosts", "Hosts"],
               ["credentials", "Credentials"],
               ["routes", "Routes"],
+              ["knownHosts", "Known"],
             ] as const
           ).map(([view, label]) => (
             <button
@@ -870,6 +917,7 @@ function App() {
             credentials={credentials}
             groups={groups}
             hosts={hosts}
+            knownHosts={knownHosts}
             loadError={repositoryError}
             loading={repositoryLoading}
             onChanged={refreshRepository}
@@ -927,7 +975,75 @@ function App() {
                 onClick={() => void handleHostKeyDecision(true)}
                 type="button"
               >
-                Trust for this session
+                Trust and continue
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      {changedHostKey && (
+        <div className="dialog-backdrop">
+          <section
+            aria-labelledby="changed-host-key-title"
+            aria-modal="true"
+            className="host-key-dialog changed-host-key-dialog"
+            role="alertdialog"
+          >
+            <div className="dialog-icon danger-icon">
+              <LockIcon />
+            </div>
+            <p className="eyebrow">
+              {changedHostKey.hop.kind === "target"
+                ? "Target host"
+                : `Jump host ${changedHostKey.hop.index}`}
+            </p>
+            <h2 id="changed-host-key-title">Host key changed</h2>
+            <p>
+              AnySSH blocked the connection. Verify the server through a trusted
+              channel before forgetting the existing trust.
+            </p>
+            <dl>
+              <div>
+                <dt>Host</dt>
+                <dd>
+                  {changedHostKey.host}:{changedHostKey.port}
+                </dd>
+              </div>
+              <div>
+                <dt>Algorithm</dt>
+                <dd>{changedHostKey.algorithm}</dd>
+              </div>
+            </dl>
+            <div className="changed-key-comparison">
+              <div>
+                <span>Trusted</span>
+                {changedHostKey.trustedFingerprintsSha256.map((fingerprint) => (
+                  <code key={fingerprint}>{fingerprint}</code>
+                ))}
+              </div>
+              <div>
+                <span>Received</span>
+                <code>{changedHostKey.receivedFingerprintSha256}</code>
+              </div>
+            </div>
+            <div className="dialog-actions">
+              <button
+                className="secondary-button"
+                onClick={() => setChangedHostKey(null)}
+                type="button"
+              >
+                Close
+              </button>
+              <button
+                className="connect-button"
+                onClick={() => {
+                  setChangedHostKey(null);
+                  setWorkspaceView("knownHosts");
+                  void refreshRepository();
+                }}
+                type="button"
+              >
+                Open Known Hosts
               </button>
             </div>
           </section>
@@ -940,7 +1056,7 @@ function App() {
 function NavIcon({
   name,
 }: {
-  name: "terminal" | "groups" | "hosts" | "keys" | "routes";
+  name: "terminal" | "groups" | "hosts" | "keys" | "routes" | "knownHosts";
 }) {
   const paths = {
     terminal: "M4 5h16v14H4zM7.5 9l3 3-3 3M12.5 15H17",
@@ -948,6 +1064,8 @@ function NavIcon({
     hosts: "M4 5.5h16v11H4zM8 19h8M12 16.5V19",
     keys: "M15.5 7.5a4 4 0 1 1-3.7 5.5L4 20.8V17h3v-3h3l1.8-1.8",
     routes: "M6 5.5h4v4H6zM14 14.5h4v4h-4zM10 7.5h3a3 3 0 0 1 3 3v4",
+    knownHosts:
+      "M12 3.5 19 6v5.5c0 4.2-2.8 7.4-7 9-4.2-1.6-7-4.8-7-9V6l7-2.5Zm-3 8 2 2 4-4",
   };
 
   return (

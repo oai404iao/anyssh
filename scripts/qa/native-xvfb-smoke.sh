@@ -415,9 +415,158 @@ fi
 "$DRIVER" click 1117 44
 sleep 1
 "$DRIVER" probe "$RUN_DIR/15-disconnected.bmp" >/dev/null
+
+docker exec "$CONTAINER_NAME" rm -f /tmp/anyssh-native-trusted-ok
+TRUSTED_RECONNECT_SUCCEEDED=0
+for attempt in 1 2 3; do
+  "$DRIVER" click 1100 440
+  "$DRIVER" ctrl-a
+  "$DRIVER" type "anyssh-test"
+  sleep 0.5
+  if [[ "$attempt" -eq 1 ]]; then
+    "$DRIVER" click 1100 495
+  else
+    "$DRIVER" click 1100 540
+  fi
+  sleep 3
+  "$DRIVER" click 500 260
+  "$DRIVER" type "touch /tmp/anyssh-native-trusted-ok"
+  "$DRIVER" enter
+  for _ in $(seq 1 12); do
+    if docker exec "$CONTAINER_NAME" \
+      test -f /tmp/anyssh-native-trusted-ok >/dev/null 2>&1; then
+      TRUSTED_RECONNECT_SUCCEEDED=1
+      break
+    fi
+    sleep 0.25
+  done
+  if [[ "$TRUSTED_RECONNECT_SUCCEEDED" -eq 1 ]]; then
+    break
+  fi
+done
+if [[ "$TRUSTED_RECONNECT_SUCCEEDED" -ne 1 ]]; then
+  echo "The durably trusted Endpoint prompted again or did not reconnect." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-trusted-reconnect.bmp" >/dev/null || true
+  exit 1
+fi
+"$DRIVER" probe "$RUN_DIR/16-durable-tofu-reconnect.bmp" >/dev/null
+"$DRIVER" click 1117 44
+sleep 1
+
+"$DRIVER" click 100 340
+sleep 1
+"$DRIVER" probe "$RUN_DIR/17-known-hosts.bmp" >/dev/null
+"$DRIVER" click 1180 273
+
+FORGET_DIALOG_READY=0
+FORGET_DIALOG_LINE=""
+for _ in $(seq 1 40); do
+  FORGET_DIALOG_LINE="$(
+    ANYSSH_X11_WINDOW_MATCH="Forget trusted host keys" \
+      "$DRIVER" probe 2>/dev/null |
+      grep -F "name=Forget trusted host keys" |
+      head -n1 || true
+  )"
+  if [[ -n "$FORGET_DIALOG_LINE" ]]; then
+    FORGET_DIALOG_READY=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$FORGET_DIALOG_READY" -ne 1 ]]; then
+  echo "The native Forget Trust confirmation did not appear." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-known-host-confirmation.bmp" >/dev/null || true
+  exit 1
+fi
+ANYSSH_X11_WINDOW_MATCH="Forget trusted host keys" \
+  "$DRIVER" probe "$RUN_DIR/18-known-host-forget-confirmation.bmp" >/dev/null
+if [[ "$FORGET_DIALOG_LINE" =~ geometry=([0-9]+)x([0-9]+)\+([0-9]+)\+([0-9]+) ]]; then
+  FORGET_DIALOG_WIDTH="${BASH_REMATCH[1]}"
+  FORGET_DIALOG_HEIGHT="${BASH_REMATCH[2]}"
+  FORGET_DIALOG_X="${BASH_REMATCH[3]}"
+  FORGET_DIALOG_Y="${BASH_REMATCH[4]}"
+else
+  echo "The native Forget Trust dialog geometry was unavailable." >&2
+  exit 1
+fi
+"$DRIVER" click \
+  "$((FORGET_DIALOG_X + FORGET_DIALOG_WIDTH / 4))" \
+  "$((FORGET_DIALOG_Y + FORGET_DIALOG_HEIGHT - 18))"
+sleep 2
+"$DRIVER" probe "$RUN_DIR/19-known-host-forgotten.bmp" >/dev/null
+
+"$DRIVER" click 100 106
+sleep 1
+"$DRIVER" click 1100 440
+"$DRIVER" type "anyssh-test"
+"$DRIVER" click 1100 495
+sleep 1
+"$DRIVER" probe "$RUN_DIR/20-tofu-after-forget.bmp" >/dev/null
+"$DRIVER" click 700 532
+docker exec "$CONTAINER_NAME" rm -f /tmp/anyssh-native-retrusted-ok
+RETRUSTED_CONNECTION_SUCCEEDED=0
+for attempt in 1 2 3; do
+  if [[ "$attempt" -gt 1 ]]; then
+    "$DRIVER" click 1100 440
+    "$DRIVER" ctrl-a
+    "$DRIVER" type "anyssh-test"
+    sleep 0.5
+    "$DRIVER" click 1100 540
+  fi
+  sleep 3
+  "$DRIVER" click 500 260
+  "$DRIVER" type "touch /tmp/anyssh-native-retrusted-ok"
+  "$DRIVER" enter
+  for _ in $(seq 1 12); do
+    if docker exec "$CONTAINER_NAME" \
+      test -f /tmp/anyssh-native-retrusted-ok >/dev/null 2>&1; then
+      RETRUSTED_CONNECTION_SUCCEEDED=1
+      break
+    fi
+    sleep 0.25
+  done
+  if [[ "$RETRUSTED_CONNECTION_SUCCEEDED" -eq 1 ]]; then
+    break
+  fi
+done
+if [[ "$RETRUSTED_CONNECTION_SUCCEEDED" -ne 1 ]]; then
+  echo "The connection did not resume after TOFU was re-established." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-retrusted-connection.bmp" >/dev/null || true
+  exit 1
+fi
+"$DRIVER" click 1117 44
+sleep 1
+
+docker exec "$CONTAINER_NAME" sh -c \
+  'rm -f /etc/ssh/ssh_host_* && ssh-keygen -A >/dev/null 2>&1 && kill -HUP 1'
+for _ in $(seq 1 50); do
+  if ssh-keyscan -p 2222 127.0.0.1 >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.1
+done
+if ! ssh-keyscan -p 2222 127.0.0.1 >/dev/null 2>&1; then
+  echo "The rotated OpenSSH fixture did not become ready." >&2
+  exit 1
+fi
+docker exec "$CONTAINER_NAME" rm -f /tmp/anyssh-native-rotation-bypass
+"$DRIVER" click 1100 495
+sleep 2
+"$DRIVER" probe "$RUN_DIR/21-changed-host-key.bmp" >/dev/null
+"$DRIVER" click 500 260
+"$DRIVER" type "touch /tmp/anyssh-native-rotation-bypass"
+"$DRIVER" enter
+sleep 1
+if docker exec "$CONTAINER_NAME" \
+  test -f /tmp/anyssh-native-rotation-bypass >/dev/null 2>&1; then
+  echo "The rotated Host Key bypassed the hard-block dialog." >&2
+  exit 1
+fi
+"$DRIVER" click 455 590
+sleep 1
 "$DRIVER" click 1208 44
 sleep 1
-"$DRIVER" probe "$RUN_DIR/16-vault-locked-after-session.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/22-vault-locked-after-session.bmp" >/dev/null
 
 if ! kill -0 "$APP_GROUP" >/dev/null 2>&1; then
   echo "The native process exited unexpectedly." >&2
@@ -459,6 +608,12 @@ cat >"$RUN_DIR/report.md" <<EOF
 - A 4 MiB terminal stream drained through Tauri/xterm acknowledgement backpressure and
   created \`/tmp/anyssh-native-large-ok\` after the output completed.
 - Disconnect returned the UI to the disconnected state.
+- A second connection to the same Endpoint used durable Trust without another
+  Host Key prompt.
+- Known Hosts displayed metadata-only Trust, required a native GTK confirmation
+  to forget it, and the next connection required TOFU again.
+- Rotating the same OpenSSH Endpoint produced a hard-block dialog and no remote
+  command could run through it.
 - Lock Vault returned to the PIN gate after the SSH session ended.
 
 ## Evidence
@@ -478,7 +633,13 @@ cat >"$RUN_DIR/report.md" <<EOF
 - \`13-host-key-dialog.bmp\`
 - \`14-command-succeeded.bmp\`
 - \`15-disconnected.bmp\`
-- \`16-vault-locked-after-session.bmp\`
+- \`16-durable-tofu-reconnect.bmp\`
+- \`17-known-hosts.bmp\`
+- \`18-known-host-forget-confirmation.bmp\`
+- \`19-known-host-forgotten.bmp\`
+- \`20-tofu-after-forget.bmp\`
+- \`21-changed-host-key.bmp\`
+- \`22-vault-locked-after-session.bmp\`
 - \`windows.txt\`
 - \`native.log\`
 EOF

@@ -144,6 +144,9 @@ async fn expect_shell_success(spawned: SpawnedSession, marker: &str) -> Vec<Sess
                         .await
                         .expect("host-key decision should reach the active hop");
                 }
+                SessionEvent::HostKeyChanged(info) => {
+                    panic!("fixture host key unexpectedly changed: {info:?}")
+                }
                 SessionEvent::Authenticated => saw_authenticated = true,
                 SessionEvent::Connected => {
                     saw_connected = true;
@@ -191,6 +194,9 @@ async fn expect_failure(spawned: SpawnedSession) -> String {
                         .confirm_host_key(info.request_id, true)
                         .await
                         .expect("host-key decision should reach the active hop");
+                }
+                SessionEvent::HostKeyChanged(info) => {
+                    panic!("fixture host key unexpectedly changed: {info:?}")
                 }
                 SessionEvent::Authenticated => saw_authenticated = true,
                 SessionEvent::Connected => saw_connected = true,

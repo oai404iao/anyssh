@@ -81,11 +81,25 @@
   Session/Application/DB Actor 边界。
 - [x] 2026-07-28：创建 OpenSSH Reference、Proposed ADR-0015、Design 和本
   ExecPlan。
-- [ ] 完成 Milestone 1：Schema v6 与 Repository。
-- [ ] 完成 Milestone 2：SSH/Application Trust Boundary。
-- [ ] 完成 Milestone 3：Tauri/React Product UI。
+- [x] 2026-07-28：完成 Endpoint Normalization、Schema v6、Known Host
+  Repository、Actor API、v5 Migration/中断回滚、First-writer-wins 和 Saved
+  Host Connection Plan Policy。
+- [x] 2026-07-28：完成多 Fingerprint `HostKeyPolicy`、Rust-only
+  `ObservedHostKey`、persist-before-continue、DB Failure 自动拒绝和 typed
+  Changed-Key Event。
+- [x] 2026-07-28：完成 metadata-only Tauri/React Known Hosts、原生
+  Forget Confirmation、Changed-Key Hard Block、Vitest、Playwright 和
+  agent-browser。
+- [x] 完成 Milestone 1：Schema v6 与 Repository。
+- [x] 完成 Milestone 2：SSH/Application Trust Boundary。
+- [x] 完成 Milestone 3：Tauri/React Product UI。
 - [ ] 完成 Milestone 4：Protocol 与 Native QA。
 - [ ] 完成全量回归、Artifact 人工检查、ADR-0015 状态评审和计划收尾。
+- [x] 2026-07-28：本地 OpenSSH、X11、Wayland、Android ARM64 和 Linux
+  Container 验证通过；X11 已覆盖首次 Trust、二次免提示、原生 Forget、重新
+  TOFU 和同 Endpoint Key Rotation Hard Block。
+- [ ] 运行扩展后的 Windows create/restart/changed 三阶段 QA，并取得同 Commit
+  CI Artifact。
 
 ## Milestones
 
@@ -222,6 +236,17 @@ git diff --check
 - 2026-07-28：系统文件支持 Hash、Pattern、Marker 和多 Key；如果第一版把这些
   全部与 Runtime Repository 同时实现，会扩大安全语义和测试矩阵，因此先完成
   Exact Endpoint Durable TOFU。
+- 2026-07-28：Browser Changed-Key 场景在打开 Known Hosts 时需要显式刷新
+  Repository；否则 React 仍显示首次 Mount 时的空快照，虽然 Browser Runtime
+  已持有测试 Trust。
+- 2026-07-28：Linux 的 `rfd`/GTK Forget Confirmation 使用独立原生窗口和
+  `Forget trust`/`Cancel` 自定义动作；QA 必须按原生窗口标题和几何位置驱动，
+  不能假设标准 Yes/No Dialog。
+- 2026-07-28：现有 Windows Native Smoke 的第二种 Credential 原本再次点击
+  Host Key Accept；Durable TOFU 正确实现后该步骤必须反向断言“无第二次
+  Prompt”，并增加重启和轮换阶段。
+- 2026-07-28：X11 大输出回归后再次输入临时 Password 偶有 UI Automation
+  时序波动；QA 采用有界三次重试，同时仍以远端 Marker 作为连接成功证据。
 
 ## Decision Log
 
@@ -236,6 +261,14 @@ git diff --check
 - 2026-07-28：Forget Trust 必须经过 WebView 外的原生确认，避免被攻陷的
   WebView 静默降级已有 Host 身份。
 - 2026-07-28：OpenSSH 文件导入/导出从本计划分离，但 Schema 保留完整 Key。
+- 2026-07-28：Browser QA 初始 Known Host 集合保持为空；Changed-Key 专用
+  Endpoint 只在该场景连接时注入旧 Trust，避免普通 Known Hosts 页面出现测试
+  噪声。
+- 2026-07-28：Windows Native QA 分为 create、restart、changed 三个进程阶段；
+  同一 standalone OpenSSH Endpoint 在 restart 后轮换 Host Key，以同时证明
+  Trust 跨进程持久化和 Changed-Key 硬阻断。
+- 2026-07-28：X11 Native QA 也在相同 Endpoint 上轮换 Docker OpenSSH Host
+  Key；Changed-Key Dialog 没有 Accept/Replace，且远端 bypass Marker 不得创建。
 
 ## Outcomes & Retrospective
 

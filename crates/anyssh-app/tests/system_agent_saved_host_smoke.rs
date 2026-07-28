@@ -125,13 +125,7 @@ async fn saved_hosts_mix_password_private_key_and_system_agent_per_hop() {
         .await
         .expect("create Private Key Target");
 
-    run_saved_session(
-        &core,
-        key_target.id(),
-        "ANYSSH_AGENT_TO_KEY_OK",
-        &[SessionHop::JumpHost { index: 1 }, SessionHop::Target],
-    )
-    .await;
+    run_saved_session(&core, key_target.id(), "ANYSSH_AGENT_TO_KEY_OK", &[]).await;
 }
 
 async fn run_saved_session(
@@ -158,10 +152,12 @@ async fn run_saved_session(
                 SessionEvent::Connecting | SessionEvent::Authenticated => {}
                 SessionEvent::HostKey(info) => {
                     hops.push(info.hop);
-                    control
-                        .confirm_host_key(info.request_id, true)
+                    core.decide_host_key(&control, info.request_id, true)
                         .await
                         .expect("confirm Host Key");
+                }
+                SessionEvent::HostKeyChanged(info) => {
+                    panic!("saved route host key unexpectedly changed: {info:?}")
                 }
                 SessionEvent::Connected => {
                     control

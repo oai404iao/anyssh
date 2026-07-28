@@ -51,6 +51,9 @@ async fn selected_system_agent_identity_authenticates_without_private_key_materi
                         .await
                         .expect("confirm Host Key");
                 }
+                SessionEvent::HostKeyChanged(info) => {
+                    panic!("fixture host key unexpectedly changed: {info:?}")
+                }
                 SessionEvent::Connected => {
                     connected = true;
                     control
@@ -109,7 +112,8 @@ async fn selected_system_agent_identity_authenticates_without_private_key_materi
                 | SessionEvent::Authenticated
                 | SessionEvent::Connected
                 | SessionEvent::Data(_)
-                | SessionEvent::ExitStatus(_) => {}
+                | SessionEvent::ExitStatus(_)
+                | SessionEvent::HostKeyChanged(_) => {}
             }
         }
     })

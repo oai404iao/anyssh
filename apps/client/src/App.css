@@ -803,6 +803,12 @@ select:focus-visible {
   width: 19px;
 }
 
+.dialog-icon.danger-icon {
+  border-color: rgba(255, 124, 141, 0.25);
+  color: var(--danger);
+  background: rgba(255, 124, 141, 0.08);
+}
+
 .host-key-dialog dl {
   display: grid;
   gap: 7px;
@@ -842,6 +848,27 @@ select:focus-visible {
   font-family: "JetBrains Mono", monospace;
   font-size: 10px;
   line-height: 1.6;
+}
+
+.changed-host-key-dialog {
+  width: min(540px, 100%);
+}
+
+.changed-key-comparison {
+  display: grid;
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.changed-key-comparison > div {
+  display: grid;
+  gap: 6px;
+}
+
+.changed-key-comparison span {
+  color: #69748b;
+  font-size: 9px;
+  text-transform: uppercase;
 }
 
 .dialog-actions {
@@ -1144,6 +1171,11 @@ select:focus-visible {
   background: rgba(156, 140, 255, 0.11);
 }
 
+.known-host-resource-icon {
+  color: #ff9cab;
+  background: rgba(255, 124, 141, 0.1);
+}
+
 .group-tree {
   padding-inline-end: 48px;
 }
@@ -1185,6 +1217,34 @@ select:focus-visible {
   color: #7d899e;
   background: rgba(255, 255, 255, 0.02);
   font-size: 8px;
+}
+
+.known-host-keys {
+  display: grid;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.known-host-key {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.known-host-key > span {
+  color: #8e9bb0;
+  font-size: 9px;
+}
+
+.known-host-key code {
+  overflow: hidden;
+  color: #a7dfd5;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .resource-actions {
@@ -1515,7 +1575,7 @@ select:focus-visible {
 
   .mobile-primary-nav {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 5px;
     padding: 8px 12px 0;
   }

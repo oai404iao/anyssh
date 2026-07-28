@@ -1,5 +1,6 @@
 #![deny(unsafe_code)]
 
+mod native_known_host;
 mod native_passphrase;
 
 use std::{
@@ -15,8 +16,9 @@ use anyssh_app::{
     ApplicationCore, AuthenticationSource, CredentialKind as StorageCredentialKind,
     CredentialSummary as StorageCredentialSummary, DatabaseActorConfig,
     GroupSummary as StorageGroupSummary, HostSummary as StorageHostSummary,
-    JumpRouteSummary as StorageJumpRouteSummary, Override as StorageOverride, SshHopRequest,
-    SshSessionRequest, VaultState as StorageVaultState, VaultStatus as StorageVaultStatus,
+    JumpRouteSummary as StorageJumpRouteSummary, KnownHostSummary as StorageKnownHostSummary,
+    Override as StorageOverride, SshHopRequest, SshSessionRequest, VaultState as StorageVaultState,
+    VaultStatus as StorageVaultStatus,
 };
 use anyssh_domain::{SshEndpoint, TerminalSize};
 use anyssh_ssh::{
@@ -32,6 +34,7 @@ use tauri_plugin_dialog::{DialogExt, FilePath};
 use tokio::sync::RwLock;
 use zeroize::Zeroizing;
 
+use crate::native_known_host::NativeKnownHostForgetPrompt;
 use crate::native_passphrase::NativePrivateKeyPassphrasePrompt;
 
 const OUTPUT_ACK_BUFFER: usize = 64;
@@ -301,6 +304,46 @@ struct UpdateHostRequest {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct KnownHostKeySummary {
+    algorithm: String,
+    fingerprint_sha256: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KnownHostSummary {
+    id: String,
+    host: String,
+    port: u16,
+    keys: Vec<KnownHostKeySummary>,
+}
+
+impl From<StorageKnownHostSummary> for KnownHostSummary {
+    fn from(summary: StorageKnownHostSummary) -> Self {
+        Self {
+            id: summary.id().to_owned(),
+            host: summary.host().to_owned(),
+            port: summary.port(),
+            keys: summary
+                .keys()
+                .iter()
+                .map(|key| KnownHostKeySummary {
+                    algorithm: key.algorithm().to_owned(),
+                    fingerprint_sha256: key.fingerprint_sha256().to_owned(),
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ForgetKnownHostRequest {
+    known_host_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct JumpRouteSummary {
     id: String,
     label: String,
@@ -478,6 +521,16 @@ enum ClientEvent {
         algorithm: String,
         #[serde(rename = "fingerprintSha256")]
         fingerprint_sha256: String,
+    },
+    HostKeyChanged {
+        hop: ClientSessionHop,
+        host: String,
+        port: u16,
+        algorithm: String,
+        #[serde(rename = "receivedFingerprintSha256")]
+        received_fingerprint_sha256: String,
+        #[serde(rename = "trustedFingerprintsSha256")]
+        trusted_fingerprints_sha256: Vec<String>,
     },
     Authenticated,
     Connected,
@@ -810,6 +863,33 @@ async fn host_delete(host_id: String, core: State<'_, ApplicationCore>) -> Resul
 }
 
 #[tauri::command]
+async fn known_host_list(
+    core: State<'_, ApplicationCore>,
+) -> Result<Vec<KnownHostSummary>, String> {
+    core.list_known_hosts()
+        .await
+        .map(|known_hosts| {
+            known_hosts
+                .into_iter()
+                .map(KnownHostSummary::from)
+                .collect()
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn known_host_forget(
+    request: ForgetKnownHostRequest,
+    app: AppHandle,
+    core: State<'_, ApplicationCore>,
+) -> Result<bool, String> {
+    let prompt = NativeKnownHostForgetPrompt::new(app);
+    core.forget_known_host_with_prompt(request.known_host_id, &prompt)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn jump_route_create(
     request: CreateJumpRouteRequest,
     core: State<'_, ApplicationCore>,
@@ -942,6 +1022,14 @@ async fn register_spawned_session(
                     algorithm: info.algorithm,
                     fingerprint_sha256: info.fingerprint_sha256,
                 }),
+                SessionEvent::HostKeyChanged(info) => events.send(ClientEvent::HostKeyChanged {
+                    hop: info.hop.into(),
+                    host: info.endpoint.host,
+                    port: info.endpoint.port,
+                    algorithm: info.algorithm,
+                    received_fingerprint_sha256: info.received_fingerprint_sha256,
+                    trusted_fingerprints_sha256: info.trusted_fingerprints_sha256,
+                }),
                 SessionEvent::Authenticated => events.send(ClientEvent::Authenticated),
                 SessionEvent::Connected => events.send(ClientEvent::Connected),
                 SessionEvent::Data(bytes) => {
@@ -987,11 +1075,10 @@ async fn ssh_confirm_host_key(
     request_id: u64,
     accepted: bool,
     registry: State<'_, SessionRegistry>,
+    core: State<'_, ApplicationCore>,
 ) -> Result<(), String> {
-    registry
-        .get(&session_id)
-        .await?
-        .confirm_host_key(request_id, accepted)
+    let control = registry.get(&session_id).await?;
+    core.decide_host_key(&control, request_id, accepted)
         .await
         .map_err(|error| error.to_string())
 }
@@ -1080,6 +1167,8 @@ pub fn run() {
             host_update,
             host_list,
             host_delete,
+            known_host_list,
+            known_host_forget,
             jump_route_create,
             jump_route_update,
             jump_route_list,
@@ -1119,6 +1208,28 @@ mod tests {
         assert_eq!(value["hop"]["index"], 1);
         assert!(value.get("request_id").is_none());
         assert!(value.get("fingerprint_sha256").is_none());
+    }
+
+    #[test]
+    fn changed_host_key_event_is_typed_and_has_no_accept_field() {
+        let value = serde_json::to_value(ClientEvent::HostKeyChanged {
+            hop: ClientSessionHop::Target,
+            host: "target.internal".to_owned(),
+            port: 22,
+            algorithm: "ssh-ed25519".to_owned(),
+            received_fingerprint_sha256: "SHA256:received".to_owned(),
+            trusted_fingerprints_sha256: vec!["SHA256:trusted".to_owned()],
+        })
+        .expect("changed-key event should serialize");
+
+        assert_eq!(value["type"], "hostKeyChanged");
+        assert_eq!(value["receivedFingerprintSha256"], "SHA256:received");
+        assert_eq!(
+            value["trustedFingerprintsSha256"],
+            serde_json::json!(["SHA256:trusted"])
+        );
+        assert!(value.get("accepted").is_none());
+        assert!(value.get("publicKey").is_none());
     }
 
     #[test]
@@ -1351,6 +1462,46 @@ mod tests {
         );
         assert!(route.get("credentialId").is_none());
         assert!(route.get("password").is_none());
+    }
+
+    #[test]
+    fn known_host_ipc_is_metadata_only_and_forget_accepts_only_an_id() {
+        let summary = serde_json::to_value(KnownHostSummary {
+            id: "known-fixture".to_owned(),
+            host: "target.internal".to_owned(),
+            port: 22,
+            keys: vec![KnownHostKeySummary {
+                algorithm: "ssh-ed25519".to_owned(),
+                fingerprint_sha256: "SHA256:trusted".to_owned(),
+            }],
+        })
+        .expect("Known Host summary should serialize");
+        assert_eq!(summary["host"], "target.internal");
+        assert_eq!(summary["keys"][0]["fingerprintSha256"], "SHA256:trusted");
+        assert!(summary.get("publicKey").is_none());
+
+        let request: ForgetKnownHostRequest = serde_json::from_value(serde_json::json!({
+            "knownHostId": "known-fixture"
+        }))
+        .expect("ID-only forget request");
+        assert_eq!(request.known_host_id, "known-fixture");
+
+        for extra in [
+            serde_json::json!({
+                "knownHostId": "known-fixture",
+                "host": "target.internal"
+            }),
+            serde_json::json!({
+                "knownHostId": "known-fixture",
+                "fingerprintSha256": "SHA256:replacement"
+            }),
+            serde_json::json!({
+                "knownHostId": "known-fixture",
+                "publicKey": "must-not-enter-ipc"
+            }),
+        ] {
+            assert!(serde_json::from_value::<ForgetKnownHostRequest>(extra).is_err());
+        }
     }
 
     #[test]

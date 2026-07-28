@@ -41,6 +41,8 @@ const HOST_KEY_DECISION_TIMEOUT: Duration = Duration::from_secs(60);
 pub const DEFAULT_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
 pub const MAX_JUMP_HOSTS: usize = 32;
 pub const MAX_SYSTEM_AGENT_IDENTITIES: usize = 64;
+pub const MAX_TRUSTED_HOST_KEYS: usize = 16;
+pub const MAX_HOST_PUBLIC_KEY_BYTES: usize = 64 * 1024;
 const CHANNEL_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 const SYSTEM_AGENT_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 pub const MAX_PRIVATE_KEY_BYTES: usize = 1024 * 1024;
@@ -193,7 +195,7 @@ pub enum SystemAgentError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostKeyPolicy {
     Prompt,
-    RequireSha256 { fingerprint: String },
+    RequireSha256Set { fingerprints: Vec<String> },
 }
 
 pub struct SshConnectionConfig {
@@ -271,10 +273,79 @@ pub struct HostKeyInfo {
     pub fingerprint_sha256: String,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct ObservedHostKey {
+    request_id: u64,
+    hop: SessionHop,
+    endpoint: SshEndpoint,
+    algorithm: String,
+    fingerprint_sha256: String,
+    public_key: Vec<u8>,
+}
+
+impl ObservedHostKey {
+    pub const fn request_id(&self) -> u64 {
+        self.request_id
+    }
+
+    pub const fn hop(&self) -> &SessionHop {
+        &self.hop
+    }
+
+    pub const fn endpoint(&self) -> &SshEndpoint {
+        &self.endpoint
+    }
+
+    pub fn algorithm(&self) -> &str {
+        &self.algorithm
+    }
+
+    pub fn fingerprint_sha256(&self) -> &str {
+        &self.fingerprint_sha256
+    }
+
+    pub fn public_key(&self) -> &[u8] {
+        &self.public_key
+    }
+
+    pub fn into_parts(self) -> (SshEndpoint, String, String, Vec<u8>) {
+        (
+            self.endpoint,
+            self.algorithm,
+            self.fingerprint_sha256,
+            self.public_key,
+        )
+    }
+}
+
+impl fmt::Debug for ObservedHostKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ObservedHostKey")
+            .field("request_id", &self.request_id)
+            .field("hop", &self.hop)
+            .field("endpoint", &self.endpoint)
+            .field("algorithm", &self.algorithm)
+            .field("fingerprint_sha256", &self.fingerprint_sha256)
+            .field("public_key", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostKeyChangedInfo {
+    pub hop: SessionHop,
+    pub endpoint: SshEndpoint,
+    pub algorithm: String,
+    pub received_fingerprint_sha256: String,
+    pub trusted_fingerprints_sha256: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionEvent {
     Connecting,
     HostKey(HostKeyInfo),
+    HostKeyChanged(HostKeyChangedInfo),
     Authenticated,
     Connected,
     Data(Bytes),
@@ -332,6 +403,7 @@ struct SessionControlInner {
     commands: mpsc::Sender<SessionCommand>,
     host_key_decisions: mpsc::Sender<HostKeyDecision>,
     pending_host_key_request: Arc<AtomicU64>,
+    pending_observed_host_key: Arc<Mutex<Option<ObservedHostKey>>>,
     cancellation: SessionCancellation,
 }
 
@@ -347,6 +419,26 @@ pub struct SessionControl {
 }
 
 impl SessionControl {
+    pub async fn observed_host_key(
+        &self,
+        request_id: u64,
+    ) -> Result<ObservedHostKey, SessionControlError> {
+        if self.inner.cancellation.is_cancelled()
+            || self.inner.pending_host_key_request.load(Ordering::Acquire) != request_id
+        {
+            return Err(SessionControlError::HostKeyRequestExpired);
+        }
+
+        self.inner
+            .pending_observed_host_key
+            .lock()
+            .await
+            .as_ref()
+            .filter(|observed| observed.request_id == request_id)
+            .cloned()
+            .ok_or(SessionControlError::HostKeyRequestExpired)
+    }
+
     pub async fn confirm_host_key(
         &self,
         request_id: u64,
@@ -360,6 +452,14 @@ impl SessionControl {
             .pending_host_key_request
             .compare_exchange(request_id, 0, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| SessionControlError::HostKeyRequestExpired)?;
+        let mut observed = self.inner.pending_observed_host_key.lock().await;
+        if observed
+            .as_ref()
+            .is_some_and(|observed| observed.request_id == request_id)
+        {
+            observed.take();
+        }
+        drop(observed);
 
         self.inner
             .host_key_decisions
@@ -538,6 +638,7 @@ pub fn spawn_session(config: SshSessionConfig) -> SpawnedSession {
     let (host_key_sender, host_key_receiver) = mpsc::channel(HOST_KEY_DECISION_BUFFER);
     let cancellation = SessionCancellation::default();
     let pending_host_key_request = Arc::new(AtomicU64::new(0));
+    let pending_observed_host_key = Arc::new(Mutex::new(None));
     let next_host_key_request = Arc::new(AtomicU64::new(1));
 
     let control = SessionControl {
@@ -545,6 +646,7 @@ pub fn spawn_session(config: SshSessionConfig) -> SpawnedSession {
             commands: command_sender,
             host_key_decisions: host_key_sender,
             pending_host_key_request: pending_host_key_request.clone(),
+            pending_observed_host_key: pending_observed_host_key.clone(),
             cancellation: cancellation.clone(),
         }),
     };
@@ -555,6 +657,7 @@ pub fn spawn_session(config: SshSessionConfig) -> SpawnedSession {
         command_receiver,
         Arc::new(Mutex::new(host_key_receiver)),
         pending_host_key_request,
+        pending_observed_host_key,
         next_host_key_request,
         cancellation,
     ));
@@ -565,12 +668,14 @@ pub fn spawn_session(config: SshSessionConfig) -> SpawnedSession {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_session(
     config: SshSessionConfig,
     events: mpsc::Sender<SessionEvent>,
     mut commands: mpsc::Receiver<SessionCommand>,
     host_key_decisions: Arc<Mutex<mpsc::Receiver<HostKeyDecision>>>,
     pending_host_key_request: Arc<AtomicU64>,
+    pending_observed_host_key: Arc<Mutex<Option<ObservedHostKey>>>,
     next_host_key_request: Arc<AtomicU64>,
     cancellation: SessionCancellation,
 ) {
@@ -587,15 +692,35 @@ async fn run_session(
         &mut commands,
         host_key_decisions,
         pending_host_key_request,
+        pending_observed_host_key,
         next_host_key_request,
         &cancellation,
     )
     .await;
 
-    if let Err(error) = result
-        && !matches!(error, SessionError::Cancelled)
-    {
-        let _ = events.send(SessionEvent::Error(error.to_string())).await;
+    match result {
+        Err(SessionError::HostKeyChanged {
+            hop,
+            host,
+            port,
+            algorithm,
+            trusted_fingerprints_sha256,
+            received_fingerprint_sha256,
+        }) => {
+            let _ = events
+                .send(SessionEvent::HostKeyChanged(HostKeyChangedInfo {
+                    hop,
+                    endpoint: SshEndpoint { host, port },
+                    algorithm,
+                    received_fingerprint_sha256,
+                    trusted_fingerprints_sha256,
+                }))
+                .await;
+        }
+        Err(SessionError::Cancelled) | Ok(()) => {}
+        Err(error) => {
+            let _ = events.send(SessionEvent::Error(error.to_string())).await;
+        }
     }
 
     let _ = events.send(SessionEvent::Closed).await;
@@ -608,6 +733,7 @@ async fn connect_and_run(
     commands: &mut mpsc::Receiver<SessionCommand>,
     host_key_decisions: Arc<Mutex<mpsc::Receiver<HostKeyDecision>>>,
     pending_host_key_request: Arc<AtomicU64>,
+    pending_observed_host_key: Arc<Mutex<Option<ObservedHostKey>>>,
     next_host_key_request: Arc<AtomicU64>,
     cancellation: &SessionCancellation,
 ) -> Result<(), SessionError> {
@@ -639,6 +765,7 @@ async fn connect_and_run(
             events,
             host_key_decisions,
             pending_host_key_request,
+            pending_observed_host_key,
             next_host_key_request,
             cancellation,
             connection_timeout,
@@ -678,6 +805,7 @@ async fn connect_and_run(
                     events,
                     host_key_decisions.clone(),
                     pending_host_key_request.clone(),
+                    pending_observed_host_key.clone(),
                     next_host_key_request.clone(),
                     cancellation,
                     connection_timeout,
@@ -711,6 +839,7 @@ async fn connect_and_run(
                     events,
                     host_key_decisions.clone(),
                     pending_host_key_request.clone(),
+                    pending_observed_host_key.clone(),
                     next_host_key_request.clone(),
                     cancellation,
                     connection_timeout,
@@ -773,6 +902,7 @@ async fn connect_and_run(
             events,
             host_key_decisions,
             pending_host_key_request,
+            pending_observed_host_key,
             next_host_key_request,
             cancellation,
             connection_timeout,
@@ -810,6 +940,7 @@ async fn connect_tcp_endpoint(
     events: &mpsc::Sender<SessionEvent>,
     host_key_decisions: Arc<Mutex<mpsc::Receiver<HostKeyDecision>>>,
     pending_host_key_request: Arc<AtomicU64>,
+    pending_observed_host_key: Arc<Mutex<Option<ObservedHostKey>>>,
     next_host_key_request: Arc<AtomicU64>,
     cancellation: &SessionCancellation,
     connection_timeout: Duration,
@@ -849,6 +980,7 @@ async fn connect_tcp_endpoint(
         events,
         host_key_decisions,
         pending_host_key_request,
+        pending_observed_host_key,
         next_host_key_request,
         cancellation,
         connection_timeout,
@@ -866,6 +998,7 @@ async fn connect_stream_endpoint<R>(
     events: &mpsc::Sender<SessionEvent>,
     host_key_decisions: Arc<Mutex<mpsc::Receiver<HostKeyDecision>>>,
     pending_host_key_request: Arc<AtomicU64>,
+    pending_observed_host_key: Arc<Mutex<Option<ObservedHostKey>>>,
     next_host_key_request: Arc<AtomicU64>,
     cancellation: &SessionCancellation,
     connection_timeout: Duration,
@@ -878,6 +1011,7 @@ where
         events: events.clone(),
         host_key_decisions,
         pending_host_key_request,
+        pending_observed_host_key,
         next_host_key_request,
         cancellation: cancellation.clone(),
         hop: hop.clone(),
@@ -904,8 +1038,9 @@ where
                     hop,
                     host: endpoint.host.clone(),
                     port: endpoint.port,
-                    expected: mismatch.expected,
-                    actual: mismatch.actual,
+                    algorithm: mismatch.algorithm,
+                    trusted_fingerprints_sha256: mismatch.trusted_fingerprints_sha256,
+                    received_fingerprint_sha256: mismatch.received_fingerprint_sha256,
                 })
             } else {
                 Err(error)
@@ -1455,14 +1590,16 @@ impl Drop for PendingHostKeyRequest {
 }
 
 struct HostKeyMismatch {
-    expected: String,
-    actual: String,
+    algorithm: String,
+    trusted_fingerprints_sha256: Vec<String>,
+    received_fingerprint_sha256: String,
 }
 
 struct ClientHandler {
     events: mpsc::Sender<SessionEvent>,
     host_key_decisions: Arc<Mutex<mpsc::Receiver<HostKeyDecision>>>,
     pending_host_key_request: Arc<AtomicU64>,
+    pending_observed_host_key: Arc<Mutex<Option<ObservedHostKey>>>,
     next_host_key_request: Arc<AtomicU64>,
     cancellation: SessionCancellation,
     hop: SessionHop,
@@ -1485,15 +1622,19 @@ impl Handler for ClientHandler {
             return Ok(true);
         }
 
-        if let HostKeyPolicy::RequireSha256 { fingerprint } = &self.host_key_policy {
-            if fingerprint == &fingerprint_sha256 {
+        if let HostKeyPolicy::RequireSha256Set { fingerprints } = &self.host_key_policy {
+            if fingerprints.is_empty() || fingerprints.len() > MAX_TRUSTED_HOST_KEYS {
+                return Err(russh::Error::UnknownKey);
+            }
+            if fingerprints.contains(&fingerprint_sha256) {
                 self.accepted_fingerprint = Some(fingerprint_sha256);
                 return Ok(true);
             }
 
             *self.host_key_mismatch.lock().await = Some(HostKeyMismatch {
-                expected: fingerprint.clone(),
-                actual: fingerprint_sha256,
+                algorithm: server_public_key.algorithm().to_string(),
+                trusted_fingerprints_sha256: fingerprints.clone(),
+                received_fingerprint_sha256: fingerprint_sha256,
             });
             return Ok(false);
         }
@@ -1506,11 +1647,25 @@ impl Handler for ClientHandler {
             return Ok(false);
         };
 
+        let public_key = server_public_key.to_bytes()?;
+        if public_key.is_empty() || public_key.len() > MAX_HOST_PUBLIC_KEY_BYTES {
+            return Err(russh::Error::PacketSize(public_key.len()));
+        }
+        let algorithm = server_public_key.algorithm().to_string();
+        *self.pending_observed_host_key.lock().await = Some(ObservedHostKey {
+            request_id,
+            hop: self.hop.clone(),
+            endpoint: self.endpoint.clone(),
+            algorithm: algorithm.clone(),
+            fingerprint_sha256: fingerprint_sha256.clone(),
+            public_key,
+        });
+
         let info = HostKeyInfo {
             request_id,
             hop: self.hop.clone(),
             endpoint: self.endpoint.clone(),
-            algorithm: server_public_key.algorithm().to_string(),
+            algorithm,
             fingerprint_sha256: fingerprint_sha256.clone(),
         };
 
@@ -1520,6 +1675,7 @@ impl Handler for ClientHandler {
             result = self.events.send(SessionEvent::HostKey(info)) => result.is_ok(),
         };
         if !event_sent {
+            clear_pending_observed_host_key(&self.pending_observed_host_key, request_id).await;
             return Ok(false);
         }
 
@@ -1549,12 +1705,26 @@ impl Handler for ClientHandler {
                 decision.ok().flatten().unwrap_or(false)
             }
         };
+        clear_pending_observed_host_key(&self.pending_observed_host_key, request_id).await;
 
         if accepted {
             self.accepted_fingerprint = Some(fingerprint_sha256);
         }
 
         Ok(accepted)
+    }
+}
+
+async fn clear_pending_observed_host_key(
+    pending: &Mutex<Option<ObservedHostKey>>,
+    request_id: u64,
+) {
+    let mut pending = pending.lock().await;
+    if pending
+        .as_ref()
+        .is_some_and(|observed| observed.request_id == request_id)
+    {
+        pending.take();
     }
 }
 
@@ -1582,13 +1752,14 @@ enum SessionError {
     },
     #[error("{hop} authentication failed")]
     AuthenticationFailed { hop: SessionHop },
-    #[error("{hop} host key changed for {host}:{port} (expected {expected}, received {actual})")]
+    #[error("{hop} host key changed for {host}:{port}")]
     HostKeyChanged {
         hop: SessionHop,
         host: String,
         port: u16,
-        expected: String,
-        actual: String,
+        algorithm: String,
+        trusted_fingerprints_sha256: Vec<String>,
+        received_fingerprint_sha256: String,
     },
     #[error("{hop} SSH username is empty")]
     InvalidUsername { hop: SessionHop },
@@ -1756,6 +1927,7 @@ mod tests {
                 commands: command_sender,
                 host_key_decisions: decision_sender,
                 pending_host_key_request: pending.clone(),
+                pending_observed_host_key: Arc::new(Mutex::new(None)),
                 cancellation: SessionCancellation::default(),
             }),
         };
@@ -1776,6 +1948,45 @@ mod tests {
         assert_eq!(decision.request_id, 17);
         assert!(decision.accepted);
         assert_eq!(pending.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test]
+    async fn observed_host_key_evidence_requires_the_active_request_and_stays_out_of_debug() {
+        let (command_sender, _command_receiver) = mpsc::channel(1);
+        let (decision_sender, _decision_receiver) = mpsc::channel(1);
+        let pending = Arc::new(AtomicU64::new(23));
+        let observed = ObservedHostKey {
+            request_id: 23,
+            hop: SessionHop::Target,
+            endpoint: SshEndpoint::new("example.com", 22).expect("endpoint"),
+            algorithm: "ssh-ed25519".to_owned(),
+            fingerprint_sha256: "SHA256:observed".to_owned(),
+            public_key: vec![0, 1, 2, 3, 4],
+        };
+        let control = SessionControl {
+            inner: Arc::new(SessionControlInner {
+                commands: command_sender,
+                host_key_decisions: decision_sender,
+                pending_host_key_request: pending,
+                pending_observed_host_key: Arc::new(Mutex::new(Some(observed))),
+                cancellation: SessionCancellation::default(),
+            }),
+        };
+
+        assert_eq!(
+            control.observed_host_key(22).await,
+            Err(SessionControlError::HostKeyRequestExpired)
+        );
+        let evidence = control
+            .observed_host_key(23)
+            .await
+            .expect("active observed Host Key");
+        assert_eq!(evidence.endpoint().host, "example.com");
+        assert_eq!(evidence.algorithm(), "ssh-ed25519");
+        assert_eq!(evidence.fingerprint_sha256(), "SHA256:observed");
+        assert_eq!(evidence.public_key(), [0, 1, 2, 3, 4]);
+        let debug = format!("{evidence:?}");
+        assert!(!debug.contains("[0, 1, 2, 3, 4]"));
     }
 
     #[tokio::test]

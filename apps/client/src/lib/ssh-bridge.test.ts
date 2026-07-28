@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  resetBrowserKnownHostsForTests,
+  trustBrowserKnownHost,
+} from "./known-host-bridge";
 import {
   confirmHostKey,
   connectSavedHost,
@@ -9,6 +13,10 @@ import {
 } from "./ssh-bridge";
 
 describe("browser preview SSH bridge", () => {
+  beforeEach(() => {
+    resetBrowserKnownHostsForTests();
+  });
+
   it("keeps Saved Host connection resolution native-only", async () => {
     await expect(
       connectSavedHost(
@@ -144,6 +152,87 @@ describe("browser preview SSH bridge", () => {
     ]);
 
     await disconnectSsh(sessionId);
+    vi.useRealTimers();
+  });
+
+  it("reuses durable browser trust without a second prompt", async () => {
+    vi.useFakeTimers();
+    const request = {
+      host: "durable.example",
+      port: 22,
+      authentication: {
+        kind: "temporaryPassword" as const,
+        username: "anyssh",
+        password: "fixture",
+      },
+      columns: 80,
+      rows: 24,
+    };
+    const firstEvents: SshClientEvent[] = [];
+    const firstSession = await connectSsh(request, {
+      onEvent: (event) => firstEvents.push(event),
+      onData: () => {},
+    });
+    await vi.runAllTimersAsync();
+    const hostKey = firstEvents.find((event) => event.type === "hostKey");
+    if (hostKey?.type !== "hostKey") {
+      throw new Error("first connection did not prompt");
+    }
+    await confirmHostKey(firstSession, hostKey.requestId, true);
+    await vi.runAllTimersAsync();
+    await disconnectSsh(firstSession);
+
+    const secondEvents: SshClientEvent[] = [];
+    const secondSession = await connectSsh(request, {
+      onEvent: (event) => secondEvents.push(event),
+      onData: () => {},
+    });
+    await vi.runAllTimersAsync();
+    expect(secondEvents.map((event) => event.type)).toEqual([
+      "connecting",
+      "authenticated",
+      "connected",
+    ]);
+    await disconnectSsh(secondSession);
+    vi.useRealTimers();
+  });
+
+  it("emits a typed changed-key event without prompting", async () => {
+    vi.useFakeTimers();
+    trustBrowserKnownHost(
+      "changed-runtime.example",
+      22,
+      "ssh-ed25519",
+      "SHA256:old-browser-host-key",
+    );
+    const events: SshClientEvent[] = [];
+    await connectSsh(
+      {
+        host: "changed-runtime.example",
+        port: 22,
+        authentication: {
+          kind: "temporaryPassword",
+          username: "anyssh",
+          password: "fixture",
+        },
+        columns: 80,
+        rows: 24,
+      },
+      {
+        onEvent: (event) => events.push(event),
+        onData: () => {},
+      },
+    );
+    await vi.runAllTimersAsync();
+    expect(events.some((event) => event.type === "hostKey")).toBe(false);
+    const changed = events.find((event) => event.type === "hostKeyChanged");
+    expect(changed).toMatchObject({
+      type: "hostKeyChanged",
+      host: "changed-runtime.example",
+      port: 22,
+      trustedFingerprintsSha256: ["SHA256:old-browser-host-key"],
+    });
+    expect(events.at(-1)).toEqual({ type: "closed" });
     vi.useRealTimers();
   });
 });

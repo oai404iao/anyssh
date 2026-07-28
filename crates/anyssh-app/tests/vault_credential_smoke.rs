@@ -90,8 +90,10 @@ async fn encrypted_private_key_flows_from_credential_id_to_ssh_core() {
 
     let request = SshSessionRequest {
         target: SshHopRequest {
-            endpoint: SshEndpoint::new(host, port).expect("fixture endpoint"),
-            authentication: AuthenticationSource::Credential { credential_id },
+            endpoint: SshEndpoint::new(host.clone(), port).expect("fixture endpoint"),
+            authentication: AuthenticationSource::Credential {
+                credential_id: credential_id.clone(),
+            },
         },
         jump_host: None,
         terminal_size: TerminalSize::new(100, 30).expect("terminal size"),
@@ -118,10 +120,12 @@ async fn encrypted_private_key_flows_from_credential_id_to_ssh_core() {
                 SessionEvent::HostKey(info) => {
                     assert_eq!(info.hop, SessionHop::Target);
                     saw_host_key = true;
-                    control
-                        .confirm_host_key(info.request_id, true)
+                    core.decide_host_key(&control, info.request_id, true)
                         .await
                         .expect("host-key decision");
+                }
+                SessionEvent::HostKeyChanged(info) => {
+                    panic!("fixture host key unexpectedly changed: {info:?}")
                 }
                 SessionEvent::Authenticated => saw_authenticated = true,
                 SessionEvent::Connected => {
@@ -151,6 +155,113 @@ async fn encrypted_private_key_flows_from_credential_id_to_ssh_core() {
         "remote marker missing: {}",
         String::from_utf8_lossy(&output)
     );
+
+    core.lock_vault()
+        .await
+        .expect("lock after first TOFU connection");
+    core.unlock_vault(Zeroizing::new("123456".to_owned()))
+        .await
+        .expect("reopen after first TOFU connection");
+    let spawned = core
+        .spawn_ssh_session(SshSessionRequest {
+            target: SshHopRequest {
+                endpoint: SshEndpoint::new(host, port).expect("repeat fixture endpoint"),
+                authentication: AuthenticationSource::Credential {
+                    credential_id: credential_id.clone(),
+                },
+            },
+            jump_host: None,
+            terminal_size: TerminalSize::new(100, 30).expect("terminal size"),
+        })
+        .await
+        .expect("spawn durably trusted SSH session");
+    let control = spawned.control;
+    let mut events = spawned.events;
+    let mut repeat_output = Vec::new();
+
+    timeout(Duration::from_secs(25), async {
+        while let Some(event) = events.recv().await {
+            match event {
+                SessionEvent::Connecting | SessionEvent::Authenticated => {}
+                SessionEvent::HostKey(info) => {
+                    panic!("durably trusted endpoint prompted again: {info:?}")
+                }
+                SessionEvent::HostKeyChanged(info) => {
+                    panic!("fixture host key unexpectedly changed after restart: {info:?}")
+                }
+                SessionEvent::Connected => {
+                    control
+                        .send_input("printf 'ANYSSH_DURABLE_TOFU_OK\\n'; exit\r")
+                        .await
+                        .expect("send repeat fixture command");
+                }
+                SessionEvent::Data(data) => repeat_output.extend_from_slice(&data),
+                SessionEvent::ExitStatus(code) => assert_eq!(code, 0),
+                SessionEvent::Error(message) => {
+                    panic!("durably trusted SSH session failed: {message}")
+                }
+                SessionEvent::Closed => break,
+            }
+        }
+    })
+    .await
+    .expect("durably trusted SSH session timed out");
+
+    assert!(
+        String::from_utf8_lossy(&repeat_output).contains("ANYSSH_DURABLE_TOFU_OK"),
+        "repeat marker missing: {}",
+        String::from_utf8_lossy(&repeat_output)
+    );
+
+    let spawned = core
+        .spawn_ssh_session(SshSessionRequest {
+            target: SshHopRequest {
+                endpoint: SshEndpoint::new("localhost", port)
+                    .expect("distinct logical fixture endpoint"),
+                authentication: AuthenticationSource::Credential { credential_id },
+            },
+            jump_host: None,
+            terminal_size: TerminalSize::new(100, 30).expect("terminal size"),
+        })
+        .await
+        .expect("spawn persistence-failure session");
+    let control = spawned.control;
+    let mut events = spawned.events;
+    let mut saw_persistence_failure = false;
+
+    timeout(Duration::from_secs(20), async {
+        while let Some(event) = events.recv().await {
+            match event {
+                SessionEvent::Connecting => {}
+                SessionEvent::HostKey(info) => {
+                    core.lock_vault()
+                        .await
+                        .expect("lock Vault before TOFU persistence");
+                    let error = core
+                        .decide_host_key(&control, info.request_id, true)
+                        .await
+                        .expect_err("TOFU must fail while the Vault is locked");
+                    assert!(
+                        error.to_string().contains("vault is locked"),
+                        "unexpected persistence failure: {error}"
+                    );
+                    saw_persistence_failure = true;
+                }
+                SessionEvent::HostKeyChanged(info) => {
+                    panic!("new logical endpoint unexpectedly had saved Trust: {info:?}")
+                }
+                SessionEvent::Authenticated | SessionEvent::Connected => {
+                    panic!("SSH advanced after TOFU persistence failed")
+                }
+                SessionEvent::Error(_) => {}
+                SessionEvent::Closed => break,
+                SessionEvent::Data(_) | SessionEvent::ExitStatus(_) => {}
+            }
+        }
+    })
+    .await
+    .expect("TOFU persistence-failure scenario timed out");
+    assert!(saw_persistence_failure);
 }
 
 fn required_env(name: &str) -> String {

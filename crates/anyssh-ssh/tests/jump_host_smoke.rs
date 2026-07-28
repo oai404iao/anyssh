@@ -110,6 +110,9 @@ async fn target_is_not_directly_reachable(fixture: &JumpFixture) {
                         .await
                         .expect("direct probe host-key decision should be accepted");
                 }
+                SessionEvent::HostKeyChanged(info) => {
+                    panic!("fixture host key unexpectedly changed: {info:?}")
+                }
                 SessionEvent::Authenticated => saw_authenticated = true,
                 SessionEvent::Connected => saw_connected = true,
                 SessionEvent::Error(message) => error = Some(message),
@@ -156,6 +159,9 @@ async fn jump_shell_reaches_internal_target(fixture: &JumpFixture) {
                         .await
                         .expect("host-key decision should reach the active hop");
                     host_keys.push(info);
+                }
+                SessionEvent::HostKeyChanged(info) => {
+                    panic!("fixture host key unexpectedly changed: {info:?}")
                 }
                 SessionEvent::Authenticated => saw_authenticated = true,
                 SessionEvent::Connected => {
@@ -241,7 +247,8 @@ async fn cancellation_interrupts_host_key_wait(fixture: &JumpFixture) {
                 SessionEvent::Authenticated
                 | SessionEvent::Connected
                 | SessionEvent::Data(_)
-                | SessionEvent::ExitStatus(_) => {
+                | SessionEvent::ExitStatus(_)
+                | SessionEvent::HostKeyChanged(_) => {
                     panic!("session advanced after cancellation")
                 }
             }
@@ -276,6 +283,9 @@ async fn target_authentication_failure_is_scoped(fixture: &JumpFixture) {
                         .confirm_host_key(info.request_id, true)
                         .await
                         .expect("host-key decision should reach the active hop");
+                }
+                SessionEvent::HostKeyChanged(info) => {
+                    panic!("fixture host key unexpectedly changed: {info:?}")
                 }
                 SessionEvent::Error(message) => error = Some(message),
                 SessionEvent::Closed => break,
@@ -331,7 +341,8 @@ async fn target_handshake_timeout_is_bounded(fixture: &JumpFixture) {
                 SessionEvent::Authenticated
                 | SessionEvent::Connected
                 | SessionEvent::Data(_)
-                | SessionEvent::ExitStatus(_) => {
+                | SessionEvent::ExitStatus(_)
+                | SessionEvent::HostKeyChanged(_) => {
                     panic!("blackhole target unexpectedly advanced the SSH session")
                 }
             }
@@ -370,6 +381,9 @@ async fn first_hop_loss_closes_the_target_session(fixture: &JumpFixture) {
                         .confirm_host_key(info.request_id, true)
                         .await
                         .expect("host-key decision should reach the active hop");
+                }
+                SessionEvent::HostKeyChanged(info) => {
+                    panic!("fixture host key unexpectedly changed: {info:?}")
                 }
                 SessionEvent::Authenticated => {}
                 SessionEvent::Connected => {

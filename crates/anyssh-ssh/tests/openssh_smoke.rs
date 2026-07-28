@@ -39,6 +39,9 @@ async fn password_shell_against_openssh() {
                         .await
                         .expect("host key decision should reach the session");
                 }
+                SessionEvent::HostKeyChanged(info) => {
+                    panic!("fixture host key unexpectedly changed: {info:?}")
+                }
                 SessionEvent::Connected => {
                     saw_connected = true;
                     control

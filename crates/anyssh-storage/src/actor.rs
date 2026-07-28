@@ -5,18 +5,21 @@ use std::{
     thread,
 };
 
+use anyssh_domain::SshEndpointIdentity;
 use anyssh_vault::PinKdfParameters;
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
 use zeroize::Zeroizing;
 
 use crate::{
-    CredentialSecret, CredentialSummary, GroupSummary, HostSummary, JumpRouteSummary, LocalVault,
-    Override, ResolvedCredential, ResolvedHostConnectionPlan, StorageError, VaultPresence,
+    CredentialSecret, CredentialSummary, GroupSummary, HostSummary, JumpRouteSummary,
+    KnownHostSummary, LocalVault, Override, ResolvedCredential, ResolvedHostConnectionPlan,
+    ResolvedKnownHostPolicy, StorageError, VaultPresence,
     credential::{CredentialRecord, generate_credential_id},
     group::generate_group_id,
     host::generate_host_id,
     jump_route::generate_jump_route_id,
+    known_host::{generate_known_host_id, validate_known_host_key},
 };
 
 pub const DEFAULT_DATABASE_COMMAND_QUEUE_CAPACITY: usize = 16;
@@ -343,6 +346,46 @@ impl DatabaseActorHandle {
             .await
     }
 
+    pub async fn resolve_known_host_policy(
+        &self,
+        endpoint: SshEndpointIdentity,
+    ) -> Result<ResolvedKnownHostPolicy, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::ResolveKnownHostPolicy { endpoint, response })
+            .await
+    }
+
+    pub async fn trust_observed_host_key(
+        &self,
+        endpoint: SshEndpointIdentity,
+        algorithm: String,
+        fingerprint_sha256: String,
+        public_key: Vec<u8>,
+    ) -> Result<KnownHostSummary, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::TrustObservedHostKey {
+            endpoint,
+            algorithm,
+            fingerprint_sha256,
+            public_key,
+            response,
+        })
+        .await
+    }
+
+    pub async fn get_known_host(&self, id: String) -> Result<KnownHostSummary, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::GetKnownHost { id, response })
+            .await
+    }
+
+    pub async fn list_known_hosts(&self) -> Result<Vec<KnownHostSummary>, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::ListKnownHosts { response })
+            .await
+    }
+
+    pub async fn delete_known_host(&self, id: String) -> Result<bool, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::DeleteKnownHost { id, response })
+            .await
+    }
+
     pub async fn create_jump_route(
         &self,
         label: String,
@@ -451,6 +494,10 @@ type GroupSummaryResponse = oneshot::Sender<Result<GroupSummary, DatabaseActorEr
 type GroupListResponse = oneshot::Sender<Result<Vec<GroupSummary>, DatabaseActorError>>;
 type HostSummaryResponse = oneshot::Sender<Result<HostSummary, DatabaseActorError>>;
 type HostListResponse = oneshot::Sender<Result<Vec<HostSummary>, DatabaseActorError>>;
+type KnownHostSummaryResponse = oneshot::Sender<Result<KnownHostSummary, DatabaseActorError>>;
+type KnownHostListResponse = oneshot::Sender<Result<Vec<KnownHostSummary>, DatabaseActorError>>;
+type ResolvedKnownHostPolicyResponse =
+    oneshot::Sender<Result<ResolvedKnownHostPolicy, DatabaseActorError>>;
 type JumpRouteSummaryResponse = oneshot::Sender<Result<JumpRouteSummary, DatabaseActorError>>;
 type JumpRouteListResponse = oneshot::Sender<Result<Vec<JumpRouteSummary>, DatabaseActorError>>;
 type ResolvedHostConnectionPlanResponse =
@@ -542,6 +589,28 @@ enum DatabaseCommand {
         response: HostListResponse,
     },
     DeleteHost {
+        id: String,
+        response: DeleteResponse,
+    },
+    ResolveKnownHostPolicy {
+        endpoint: SshEndpointIdentity,
+        response: ResolvedKnownHostPolicyResponse,
+    },
+    TrustObservedHostKey {
+        endpoint: SshEndpointIdentity,
+        algorithm: String,
+        fingerprint_sha256: String,
+        public_key: Vec<u8>,
+        response: KnownHostSummaryResponse,
+    },
+    GetKnownHost {
+        id: String,
+        response: KnownHostSummaryResponse,
+    },
+    ListKnownHosts {
+        response: KnownHostListResponse,
+    },
+    DeleteKnownHost {
         id: String,
         response: DeleteResponse,
     },
@@ -808,6 +877,57 @@ impl DatabaseActorState {
             .map_err(DatabaseActorError::from)
     }
 
+    fn resolve_known_host_policy(
+        &self,
+        endpoint: &SshEndpointIdentity,
+    ) -> Result<ResolvedKnownHostPolicy, DatabaseActorError> {
+        self.unlocked
+            .as_ref()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .resolve_known_host_policy(endpoint)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn trust_observed_host_key(
+        &mut self,
+        endpoint: &SshEndpointIdentity,
+        algorithm: String,
+        fingerprint_sha256: String,
+        public_key: Vec<u8>,
+    ) -> Result<KnownHostSummary, DatabaseActorError> {
+        let key = validate_known_host_key(algorithm, fingerprint_sha256, public_key)?;
+        let candidate_id = generate_known_host_id()?;
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .trust_observed_host_key(&candidate_id, endpoint, key)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn get_known_host(&self, id: &str) -> Result<KnownHostSummary, DatabaseActorError> {
+        self.unlocked
+            .as_ref()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .get_known_host(id)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn list_known_hosts(&self) -> Result<Vec<KnownHostSummary>, DatabaseActorError> {
+        self.unlocked
+            .as_ref()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .list_known_hosts()
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn delete_known_host(&mut self, id: &str) -> Result<bool, DatabaseActorError> {
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .delete_known_host(id)
+            .map_err(DatabaseActorError::from)
+    }
+
     fn create_jump_route(
         &mut self,
         label: String,
@@ -1001,6 +1121,32 @@ fn run_database_actor(
             }
             DatabaseCommand::DeleteHost { id, response } => {
                 let _ = response.send(state.delete_host(&id));
+            }
+            DatabaseCommand::ResolveKnownHostPolicy { endpoint, response } => {
+                let _ = response.send(state.resolve_known_host_policy(&endpoint));
+            }
+            DatabaseCommand::TrustObservedHostKey {
+                endpoint,
+                algorithm,
+                fingerprint_sha256,
+                public_key,
+                response,
+            } => {
+                let _ = response.send(state.trust_observed_host_key(
+                    &endpoint,
+                    algorithm,
+                    fingerprint_sha256,
+                    public_key,
+                ));
+            }
+            DatabaseCommand::GetKnownHost { id, response } => {
+                let _ = response.send(state.get_known_host(&id));
+            }
+            DatabaseCommand::ListKnownHosts { response } => {
+                let _ = response.send(state.list_known_hosts());
+            }
+            DatabaseCommand::DeleteKnownHost { id, response } => {
+                let _ = response.send(state.delete_known_host(&id));
             }
             DatabaseCommand::CreateJumpRoute {
                 label,
@@ -1344,6 +1490,111 @@ mod tests {
             actor
                 .resolve_host_connection_plan(target.id().to_owned())
                 .await,
+            Err(DatabaseActorError::VaultLocked)
+        ));
+    }
+
+    #[tokio::test]
+    async fn actor_serializes_known_host_trust_commands() {
+        let directory = tempdir().expect("tempdir");
+        let actor = DatabaseActorHandle::spawn(directory.path().join("vault"), test_config(8))
+            .expect("start actor");
+        let endpoint =
+            SshEndpointIdentity::new("KNOWN.EXAMPLE.", 2222).expect("Known Host endpoint");
+        assert!(matches!(
+            actor.resolve_known_host_policy(endpoint.clone()).await,
+            Err(DatabaseActorError::VaultLocked)
+        ));
+
+        actor
+            .create(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+        let private_key =
+            ssh_key::PrivateKey::random(&mut rand::rng(), ssh_key::Algorithm::Ed25519)
+                .expect("Known Host fixture key");
+        let public_key = private_key.public_key();
+        let algorithm = public_key.algorithm().to_string();
+        let fingerprint = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
+        let public_key = public_key.to_bytes().expect("Known Host key bytes");
+
+        let summary = actor
+            .trust_observed_host_key(endpoint.clone(), algorithm, fingerprint.clone(), public_key)
+            .await
+            .expect("trust observed Host Key");
+        assert_eq!(summary.host(), "known.example");
+        assert_eq!(
+            actor
+                .resolve_known_host_policy(endpoint.clone())
+                .await
+                .expect("resolve trusted policy"),
+            ResolvedKnownHostPolicy::RequireSha256Set(vec![fingerprint])
+        );
+        assert_eq!(
+            actor
+                .list_known_hosts()
+                .await
+                .expect("list Known Hosts")
+                .len(),
+            1
+        );
+        assert!(
+            actor
+                .delete_known_host(summary.id().to_owned())
+                .await
+                .expect("forget Known Host")
+        );
+
+        let race_endpoint = SshEndpointIdentity::new("race.example", 22).expect("race endpoint");
+        let race_key_a = ssh_key::PrivateKey::random(&mut rand::rng(), ssh_key::Algorithm::Ed25519)
+            .expect("race key A");
+        let race_key_b = ssh_key::PrivateKey::random(&mut rand::rng(), ssh_key::Algorithm::Ed25519)
+            .expect("race key B");
+        let race_public_a = race_key_a.public_key();
+        let race_public_b = race_key_b.public_key();
+        let trust_a = actor.trust_observed_host_key(
+            race_endpoint.clone(),
+            race_public_a.algorithm().to_string(),
+            race_public_a
+                .fingerprint(ssh_key::HashAlg::Sha256)
+                .to_string(),
+            race_public_a.to_bytes().expect("race key A bytes"),
+        );
+        let trust_b = actor.trust_observed_host_key(
+            race_endpoint,
+            race_public_b.algorithm().to_string(),
+            race_public_b
+                .fingerprint(ssh_key::HashAlg::Sha256)
+                .to_string(),
+            race_public_b.to_bytes().expect("race key B bytes"),
+        );
+        let (result_a, result_b) = tokio::join!(trust_a, trust_b);
+        let results = [result_a, result_b];
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| {
+                    matches!(
+                        result,
+                        Err(DatabaseActorError::Storage(StorageError::KnownHostConflict))
+                    )
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            actor
+                .list_known_hosts()
+                .await
+                .expect("race Trust Set")
+                .len(),
+            1
+        );
+
+        actor.lock().await.expect("lock vault");
+        assert!(matches!(
+            actor.list_known_hosts().await,
             Err(DatabaseActorError::VaultLocked)
         ));
     }

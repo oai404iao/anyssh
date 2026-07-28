@@ -46,6 +46,8 @@ try {
     await createVaultAndRepository(page);
   } else if (stage === "restart") {
     await unlockRestartedVault(page);
+  } else if (stage === "changed") {
+    await verifyChangedHostKeyAfterRestart(page);
   } else {
     throw new Error(`unsupported Windows native smoke stage: ${stage}`);
   }
@@ -166,13 +168,10 @@ async function createVaultAndRepository(targetPage) {
   const hostKeyDialog = targetPage.getByRole("dialog", {
     name: "Verify server identity",
   });
-  await assert(hostKeyDialog).toContainText(sshHost);
-  await hostKeyDialog
-    .getByRole("button", { name: "Trust for this session" })
-    .click();
   await assert(
     targetPage.getByText("Interactive shell is active."),
   ).toBeVisible();
+  await assert(hostKeyDialog).toHaveCount(0);
   const terminalInput = targetPage.getByRole("textbox", {
     name: "Terminal input",
   });
@@ -191,6 +190,7 @@ async function createVaultAndRepository(targetPage) {
   await assert(
     targetPage.getByText("The SSH session has ended."),
   ).toBeVisible();
+  await verifyKnownHostForgetAndRetrust(targetPage);
 
   await targetPage.locator(".primary-nav .nav-item").nth(2).click();
   await targetPage.getByRole("button", { name: "New host" }).click();
@@ -347,6 +347,26 @@ async function unlockRestartedVault(targetPage) {
       .locator(".resource-card")
       .filter({ hasText: "Windows QA target" }),
   ).toBeVisible();
+  const privateKeyHost = targetPage
+    .locator(".resource-card")
+    .filter({ hasText: "Windows QA encrypted key host" });
+  await privateKeyHost.getByRole("button", { name: "Open" }).click();
+  await targetPage.getByRole("button", { name: "Connect saved Host" }).click();
+  await assert(
+    targetPage.getByText("Interactive shell is active."),
+  ).toBeVisible();
+  await assert(
+    targetPage.getByRole("dialog", { name: "Verify server identity" }),
+  ).toHaveCount(0);
+  await capture(
+    targetPage,
+    "07a-restart-trusted-connection.png",
+    "07a-restart-trusted-connection.txt",
+  );
+  await targetPage.getByRole("button", { name: "Disconnect" }).click();
+  await assert(
+    targetPage.getByText("The SSH session has ended."),
+  ).toBeVisible();
 
   await targetPage.locator(".primary-nav .nav-item").nth(4).click();
   await assert(
@@ -359,6 +379,42 @@ async function unlockRestartedVault(targetPage) {
     "07-restart-recovered.png",
     "07-restart-recovered.txt",
   );
+}
+
+async function verifyChangedHostKeyAfterRestart(targetPage) {
+  await assert(
+    targetPage.getByRole("heading", { name: "Unlock AnySSH" }),
+  ).toBeVisible();
+  await targetPage.getByLabel("PIN", { exact: true }).fill(pin);
+  await targetPage.getByRole("button", { name: "Unlock" }).click();
+  await assert(
+    targetPage.getByRole("button", { name: "Lock Vault" }),
+  ).toBeVisible();
+
+  await targetPage.locator(".primary-nav .nav-item").nth(2).click();
+  const privateKeyHost = targetPage
+    .locator(".resource-card")
+    .filter({ hasText: "Windows QA encrypted key host" });
+  await privateKeyHost.getByRole("button", { name: "Open" }).click();
+  await targetPage.getByRole("button", { name: "Connect saved Host" }).click();
+  const changedDialog = targetPage.getByRole("dialog", {
+    name: "Host key changed",
+  });
+  await assert(changedDialog).toContainText(sshHost);
+  await assert(changedDialog).toContainText("Trusted");
+  await assert(changedDialog).toContainText("Received");
+  await assert(
+    changedDialog.getByRole("button", { name: /accept|replace/i }),
+  ).toHaveCount(0);
+  await capture(
+    targetPage,
+    "08-changed-host-key.png",
+    "08-changed-host-key.txt",
+  );
+  await changedDialog.getByRole("button", { name: "Close" }).click();
+  await assert(
+    targetPage.getByRole("button", { name: "Connect saved Host" }),
+  ).toBeVisible();
 }
 
 async function importEncryptedPrivateKey(targetPage) {
@@ -430,7 +486,7 @@ async function connectWithEncryptedPrivateKey(targetPage) {
   });
   await assert(hostKeyDialog).toContainText(sshHost);
   await hostKeyDialog
-    .getByRole("button", { name: "Trust for this session" })
+    .getByRole("button", { name: "Trust and continue" })
     .click();
   await assert(
     targetPage.getByText("Interactive shell is active."),
@@ -455,7 +511,56 @@ async function connectWithEncryptedPrivateKey(targetPage) {
   ).toBeVisible();
 }
 
-function runNativeDialogDriver() {
+async function verifyKnownHostForgetAndRetrust(targetPage) {
+  await targetPage.locator(".primary-nav .nav-item").nth(5).click();
+  const knownHost = targetPage
+    .locator(".known-host-card")
+    .filter({ hasText: `${sshHost}:${sshPort}` });
+  await assert(knownHost).toContainText("ssh-ed25519");
+  await assert(knownHost).toContainText("SHA256:");
+  await assert(knownHost).not.toContainText("publicKey");
+  await capture(targetPage, "02c-known-hosts.png", "02c-known-hosts.txt");
+
+  const confirmation = runNativeDialogDriver("KnownHostForget");
+  await knownHost.getByRole("button", { name: "Forget trust…" }).click();
+  await Promise.all([
+    assert(targetPage.getByText("No trusted endpoints yet.")).toBeVisible(),
+    confirmation,
+  ]);
+  await capture(
+    targetPage,
+    "02c2-known-host-forgotten.png",
+    "02c2-known-host-forgotten.txt",
+  );
+
+  await targetPage.locator(".primary-nav .nav-item").nth(2).click();
+  const agentHost = targetPage
+    .locator(".resource-card")
+    .filter({ hasText: "Windows QA agent host" });
+  await agentHost.getByRole("button", { name: "Open" }).click();
+  await targetPage.getByRole("button", { name: "Connect saved Host" }).click();
+  const hostKeyDialog = targetPage.getByRole("dialog", {
+    name: "Verify server identity",
+  });
+  await assert(hostKeyDialog).toContainText(sshHost);
+  await capture(
+    targetPage,
+    "02c3-tofu-after-forget.png",
+    "02c3-tofu-after-forget.txt",
+  );
+  await hostKeyDialog
+    .getByRole("button", { name: "Trust and continue" })
+    .click();
+  await assert(
+    targetPage.getByText("Interactive shell is active."),
+  ).toBeVisible();
+  await targetPage.getByRole("button", { name: "Disconnect" }).click();
+  await assert(
+    targetPage.getByText("The SSH session has ended."),
+  ).toBeVisible();
+}
+
+function runNativeDialogDriver(mode = "PrivateKey") {
   const repositoryRoot = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     "..",
@@ -480,6 +585,8 @@ function runNativeDialogDriver() {
         "Bypass",
         "-File",
         driverPath,
+        "-Mode",
+        mode,
       ],
       {
         cwd: repositoryRoot,

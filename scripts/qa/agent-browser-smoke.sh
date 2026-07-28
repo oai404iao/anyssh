@@ -91,7 +91,7 @@ if ! grep -F "SHA256:" "$OUTPUT_DIR/02-host-key-snapshot.txt" >/dev/null; then
   exit 1
 fi
 
-agent-browser --session "$SESSION" find role button click --name "Trust for this session"
+agent-browser --session "$SESSION" find role button click --name "Trust and continue"
 agent-browser --session "$SESSION" wait --text "Interactive shell is active."
 
 CONNECTED_SNAPSHOT="$(agent-browser --session "$SESSION" snapshot -i)"
@@ -127,6 +127,32 @@ agent-browser --session "$SESSION" find role button click --name "Disconnect"
 agent-browser --session "$SESSION" wait --text "The SSH session has ended."
 agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/05-disconnected.png"
+
+agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(6)"
+agent-browser --session "$SESSION" wait --text "Known Hosts"
+agent-browser --session "$SESSION" wait --text "127.0.0.1:2222"
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/05b-known-hosts.png"
+agent-browser --session "$SESSION" snapshot -i \
+  >"$OUTPUT_DIR/05b-known-hosts-snapshot.txt"
+agent-browser --session "$SESSION" set viewport 390 844
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/05c-known-hosts-mobile.png"
+agent-browser --session "$SESSION" set viewport 1440 900
+agent-browser --session "$SESSION" find role button click --name "Forget trust…"
+agent-browser --session "$SESSION" wait --text \
+  "No trusted endpoints yet."
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/05d-known-hosts-forgotten.png"
+agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(1)"
+agent-browser --session "$SESSION" find role button click --name "Connect"
+agent-browser --session "$SESSION" wait --text "Verify server identity"
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/05e-tofu-after-forget.png"
+agent-browser --session "$SESSION" find role button click --name "Trust and continue"
+agent-browser --session "$SESSION" wait --text "Interactive shell is active."
+agent-browser --session "$SESSION" find role button click --name "Disconnect"
+agent-browser --session "$SESSION" wait --text "The SSH session has ended."
 
 agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(4)"
 agent-browser --session "$SESSION" wait --text "Secrets stay encrypted in the Vault"
@@ -248,6 +274,26 @@ agent-browser --session "$SESSION" screenshot --full \
 agent-browser --session "$SESSION" snapshot -i \
   >"$OUTPUT_DIR/10-route-mobile-snapshot.txt"
 
+agent-browser --session "$SESSION" set viewport 1440 900
+agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(1)"
+agent-browser --session "$SESSION" find label "Host" fill "changed.example"
+agent-browser --session "$SESSION" fill \
+  ".connection-panel input[type=number]" "22"
+agent-browser --session "$SESSION" find label "Username" fill "anyssh"
+agent-browser --session "$SESSION" find label "Password" fill "fixture-password"
+agent-browser --session "$SESSION" find role button click --name "Connect"
+agent-browser --session "$SESSION" wait --text "Host key changed"
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/11-changed-host-key.png"
+agent-browser --session "$SESSION" snapshot -i \
+  >"$OUTPUT_DIR/11-changed-host-key-snapshot.txt"
+
+if grep -F "Trust and continue" \
+  "$OUTPUT_DIR/11-changed-host-key-snapshot.txt" >/dev/null; then
+  echo "Changed-Key UI exposed an unsafe trust action." >&2
+  exit 1
+fi
+
 BROWSER_ERRORS="$(agent-browser --session "$SESSION" errors)"
 printf '%s\n' "$BROWSER_ERRORS" >"$OUTPUT_DIR/errors.txt"
 if [[ -n "${BROWSER_ERRORS//[[:space:]]/}" ]]; then
@@ -269,12 +315,16 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
 - Desktop layout rendered at 1440x900.
 - Password reveal and hide changed the real input type.
 - Connect flow displayed a target-scoped host-key dialog and SHA-256 fingerprint.
-- Trust action opened the browser QA terminal session.
+- Trust action persisted a metadata-only Known Host and opened the browser QA
+  terminal session.
 - Real keyboard events reached xterm.js.
 - Unicode/CJK/Nerd Font preview command rendered.
 - Compact 1024x768 layout rendered with an icon-only sidebar.
 - Responsive layout rendered at 390x844.
 - Disconnect returned the UI to the disconnected state.
+- Known Hosts displayed the trusted Endpoint, Algorithm, and SHA-256 Fingerprint
+  at desktop and mobile widths.
+- Forget Trust removed the entry, and the next connection required TOFU again.
 - Password Credential creation returned metadata without showing the submitted
   password after the editor closed.
 - Private Key import UI used a metadata-only browser simulation and exposed no
@@ -288,6 +338,8 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
 - Jump Route creation added two Hosts, moved the second Host up, and preserved
   the visible order.
 - Deleting a Jump Route still referenced by a Group showed an in-use error.
+- A pre-seeded changed Host Key produced a hard-block dialog with trusted and
+  received Fingerprints and no accept action.
 - Configuration UI rendered at desktop and mobile viewports.
 - Browser error log was empty.
 
@@ -298,6 +350,10 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
 - \`screenshots/03-connected-unicode.png\`
 - \`screenshots/04-mobile-connected.png\`
 - \`screenshots/05-disconnected.png\`
+- \`screenshots/05b-known-hosts.png\`
+- \`screenshots/05c-known-hosts-mobile.png\`
+- \`screenshots/05d-known-hosts-forgotten.png\`
+- \`screenshots/05e-tofu-after-forget.png\`
 - \`screenshots/06-credentials.png\`
 - \`screenshots/06b-credentials-mobile.png\`
 - \`screenshots/07-groups.png\`
@@ -305,6 +361,7 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
 - \`screenshots/08-route-desktop.png\`
 - \`screenshots/09-route-compact.png\`
 - \`screenshots/10-route-mobile.png\`
+- \`screenshots/11-changed-host-key.png\`
 EOF
 
 echo "agent-browser smoke passed: $OUTPUT_DIR"
