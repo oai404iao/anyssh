@@ -25,12 +25,13 @@ Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
-Add-Type -ReferencedAssemblies @(
-  "System.Drawing.dll",
-  "System.Windows.Forms.dll",
-  "UIAutomationClient.dll",
-  "UIAutomationTypes.dll"
-) -TypeDefinition @"
+$ReferenceAssemblies = @(
+  [System.Drawing.Bitmap].Assembly.Location
+  [System.Windows.Forms.SendKeys].Assembly.Location
+  [System.Windows.Automation.AutomationElement].Assembly.Location
+  [System.Windows.Automation.ControlType].Assembly.Location
+) | Select-Object -Unique
+Add-Type -ReferencedAssemblies $ReferenceAssemblies -TypeDefinition @"
 using System;
 using System.Drawing;
 using System.Drawing.Imaging;

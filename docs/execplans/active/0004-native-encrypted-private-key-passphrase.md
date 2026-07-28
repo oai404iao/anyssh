@@ -156,6 +156,9 @@ pnpm format:check
 - 2026-07-28：CI Run `30324013273` 首次 Windows 失败不是 Prompt 或 SSH
   错误；`pnpm --filter ... exec` 把 Node CWD 切到 `apps/client`，导致 QA Driver
   被错误解析为 `apps/client/scripts/...`。改为从 `import.meta.url` 解析仓库根。
+- 2026-07-28：CI Run `30324346083` 已通过 Windows Rust 编译，但 Windows
+  PowerShell `Add-Type` 不会把已加载 GAC Assembly 的短文件名自动解析为编译器
+  Metadata Reference。QA Driver 改为传入四个实际 `Assembly.Location`。
 
 ## Decision Log
 
