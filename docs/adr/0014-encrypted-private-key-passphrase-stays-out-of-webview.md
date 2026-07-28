@@ -1,7 +1,8 @@
 # ADR-0014：加密私钥 Passphrase 使用原生安全提示且不进入 WebView
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-07-27
+- 接受日期：2026-07-28
 - 决策人：项目维护者
 
 ## 背景
@@ -59,10 +60,16 @@ Passphrase，但把 Passphrase 放进 React 表单或普通 Tauri IPC 会破坏 
 - Vault、日志、截图和 QA Evidence 不含 Key Header 或测试 Passphrase。
 - Android ARM64 和 Linux/Windows Build 回归；iOS 继续等待 macOS/Xcode。
 
+Head `dac51ffd079d56ab1d7f7a5837d6bf6b89b1c333` 的 GitHub Actions Run
+`30325359607` 九个 Job 全部通过。Linux X11 验证了进程内 GTK Prompt、错误
+重试和导入；Windows 验证了真实 Native Picker、两次 Credential UI、源文件删除、
+加密 Key SSH、System Agent SSH 和进程重启。Artifact 二次扫描未发现测试
+Passphrase 或 OpenSSH Key Header，因此本 ADR 于 2026-07-28 接受。
+
 ## 相关文档
 
 - [Native Encrypted Private Key Passphrase v1](../design/native-encrypted-private-key-passphrase-v1.md)
 - [ADR-0003](0003-double-layer-local-encryption.md)
 - [ADR-0006](0006-secrets-stay-out-of-webview.md)
 - [ADR-0011](0011-native-private-key-import-stays-in-rust.md)
-- [Phase 1 Encrypted Key ExecPlan](../execplans/active/0004-native-encrypted-private-key-passphrase.md)
+- [Phase 1 Encrypted Key ExecPlan](../execplans/completed/0004-native-encrypted-private-key-passphrase.md)

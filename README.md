@@ -42,7 +42,7 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
 - Group、Host、Password/Private Key/System Agent Credential 和有序 Jump
   Route 的产品配置 UI。
 - Rust-owned Native File Picker 私钥导入；Path 和 Key 内容不进入 WebView IPC，
-  首版只接受未加密 OpenSSH Private Key。
+  Linux/Windows Desktop 的加密 OpenSSH Key 使用原生 Secure Passphrase Prompt。
 - 原生 Vault 创建、锁定和解锁界面。
 - Docker OpenSSH 真实协议测试。
 - Vitest、Playwright 和 agent-browser 测试路径。
@@ -53,19 +53,20 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
   错误 PIN、锁定/解锁与进程重启恢复。
 - Windows 2025 Runner 已通过 OpenSSH Agent Named Pipe 和 standalone
   `sshd.exe` 完成真实 System Agent SSH，且源 Private Key 在 AnySSH 启动前删除。
+- Windows 2025 Runner 已通过 Native Picker 和 Credential UI 导入加密
+  OpenSSH Key；错误 Passphrase 重试、源文件删除、真实 SSH 和重启恢复均通过。
 
-加密 Private Key 的原生 Passphrase Prompt 和 Windows Native Picker 尚未完成。
 iOS 因当前没有 macOS/Xcode 环境暂缓。
 
-当前活动计划：
-
-- [`Phase 1：Native Encrypted Private Key Passphrase`](docs/execplans/active/0004-native-encrypted-private-key-passphrase.md)
+当前没有活动 ExecPlan。下一项 Phase 1 工作开始前应先为 `known_hosts` 等能力
+创建计划。
 
 已完成计划：
 
 - [`Phase 0：技术风险验证`](docs/execplans/completed/0001-phase-0-technical-validation.md)
 - [`Phase 1：Group 持久化与三态继承`](docs/execplans/completed/0002-group-persistence-and-inheritance.md)
 - [`Phase 1：系统 SSH Agent 认证`](docs/execplans/completed/0003-system-ssh-agent-authentication.md)
+- [`Phase 1：Native Encrypted Private Key Passphrase`](docs/execplans/completed/0004-native-encrypted-private-key-passphrase.md)
 
 ## 文档入口
 
@@ -154,8 +155,8 @@ macOS/Xcode 环境，Linux Docker 不能替代。
 
 Windows 上的 `pnpm qa:native:windows` 会构建 Debug EXE，启动真实 Tauri/
 WebView2 Runtime，并通过独立 `tauri.windows-qa.conf.json` 使用仅限 QA Build
-的 Loopback CDP Port 验证 Vault、Repository 和重启恢复。该端口不进入
-Canonical 或 Release 配置。
+的 Loopback CDP Port 验证 Vault、Repository、Native Encrypted Key
+Picker/Prompt、OpenSSH 和重启恢复。该端口不进入 Canonical 或 Release 配置。
 
 ## 许可证
 

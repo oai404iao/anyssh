@@ -1,10 +1,10 @@
 # AnySSH 原生私钥导入 v1
 
 > 状态：已实现
-> 日期：2026-07-27
+> 日期：2026-07-28
 
 本文定义 Desktop MVP 的受约束 SSH Private Key 文件导入。它不定义 Secret
-Reveal/Export、Key 生成或移动端 Content URI。加密私钥 Passphrase 的后续边界
+Reveal/Export、Key 生成或移动端 Content URI。加密私钥 Passphrase 的扩展边界
 见 [Native Encrypted Private Key Passphrase v1](native-encrypted-private-key-passphrase-v1.md)。
 
 ## 数据流
@@ -15,8 +15,9 @@ React
     -> Tauri credential_import_private_key
       -> Rust Native File Picker
         -> selected FilePath remains in Rust
-          -> ApplicationCore::import_private_key_credential_from_path
+          -> ApplicationCore::import_private_key_credential_from_path_with_prompt
             -> bounded file read + OpenSSH decode validation
+              -> encrypted: Desktop Native Secure Prompt
               -> DatabaseActorHandle::create_credential
 ```
 
@@ -38,8 +39,10 @@ Rust 在 Actor 写入前执行：
    检查必须为普通文件。
 3. 文件必须为 1 Byte 到 1 MiB。
 4. 使用有界 Reader 读取 UTF-8 文本。
-5. 使用与 SSH Core 相同的 russh/OpenSSH Decoder 在无 Passphrase 条件下解析。
-6. 解析成功后将 `Zeroizing<String>` 直接交给 ApplicationCore/DB Actor。
+5. 使用与 SSH Core 相同的 OpenSSH Decoder 识别有效 Key 与加密状态。
+6. 未加密 Key 直接验证；加密 Key 只在 Linux/Windows Native Prompt 验证成功后
+   继续。
+7. 解析成功后将 `Zeroizing<String>` 直接交给 ApplicationCore/DB Actor。
 
 错误使用固定分类消息，不包含文件 Path、文件名、Key 文本或底层解析内容。
 
@@ -65,6 +68,6 @@ Private Key Summary 只显示 Label、Username 和 Kind。首版不提供编辑 
 
 - ApplicationCore 文件导入成功后，Credential List 只返回 metadata。
 - Key 明文不出现在 Debug、JSON、错误或浏览器状态。
-- Invalid/Encrypted Key 不写入 Vault。
+- Invalid Key、Prompt 取消、Prompt 不可用和三次错误 Passphrase 不写入 Vault。
 - Host 可以引用导入后的 Credential，并通过 Saved Host ID 连接。
 - Playwright/agent-browser 覆盖 Credential、Host、Route 配置 UI。

@@ -22,11 +22,11 @@
 
 ## Phase 1：桌面 MVP
 
-状态：进行中；Group 和 System Agent 已完成，当前实施加密 Private Key 原生
-Passphrase Prompt。
+状态：进行中；Group、System Agent 和加密 Private Key 原生 Passphrase Prompt
+已完成，下一项能力开始前待建立 ExecPlan。
 
 - Host 与 Group 继承（已完成）。
-- 密码、私钥（未加密路径已完成；加密 Key Prompt 进行中）、系统 Agent（已完成）。
+- 密码、私钥（含 Linux/Windows 加密 Key Prompt）、系统 Agent（已完成）。
 - known_hosts。
 - 多 Tab Terminal。
 - Jump Host。

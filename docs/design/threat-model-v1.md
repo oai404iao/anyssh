@@ -1,10 +1,10 @@
 # AnySSH Threat Model v1
 
 > 状态：Phase 1 Baseline
-> 日期：2026-07-27
+> 日期：2026-07-28
 > 范围：当前 Tauri/React Client、Rust Core、Vault、SQLCipher Repository、
-> Group Inheritance、russh Session、Native Private Key Import 和 QA/Build
-> Evidence。
+> Group Inheritance、russh Session、Native Encrypted Private Key Import 和
+> QA/Build Evidence。
 
 ## 1. 安全目标
 
@@ -101,24 +101,23 @@ System SSH Agent Socket / Named Pipe
 | T-08 | Group/Jump Route 循环或膨胀导致 DoS | Group Parent 与 Effective Host Route 全图检测、最多 32 层 Group/32 Jump、Runtime 重验 | 深层故障归属仍需保持逐 Hop 测试 |
 | T-09 | 大输出耗尽内存 | 64 项 Core Queue、8 Chunk WebView Credit、xterm Ack、SSH Window Flow Control | Scrollback 与未来多 Tab 需要全局预算 |
 | T-10 | DB 并发和关闭死锁 | 单 OS Thread、16 项有界 Queue、oneshot、关闭 Sender 后 Join | 长操作仍会串行阻塞，需继续监控可取消性 |
-| T-11 | WebView 指定任意文件或读取 Key | Native Picker 在 Rust 内发起；IPC 无 Path/Key/Passphrase | Windows Native Picker 尚无真实交互 Evidence；移动 Content URI 未实现 |
+| T-11 | WebView 指定任意文件或读取 Key | Native Picker 在 Rust 内发起；IPC 无 Path/Key/Passphrase；Linux/Windows 真实 Picker Evidence | Windows Reparse Point 和移动 Content URI 尚未实现 |
 | T-12 | Symlink/FIFO/超大 Key 文件 | 打开前类型检查、1 MiB 上限、UTF-8、Unix `O_NOFOLLOW`、russh Decoder | Windows Reparse Point 的专项恶意 Fixture 尚未覆盖 |
 | T-13 | QA Artifact 泄漏 Secret/Token | `env -i`/白名单环境、截图前清空 Secret、Vault 明文扫描、不上传 Vault/Profile | Agent 必须继续人工检查截图和 Error Log |
 | T-14 | QA CDP 成为 Release 调试后门 | 独立 `tauri.windows-qa.conf.json`、仅 Debug Smoke 使用、Loopback Port、Canonical Config 无 CDP | QA Debug EXE 不得作为发布 Artifact 分发 |
 | T-15 | 恶意 WebDAV 删除、回滚或分叉数据 | 计划使用加密不可变 Operation、Snapshot、ETag CAS | Sync 尚未实现；ADR-0004 保持 Proposed |
 | T-16 | 任意本地脚本获得文件/网络/Secret | MVP 禁止任意 Shell、`eval` 和第三方插件 | Runbook Engine 尚未实现，需要 Phase 1/后续测试 |
 | T-17 | WebView、日志或恶意配置滥用系统 Agent | IPC 不接受 Socket/Pipe/Key/签名；最多 64 Identity；Credential 精确 Fingerprint；不自动回退；Agent Forwarding 关闭；依赖 `log` 静态上限为 Info | Agent 本身和已解锁用户 Session 仍是外部信任边界；Flatpak/确认策略待验证 |
-| T-18 | 加密 Key Passphrase 经 WebView、外部进程或 Prompt Buffer 泄露 | Proposed ADR-0014：进程内/系统原生 Secure Prompt、无 Passphrase IPC、`Zeroizing<String>`、三次上限、失败不落库 | Linux/Windows Adapter 和 Native QA 尚在 ExecPlan 0004 实施 |
+| T-18 | 加密 Key Passphrase 经 WebView、外部进程或 Prompt Buffer 泄露 | Accepted ADR-0014：进程内 GTK/Windows Credential UI、无 Passphrase IPC、`Zeroizing<String>`、三次上限、失败不落库、Artifact 明文扫描 | Toolkit/OS 和解锁进程内存仍短暂持有 Secret；Android/iOS Adapter 尚未实现 |
 
 ## 6. 平台结论
 
-- Linux X11：真实 Tauri/WebKitGTK、Vault、Native Picker、`SSH_AUTH_SOCK`
-  Identity UI、SSH 和 4 MiB 输出已验证。
+- Linux X11：真实 Tauri/WebKitGTK、Vault、加密 Key GTK Prompt/错误重试、
+  Native Picker、`SSH_AUTH_SOCK` Identity UI、SSH 和 4 MiB 输出已验证。
 - Linux Wayland：无 `DISPLAY`、Weston、IBus/libpinyin、xterm 和 SSH 已验证。
 - Windows：真实 EXE/WebView2、非零窗口句柄、Vault/Repository 和重启恢复已
-  验证；Group/Inherited Host/Route 的 Schema v4 重启恢复也已验证。Run
-  `30287139254` 已通过 System Agent Named Pipe、standalone OpenSSH、远端
-  Marker 和 Agent Selector 明文扫描；Native Picker 仍未覆盖。
+  验证。Run `30325359607` 已通过 Native Picker、两次 Credential UI、加密 Key
+  SSH、System Agent Named Pipe、standalone OpenSSH、远端 Marker 和明文扫描。
 - Android：ARM64 Debug APK、Rust Core 和 bundled SQLCipher 构建已验证；Runtime
   与 Content URI 尚未验证。
 - iOS：因无 macOS/Xcode 环境而明确延期。
@@ -147,12 +146,17 @@ pnpm check:container:android
 - Credential/Group/Host/Route Summary 脱敏、三态解析、引用完整性和循环检测。
 - System Agent Identity 上限、Fingerprint 选择、错误 Identity、Direct/Jump
   外部签名和 IPC 脱敏。
-- Private Key Import 文件类型、大小、编码、Symlink 和加密 Key 拒绝。
+- Private Key Import 文件类型、大小、编码、Symlink、加密状态、空/错误
+  Passphrase、取消、三次上限和成功 SSH。
 - Host Key 变化、两 Jump Route、取消、超时和 4 MiB 背压。
 - Browser、X11、Wayland/IME、Windows WebView2 和 Android Build Evidence。
 
 Group Feature Commit `ece4fe7` 的 Run `30279500562` 全部九个 Job 通过；关键
 Desktop/Mobile、X11、Wayland 和 Windows 截图及 Error Log 已人工检查。
+
+Encrypted Key Prompt Head `dac51ffd079d56ab1d7f7a5837d6bf6b89b1c333`
+的 Run `30325359607` 全部九个 Job 通过；Linux/Windows Native Prompt、
+Browser Error Log、OpenSSH Marker、重启和 Artifact 明文扫描已人工检查。
 
 ## 8. 复审触发条件
 

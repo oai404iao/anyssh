@@ -1,6 +1,6 @@
 # 项目状态
 
-> 更新日期：2026-07-27
+> 更新日期：2026-07-28
 
 ## 当前阶段
 
@@ -45,6 +45,9 @@
 - Rust-owned Native Private Key Import：WebView 只提交 Label/Username，原生
   Picker、文件读取、1 MiB 上限、UTF-8/OpenSSH 校验和 Vault 写入均留在 Rust；
   Xvfb 已验证真实文件选择器和导入结果。
+- Native Encrypted Private Key Passphrase：`anyssh-app` 拥有 sanitized Prompt
+  Context、最多三次验证、取消/失败不落库；Linux 使用进程内 GTK Secure Entry，
+  Windows 使用 `CredUIPromptForCredentialsW`，Passphrase 不进入 WebView/IPC。
 - 隔离 OpenSSH 已验证 Password Jump 1 -> Password Jump 2 -> Private Key
   Target、三跳 Host Key 顺序和 Jump 2 认证失败归属。
 - `anyssh-app` Application Service：Credential ID 经 DB Actor 解密后直接进入
@@ -103,13 +106,19 @@
   Agent Named Pipe 连接 standalone `sshd.exe` 并创建远端 Marker。X11、
   Wayland、Windows、Browser、Android 和 Linux Artifact 已人工检查。
 - ADR-0013 已接受，System Agent ExecPlan 已完成。
+- Head `dac51ffd079d56ab1d7f7a5837d6bf6b89b1c333` 的 GitHub Actions Run
+  `30325359607` 全部九个 Job 通过；Windows 真实 Native Picker、错误/正确
+  Credential UI、加密 Key SSH、System Agent SSH、错误 PIN 和重启恢复通过，
+  Linux X11 GTK Prompt、Wayland/IBus、Browser、Android 和 Container Evidence
+  已人工检查。
+- ADR-0014 已接受，Native Encrypted Private Key Passphrase ExecPlan 已完成。
 - CI 工作流。
 
 当前仓库尚未完成：
 
-- 加密 Private Key 的原生 Passphrase Prompt。
-- Windows Native Picker。
+- `known_hosts` 产品化、Keyboard-interactive/OTP、Forwarding 和后续 Key 管理。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
+- Android Runtime、Content URI、软键盘与生命周期验证。
 - iOS 构建验证；当前没有 macOS/Xcode 环境，按维护者指示暂缓。
 
 ## 待项目负责人确认
@@ -129,10 +138,11 @@
 
 ## 当前活动计划
 
-- [`Phase 1：Native Encrypted Private Key Passphrase`](../execplans/active/0004-native-encrypted-private-key-passphrase.md)
+当前没有活动 ExecPlan；下一项 Phase 1 能力开始前必须先建立计划。
 
 ## 已完成计划
 
 - [`Phase 0：技术风险验证`](../execplans/completed/0001-phase-0-technical-validation.md)
 - [`Phase 1：Group 持久化与三态继承`](../execplans/completed/0002-group-persistence-and-inheritance.md)
 - [`Phase 1：系统 SSH Agent 认证`](../execplans/completed/0003-system-ssh-agent-authentication.md)
+- [`Phase 1：Native Encrypted Private Key Passphrase`](../execplans/completed/0004-native-encrypted-private-key-passphrase.md)

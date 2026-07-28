@@ -1,7 +1,7 @@
 # Native Encrypted Private Key Passphrase v1
 
-> 状态：设计中
-> 日期：2026-07-27
+> 状态：已实现
+> 日期：2026-07-28
 
 本文扩展 [Native Private Key Import v1](native-private-key-import-v1.md)，让
 Linux/Windows Desktop 能导入加密 OpenSSH Private Key，同时保持 Passphrase
@@ -49,10 +49,12 @@ WebView 不接收 Path、Key、Passphrase、解密结果或 Prompt Handle。
 
 ```rust
 trait PrivateKeyPassphrasePrompt {
-    async fn request(
+    fn request(
         &self,
         context: PrivateKeyPromptContext,
-    ) -> Result<Option<Zeroizing<String>>, PrivateKeyPromptError>;
+    ) -> impl Future<
+        Output = Result<Option<Zeroizing<String>>, PrivateKeyPromptError>,
+    > + Send;
 }
 ```
 
@@ -116,6 +118,10 @@ SSH 连接时仍由 Rust-only Credential Resolution 把两者移动到
 - X11：真实 GTK Picker、Secure Prompt、导入、源文件删除、SSH 和 Vault 扫描。
 - Windows：真实 Native Picker、Secure Prompt、EXE/WebView2、OpenSSH 和重启。
 - Android/Linux Container 与 Windows Build 回归。
+
+Head `dac51ffd079d56ab1d7f7a5837d6bf6b89b1c333` 的 CI Run
+`30325359607` 已完成上述 Linux/Windows/Browser/OpenSSH/Container 验证；
+ADR-0014 已接受。
 
 ## 相关文档
 

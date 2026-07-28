@@ -1,14 +1,14 @@
 # AnySSH Credential Repository v1
 
 > 状态：已实现
-> 日期：2026-07-27
+> 日期：2026-07-28
 
 本文定义在 SQLCipher Schema v2 引入、并由当前 Schema v5 继续使用的
 Vault-backed Credential Repository，以及 SSH Credential ID 解析边界。当前产品
 已实现 metadata-only Credential 管理 UI 和 Rust-owned Native File Picker；本文
 仍不定义 Secret Reveal/Export。加密 Key Passphrase Prompt 由
 [Native Encrypted Private Key Passphrase v1](native-encrypted-private-key-passphrase-v1.md)
-定义，当前正在实施。
+定义，Linux/Windows Desktop 已实现。
 
 ## 安全目标
 
@@ -36,8 +36,10 @@ React Connect Request
 Private Key 的创建与更新只提供给 Rust Trusted Service。产品导入由
 `credential_import_private_key` Command 在 Rust 内打开 Native File Picker；
 Command 不接受 WebView 指定的文件路径，选中的 Path 和 Key 内容不返回
-WebView。首版只接受无需 Passphrase 即可解析的 Key，详细边界见
-[原生私钥导入 v1](native-private-key-import-v1.md)。
+WebView。未加密 Key 直接验证；加密 Key 通过 Native Secure Prompt 获取
+Passphrase，详细边界见
+[原生私钥导入 v1](native-private-key-import-v1.md) 和
+[Native Encrypted Private Key Passphrase v1](native-encrypted-private-key-passphrase-v1.md)。
 
 Password Credential 可以通过 Typed IPC 创建或更新，因为用户输入密码本来就会
 短暂经过 WebView；IPC Adapter 必须立即把它移动到 `Zeroizing<String>`，不得保存

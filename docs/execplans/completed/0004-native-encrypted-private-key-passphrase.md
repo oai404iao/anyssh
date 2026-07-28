@@ -1,6 +1,6 @@
 # ExecPlan 0004：Native Encrypted Private Key Passphrase
 
-- 状态：Active
+- 状态：Completed
 - 创建日期：2026-07-27
 - 最后更新：2026-07-28
 - 负责人：项目维护者与执行 Agent
@@ -33,8 +33,8 @@ Key，而不把 Passphrase、Path 或 Key 内容交给 WebView。
 ## 上下文
 
 Accepted ADR-0011 已把 Native Picker、Path、文件读取和 Key Validation 留在 Rust。
-Accepted ADR-0006 禁止 Private Key/Passphrase 进入 WebView。Proposed ADR-0014
-定义 Desktop Native Secure Prompt 和失败边界。
+Accepted ADR-0006 禁止 Private Key/Passphrase 进入 WebView。ADR-0014 已根据
+本计划的 Desktop Native Secure Prompt 和失败边界验证结果接受。
 
 关键路径：
 
@@ -64,11 +64,13 @@ Accepted ADR-0006 禁止 Private Key/Passphrase 进入 WebView。Proposed ADR-00
 - [x] 2026-07-28：实现 Linux GTK Secure Prompt；本地 X11
   `smoke-1785205977-2715042` 通过错误重试、导入、明文扫描和 SSH 回归。
 - [x] 2026-07-28：实现 Windows Credential UI Provider、Native Dialog QA
-  Driver、加密 Key Host/SSH Marker 和重启验证；等待 Windows Runner 实证。
+  Driver、加密 Key Host/SSH Marker 和重启验证。
 - [x] 2026-07-28：本地 Workspace、Frontend、OpenSSH、Playwright、
   agent-browser、X11、Wayland、Android Host 与 Linux/Android Container 回归
   通过；仅待 Windows Runner 和同 Commit CI。
-- [ ] 完成全部回归、评审 ADR-0014 并收尾本计划。
+- [x] 2026-07-28：Head `dac51ffd079d56ab1d7f7a5837d6bf6b89b1c333`
+  的 GitHub Actions Run `30325359607` 九个 Job 全部通过；人工检查 Linux、
+  Windows、Browser、Android 和 Container Artifact，接受 ADR-0014 并收尾。
 
 ## Milestones
 
@@ -182,4 +184,34 @@ pnpm format:check
 
 ## Outcomes & Retrospective
 
-尚未完成。
+完成。
+
+- `anyssh-ssh` 可以在不知道 Passphrase 时区分有效的加密/未加密 OpenSSH
+  Container；`anyssh-app` 拥有 sanitized Prompt Context、最多三次循环、取消、
+  Prompt Unavailable、通用失败和“成功后才写库”的业务边界。
+- Linux 使用 Tauri/GTK Main Thread 上的进程内不可见 Entry；Windows 使用带
+  Owner HWND、`DO_NOT_PERSIST` 和 Zeroizing UTF-16 Buffer 的
+  `CredUIPromptForCredentialsW`。普通 Tauri IPC 仍只有 Label/Username。
+- 成功导入保留原始加密 OpenSSH Key，并把 Key 和 Passphrase 分别写入既有
+  Record AEAD 字段；SQLCipher Schema 仍为 v5，没有新增 Migration。
+- Docker OpenSSH Integration 现在从 Native Import API 创建 Credential，再经
+  Lock/Unlock、Credential ID Resolution 和 SSH Core 完成真实认证。
+- 同 Commit CI `30325359607` 的关键证据：
+  - agent-browser：`smoke-1785208482`。
+  - X11：`smoke-1785208651-6081`，真实 GTK Picker/Prompt、错误重试、导入、
+    Vault 扫描和后续 SSH/4 MiB 回归。
+  - Wayland：`smoke-1785208730-7467`，无 `DISPLAY` 且 IBus 中文到达 SSH。
+  - Windows：`smoke-20260728-031708-7668`，真实 Picker、两次 Credential UI、
+    加密 Key SSH、System Agent SSH、错误 PIN、重启恢复和空 Browser Error Log。
+  - Android ARM64 APK SHA-256：
+    `4b175a2f60b32f6cfe24e2003e73280f0843460e1605e341cdd03b56aaca2640`。
+  - Linux ELF SHA-256：
+    `ae65290e3724aa0780dd53c0826a26111bf068db3a244cab78c6f44e3b4b0cf0`。
+  - Windows EXE SHA-256：
+    `5f47b35756b5ee9a202d11af2861d5b6041e05617b3d7606f003f9354effebca`。
+- Artifact 二次扫描没有发现 Linux/Windows 测试 Passphrase 或
+  `BEGIN OPENSSH PRIVATE KEY`；Windows `sshd` 日志分别记录了导入 Key 和
+  Fingerprint-selected Agent Key 的真实 Public Key Authentication。
+- Android/iOS 加密 Key Prompt 继续明确 Unsupported；Android Content URI、
+  iOS Controller 生命周期、Secret Reveal/Export 和“不记住 Passphrase”模式仍
+  属于后续计划。

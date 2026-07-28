@@ -27,11 +27,12 @@ ADR 记录需要长期保留的架构决策。实现细节放在 `docs/design/`�
 | [0011](0011-native-private-key-import-stays-in-rust.md) | Accepted | 原生私钥导入完全留在 Rust 边界 |
 | [0012](0012-group-inheritance-uses-explicit-three-state-overrides.md) | Accepted | Group 继承使用显式三态 Override |
 | [0013](0013-system-ssh-agent-uses-fingerprint-selected-identities.md) | Accepted | 系统 SSH Agent 使用 Fingerprint 选择的外部签名身份 |
-| [0014](0014-encrypted-private-key-passphrase-stays-out-of-webview.md) | Proposed | 加密私钥 Passphrase 使用原生安全提示且不进入 WebView |
+| [0014](0014-encrypted-private-key-passphrase-stays-out-of-webview.md) | Accepted | 加密私钥 Passphrase 使用原生安全提示且不进入 WebView |
 
 Phase 0 已接受 ADR-0001、0002、0003、0006、0008、0009、0010 和 0011；
-Phase 1 Group 和 System Agent 验证后已接受 ADR-0012、0013。
-ADR-0004、0005、0007 和 0014 因对应能力尚未完整实现而继续保持 Proposed。
+Phase 1 Group、System Agent 和加密 Private Key Prompt 验证后已接受
+ADR-0012、0013、0014。ADR-0004、0005 和 0007 因对应能力尚未完整实现而继续
+保持 Proposed。
 
 ## 文件规范
 

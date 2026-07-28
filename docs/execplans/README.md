@@ -55,8 +55,9 @@ NNNN-short-kebab-case-title.md
 
 当前计划：
 
-- Active：[Native Encrypted Private Key Passphrase](active/0004-native-encrypted-private-key-passphrase.md)
+- Active：无。
 - Completed：
   - [Phase 0：技术风险验证](completed/0001-phase-0-technical-validation.md)
   - [Group 持久化与三态继承](completed/0002-group-persistence-and-inheritance.md)
   - [系统 SSH Agent 认证](completed/0003-system-ssh-agent-authentication.md)
+  - [Native Encrypted Private Key Passphrase](completed/0004-native-encrypted-private-key-passphrase.md)

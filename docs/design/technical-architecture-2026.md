@@ -263,8 +263,8 @@ Private Key 或 Passphrase 字段。
 当前产品配置 UI 已提供 Password Credential CRUD 和 Private Key Import。
 `credential_import_private_key` Request 只包含 Label/Username；Tauri Command 在
 Rust 内打开 Native File Picker，`ApplicationCore` 有界读取并使用 russh Decoder
-验证文件后才写入 Vault。Path 和 Key 内容不返回 WebView。当前实现只接受无需
-Passphrase 即可解析的 OpenSSH Private Key；加密 Key 的原生安全输入边界见
+验证文件后才写入 Vault。Path 和 Key 内容不返回 WebView。Linux/Windows
+Desktop 的加密 OpenSSH Key 使用原生安全 Prompt 获取 Passphrase；边界见
 [Native Encrypted Private Key Passphrase v1](native-encrypted-private-key-passphrase-v1.md)。
 
 当前 System Agent v1 已实现 Linux `SSH_AUTH_SOCK` 和 Windows OpenSSH Agent
