@@ -24,6 +24,8 @@ Design 文档描述系统如何实现，包括组件、数据流、接口、安�
   加密 OpenSSH Key 检测、Desktop Native Secure Prompt 和 Secret 生命周期。
 - [known-host-repository-v1.md](known-host-repository-v1.md)：Endpoint-scoped
   Trust、Schema v6、Durable TOFU 和 Changed-Key 阻断。
+- [keyboard-interactive-authentication-v1.md](keyboard-interactive-authentication-v1.md)：
+  RFC 4256、OTP/MFA、Partial-success 和 Session-bound Response。
 
 ## 规则
 

@@ -153,8 +153,7 @@
 
 ## 当前活动计划
 
-暂无。下一项建议先建立 Keyboard-interactive/OTP 的 Design、ADR/ExecPlan 和
-OpenSSH MFA Fixture。
+- [`Phase 1：Keyboard-interactive and OTP`](../execplans/active/0006-keyboard-interactive-and-otp.md)
 
 ## 已完成计划
 

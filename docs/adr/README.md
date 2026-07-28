@@ -29,11 +29,13 @@ ADR 记录需要长期保留的架构决策。实现细节放在 `docs/design/`�
 | [0013](0013-system-ssh-agent-uses-fingerprint-selected-identities.md) | Accepted | 系统 SSH Agent 使用 Fingerprint 选择的外部签名身份 |
 | [0014](0014-encrypted-private-key-passphrase-stays-out-of-webview.md) | Accepted | 加密私钥 Passphrase 使用原生安全提示且不进入 WebView |
 | [0015](0015-known-host-trust-is-endpoint-scoped.md) | Accepted | Known Host 信任按 Endpoint 建模并在继续握手前持久化 |
+| [0016](0016-keyboard-interactive-responses-are-session-bound.md) | Proposed | Keyboard-interactive 响应是 Session-bound 临时秘密 |
 
 Phase 0 已接受 ADR-0001、0002、0003、0006、0008、0009、0010 和 0011；
 Phase 1 Group、System Agent 和加密 Private Key Prompt 验证后已接受
 ADR-0012、0013、0014；Known Host Repository 与 Durable TOFU 验证后已接受
-ADR-0015。ADR-0004、0005 和 0007 因对应能力尚未完整实现而继续保持 Proposed。
+ADR-0015。ADR-0004、0005、0007 和 0016 因对应能力尚未完整实现而继续保持
+Proposed。
 
 ## 文件规范
 

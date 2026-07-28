@@ -41,7 +41,8 @@ Keyboard-interactive/OTP。
 
 当前建议顺序：
 
-1. Keyboard-interactive/OTP，补齐常见 MFA Server 兼容性。
+1. Keyboard-interactive/OTP（ExecPlan 0006 进行中），补齐常见 MFA Server
+   兼容性。
 2. Multi Tab Terminal 与 Session Lifecycle。
 3. Local/Remote/Dynamic Forward。
 4. Key 生成、Reveal/Export 和更完整的 Theme/Font/Snippet 产品化。

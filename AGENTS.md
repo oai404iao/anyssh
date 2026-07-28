@@ -19,8 +19,8 @@ React/xterm.js UI
 
 仓库已完成 **Phase 0 技术验证**、**Phase 1 Group 持久化/三态继承**、
 **System SSH Agent 认证**、**Native Encrypted Private Key Passphrase** 和
-**Known Host Repository/Durable TOFU**。当前没有活动 ExecPlan；下一项建议先
-规划 **Keyboard-interactive/OTP**。
+**Known Host Repository/Durable TOFU**。当前活动计划是
+**Keyboard-interactive and OTP**。
 已经存在可构建的 React 前端、Rust Workspace、russh SSH/Jump Host、SQLCipher/
 PIN Vault、Tauri IPC、Host/Credential/Route Repository、Windows WebView2、
 OpenSSH Fixture、Playwright E2E、agent-browser 与原生 X11/Wayland 检查。
@@ -465,9 +465,13 @@ Clear
 
 ## 当前下一步
 
-当前没有活动 ExecPlan。除非用户明确改变优先级，下一项应先创建
-Keyboard-interactive/OTP 的 Design、必要 ADR 和 ExecPlan，并建立真实 OpenSSH
-MFA Fixture；不要直接跳到 WebDAV、Forwarding、多 Tab 或高级脚本系统。
+当前唯一活动计划是：
+
+- [`0006-keyboard-interactive-and-otp.md`](docs/execplans/active/0006-keyboard-interactive-and-otp.md)
+
+除非用户明确改变优先级，应先完成 Schema v7 Interactive Credential、
+Partial-success Challenge/Response、OpenSSH PAM 和 Linux/Windows Native
+Evidence；不要直接跳到 WebDAV、Forwarding、多 Tab 或高级脚本系统。
 
 ## 关键文件
 
@@ -512,6 +516,7 @@ MFA Fixture；不要直接跳到 WebDAV、Forwarding、多 Tab 或高级脚本�
 | 总体技术设计 | `docs/design/technical-architecture-2026.md` |
 | ADR 索引 | `docs/adr/README.md` |
 | ExecPlan 规范 | `docs/execplans/README.md` |
+| 当前活动计划 | `docs/execplans/active/0006-keyboard-interactive-and-otp.md` |
 | 最新完成计划 | `docs/execplans/completed/0005-known-host-repository-and-durable-tofu.md` |
 | Phase 0 结果 | `docs/execplans/completed/0001-phase-0-technical-validation.md` |
 | Group 结果 | `docs/execplans/completed/0002-group-persistence-and-inheritance.md` |

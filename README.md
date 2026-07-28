@@ -64,8 +64,9 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
 
 iOS 因当前没有 macOS/Xcode 环境暂缓。
 
-当前没有活动 ExecPlan。Phase 1 下一项建议先规划
-Keyboard-interactive/OTP 与 OpenSSH MFA Fixture。
+当前活动计划：
+
+- [`Phase 1：Keyboard-interactive and OTP`](docs/execplans/active/0006-keyboard-interactive-and-otp.md)
 
 已完成计划：
 

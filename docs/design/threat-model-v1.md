@@ -110,6 +110,7 @@ System SSH Agent Socket / Named Pipe
 | T-17 | WebView、日志或恶意配置滥用系统 Agent | IPC 不接受 Socket/Pipe/Key/签名；最多 64 Identity；Credential 精确 Fingerprint；不自动回退；Agent Forwarding 关闭；依赖 `log` 静态上限为 Info | Agent 本身和已解锁用户 Session 仍是外部信任边界；Flatpak/确认策略待验证 |
 | T-18 | 加密 Key Passphrase 经 WebView、外部进程或 Prompt Buffer 泄露 | Accepted ADR-0014：进程内 GTK/Windows Credential UI、无 Passphrase IPC、`Zeroizing<String>`、三次上限、失败不落库、Artifact 明文扫描 | Toolkit/OS 和解锁进程内存仍短暂持有 Secret；Android/iOS Adapter 尚未实现 |
 | T-19 | 被攻陷的 WebView 删除 Known Host 后自动接受 MITM Key | Accepted ADR-0015：Forget 只提交 ID，由 ApplicationCore 解析并通过 WebView 外 Linux/Windows 原生确认后删除；Changed-Key 无接受入口 | Android/iOS 原生确认 Adapter 尚未实现；OS/Toolkit Prompt 仍是平台信任边界 |
+| T-20 | 恶意 Server Prompt 或延迟 OTP Response 泄露 Saved Secret/应用到错误 Hop | Proposed ADR-0016：不自动填充 Saved Secret；Response 只在局部 Session 表单/IPC，绑定 Request/Hop/Round并设上限 | 当前 Renderer 被攻陷时仍可能读取本次临时 Response；实现和 Native Evidence 待 ExecPlan 0006 |
 
 ## 6. 平台结论
 

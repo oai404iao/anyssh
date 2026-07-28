@@ -27,6 +27,7 @@
 - [System SSH Agent Authentication v1](design/system-ssh-agent-authentication-v1.md)
 - [Native Encrypted Private Key Passphrase v1](design/native-encrypted-private-key-passphrase-v1.md)
 - [Known Host Repository v1](design/known-host-repository-v1.md)
+- [Keyboard-interactive Authentication v1](design/keyboard-interactive-authentication-v1.md)
 
 Design 文档回答“系统如何工作、模块边界是什么”。
 
