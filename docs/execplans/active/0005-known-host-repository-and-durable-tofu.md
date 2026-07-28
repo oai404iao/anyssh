@@ -100,6 +100,11 @@
   TOFU 和同 Endpoint Key Rotation Hard Block。
 - [ ] 运行扩展后的 Windows create/restart/changed 三阶段 QA，并取得同 Commit
   CI Artifact。
+- [x] 2026-07-28：Feature Commit `a0987da` 的 Run `30342613128` 中 Rust、
+  Frontend、Browser、OpenSSH、Linux Native、Linux Container、Android 和
+  agent-browser 通过；Windows create/restart/rotation Runtime 实际完成，但
+  Changed-Key Playwright Selector 把 `alertdialog` 错写成 `dialog`，因此 Job
+  失败并保留完整失败 Artifact。
 
 ## Milestones
 
@@ -247,6 +252,9 @@ git diff --check
   Prompt”，并增加重启和轮换阶段。
 - 2026-07-28：X11 大输出回归后再次输入临时 Password 偶有 UI Automation
   时序波动；QA 采用有界三次重试，同时仍以远端 Marker 作为连接成功证据。
+- 2026-07-28：Run `30342613128` 的 Windows 截图已经显示正确 Changed-Key
+  Hard Block；失败原因只是 Playwright ARIA Role 必须精确使用
+  `alertdialog`，`dialog` 不会匹配它。
 
 ## Decision Log
 

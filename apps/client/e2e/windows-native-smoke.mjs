@@ -397,7 +397,7 @@ async function verifyChangedHostKeyAfterRestart(targetPage) {
     .filter({ hasText: "Windows QA encrypted key host" });
   await privateKeyHost.getByRole("button", { name: "Open" }).click();
   await targetPage.getByRole("button", { name: "Connect saved Host" }).click();
-  const changedDialog = targetPage.getByRole("dialog", {
+  const changedDialog = targetPage.getByRole("alertdialog", {
     name: "Host key changed",
   });
   await assert(changedDialog).toContainText(sshHost);
