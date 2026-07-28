@@ -44,7 +44,7 @@ pub const MAX_SYSTEM_AGENT_IDENTITIES: usize = 64;
 const CHANNEL_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 const SYSTEM_AGENT_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 pub const MAX_PRIVATE_KEY_BYTES: usize = 1024 * 1024;
-const MAX_PRIVATE_KEY_PASSPHRASE_BYTES: usize = 64 * 1024;
+pub const MAX_PRIVATE_KEY_PASSPHRASE_BYTES: usize = 64 * 1024;
 const MAX_SYSTEM_AGENT_COMMENT_BYTES: usize = 512;
 #[cfg(windows)]
 const WINDOWS_OPENSSH_AGENT_PIPE: &str = r"\\.\pipe\openssh-ssh-agent";
@@ -408,6 +408,28 @@ impl SessionControl {
 pub struct SpawnedSession {
     pub control: SessionControl,
     pub events: mpsc::Receiver<SessionEvent>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PrivateKeyTextEncryption {
+    Unencrypted,
+    Encrypted,
+}
+
+pub fn inspect_openssh_private_key_text(
+    private_key: &str,
+) -> Result<PrivateKeyTextEncryption, PrivateKeyValidationError> {
+    if private_key.is_empty() || private_key.len() > MAX_PRIVATE_KEY_BYTES {
+        return Err(PrivateKeyValidationError);
+    }
+
+    let private_key = ssh_key::PrivateKey::from_openssh(private_key.as_bytes())
+        .map_err(|_| PrivateKeyValidationError)?;
+    if private_key.is_encrypted() {
+        Ok(PrivateKeyTextEncryption::Encrypted)
+    } else {
+        Ok(PrivateKeyTextEncryption::Unencrypted)
+    }
 }
 
 pub fn validate_private_key_text(
@@ -1638,6 +1660,34 @@ mod tests {
         assert!(debug.contains("<redacted>"));
         assert!(!debug.contains("private-key-material"));
         assert!(!debug.contains("private-key-passphrase"));
+    }
+
+    #[test]
+    fn openssh_private_key_inspection_distinguishes_encryption_without_a_passphrase() {
+        let key = ssh_key::PrivateKey::random(&mut rand::rng(), ssh_key::Algorithm::Ed25519)
+            .expect("fixture key");
+        let unencrypted = key
+            .to_openssh(ssh_key::LineEnding::LF)
+            .expect("encode unencrypted fixture");
+        let encrypted = key
+            .encrypt(&mut rand::rng(), "fixture-passphrase")
+            .expect("encrypt fixture")
+            .to_openssh(ssh_key::LineEnding::LF)
+            .expect("encode encrypted fixture");
+
+        assert_eq!(
+            inspect_openssh_private_key_text(unencrypted.as_str()),
+            Ok(PrivateKeyTextEncryption::Unencrypted)
+        );
+        assert_eq!(
+            inspect_openssh_private_key_text(encrypted.as_str()),
+            Ok(PrivateKeyTextEncryption::Encrypted)
+        );
+        assert!(validate_private_key_text(encrypted.as_str(), None).is_err());
+        assert!(validate_private_key_text(encrypted.as_str(), Some("wrong")).is_err());
+        validate_private_key_text(encrypted.as_str(), Some("fixture-passphrase"))
+            .expect("correct passphrase");
+        assert!(inspect_openssh_private_key_text("not-a-private-key").is_err());
     }
 
     #[test]

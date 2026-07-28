@@ -7,6 +7,8 @@ CONTAINER_NAME="anyssh-native-xvfb-$RANDOM-$$"
 RUN_DIR="$ROOT_DIR/artifacts/native-xvfb/smoke-$(date +%s)-$$"
 DRIVER="$RUN_DIR/anyssh-x11-driver"
 PRIVATE_KEY_FIXTURE="/tmp/000-anyssh-native-import-key"
+PRIVATE_KEY_PASSPHRASE="native-key-passphrase"
+WRONG_PRIVATE_KEY_PASSPHRASE="wrong-key-passphrase"
 APP_GROUP=""
 XVFB_PID=""
 AGENT_PID=""
@@ -127,6 +129,12 @@ docker cp \
 docker exec "$CONTAINER_NAME" \
   sh -c 'chown -R anyssh:anyssh /home/anyssh/.ssh && chmod 600 /home/anyssh/.ssh/authorized_keys'
 rm -f "$PRIVATE_KEY_FIXTURE.pub"
+ssh-keygen \
+  -q \
+  -p \
+  -P "" \
+  -N "$PRIVATE_KEY_PASSPHRASE" \
+  -f "$PRIVATE_KEY_FIXTURE"
 
 for _ in $(seq 1 50); do
   if ssh-keyscan -p 2222 127.0.0.1 >/dev/null 2>&1; then
@@ -284,13 +292,50 @@ sleep 0.5
 "$DRIVER" enter
 sleep 2
 "$DRIVER" enter
-sleep 5
-"$DRIVER" probe "$RUN_DIR/08-private-key-imported.bmp" >/dev/null
+sleep 2
 
-if grep -R -a -F "BEGIN OPENSSH PRIVATE KEY" "$VAULT_ROOT" >/dev/null 2>&1; then
-  echo "The imported Private Key leaked into a Vault file." >&2
+PASSPHRASE_PROMPT_READY=0
+for _ in $(seq 1 40); do
+  if ANYSSH_X11_WINDOW_MATCH="Unlock SSH private key" \
+    "$DRIVER" probe >/dev/null 2>&1; then
+    PASSPHRASE_PROMPT_READY=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$PASSPHRASE_PROMPT_READY" -ne 1 ]]; then
+  echo "The encrypted Private Key passphrase prompt did not appear." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-private-key-prompt.bmp" >/dev/null || true
+  tail -n 120 "$RUN_DIR/native.log" >&2
   exit 1
 fi
+
+ANYSSH_X11_WINDOW_MATCH="Unlock SSH private key" \
+  "$DRIVER" probe "$RUN_DIR/08-private-key-passphrase-prompt.bmp" >/dev/null
+"$DRIVER" type "$WRONG_PRIVATE_KEY_PASSPHRASE"
+"$DRIVER" click 750 452
+sleep 3
+if ! ANYSSH_X11_WINDOW_MATCH="Unlock SSH private key" \
+  "$DRIVER" probe "$RUN_DIR/09-private-key-passphrase-retry.bmp" >/dev/null 2>&1; then
+  echo "The encrypted Private Key retry prompt did not appear." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-private-key-retry.bmp" >/dev/null || true
+  tail -n 120 "$RUN_DIR/native.log" >&2
+  exit 1
+fi
+"$DRIVER" type "$PRIVATE_KEY_PASSPHRASE"
+"$DRIVER" click 750 452
+sleep 5
+"$DRIVER" probe "$RUN_DIR/10-private-key-imported.bmp" >/dev/null
+
+for marker in \
+  "BEGIN OPENSSH PRIVATE KEY" \
+  "$PRIVATE_KEY_PASSPHRASE" \
+  "$WRONG_PRIVATE_KEY_PASSPHRASE"; do
+  if grep -R -a -F "$marker" "$VAULT_ROOT" >/dev/null 2>&1; then
+    echo "The imported Private Key or Passphrase leaked into a Vault file." >&2
+    exit 1
+  fi
+done
 rm -f "$PRIVATE_KEY_FIXTURE"
 
 "$DRIVER" click 900 145
@@ -302,7 +347,7 @@ sleep 2
 "$DRIVER" tab
 "$DRIVER" enter
 sleep 4
-"$DRIVER" probe "$RUN_DIR/09-system-agent-created.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/11-system-agent-created.bmp" >/dev/null
 for marker in "Native system agent" "$AGENT_FINGERPRINT"; do
   if grep -R -a -F "$marker" "$VAULT_ROOT" >/dev/null 2>&1; then
     echo "System Agent Credential metadata leaked into a Vault file." >&2
@@ -316,10 +361,10 @@ sleep 1
 sleep 0.25
 "$DRIVER" type "anyssh-test"
 sleep 0.5
-"$DRIVER" probe "$RUN_DIR/10-password-entered.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/12-password-entered.bmp" >/dev/null
 "$DRIVER" click 1100 495
 sleep 1
-"$DRIVER" probe "$RUN_DIR/11-host-key-dialog.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/13-host-key-dialog.bmp" >/dev/null
 
 COMMAND_SUCCEEDED=0
 for _ in $(seq 1 20); do
@@ -366,13 +411,13 @@ if [[ "$LARGE_OUTPUT_SUCCEEDED" -ne 1 ]]; then
   exit 1
 fi
 
-"$DRIVER" probe "$RUN_DIR/12-command-succeeded.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/14-command-succeeded.bmp" >/dev/null
 "$DRIVER" click 1117 44
 sleep 1
-"$DRIVER" probe "$RUN_DIR/13-disconnected.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/15-disconnected.bmp" >/dev/null
 "$DRIVER" click 1208 44
 sleep 1
-"$DRIVER" probe "$RUN_DIR/14-vault-locked-after-session.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/16-vault-locked-after-session.bmp" >/dev/null
 
 if ! kill -0 "$APP_GROUP" >/dev/null 2>&1; then
   echo "The native process exited unexpectedly." >&2
@@ -396,10 +441,14 @@ cat >"$RUN_DIR/report.md" <<EOF
 - Lock Vault dropped the unlocked Rust storage state and returned to the PIN gate.
 - An incorrect PIN was rejected without opening the workspace.
 - The same PIN reopened the existing Vault before the SSH session started.
-- The Credential UI opened a native file picker and imported an unencrypted
-  Ed25519 Private Key without sending its Path or contents through WebView IPC.
-- The imported Key remained absent from Vault file plaintext scans and the
-  temporary source file was deleted before SSH testing continued.
+- The Credential UI opened a native file picker for an encrypted Ed25519
+  Private Key, then displayed an in-process GTK Secure Entry outside WebView.
+- An incorrect Passphrase produced a bounded retry prompt; the correct
+  Passphrase imported the original encrypted Key without adding a Secret IPC
+  field.
+- The imported Key and both test Passphrases remained absent from Vault file
+  plaintext scans, and the temporary source file was deleted before SSH testing
+  continued.
 - The same native UI enumerated one \`SSH_AUTH_SOCK\` Identity and created a
   Fingerprint-selected System Agent Credential without persisting the Agent Key
   or Fingerprint in plaintext.
@@ -421,13 +470,15 @@ cat >"$RUN_DIR/report.md" <<EOF
 - \`05-vault-wrong-pin.bmp\`
 - \`06-vault-unlock-pin-entered.bmp\`
 - \`07-vault-reunlocked.bmp\`
-- \`08-private-key-imported.bmp\`
-- \`09-system-agent-created.bmp\`
-- \`10-password-entered.bmp\`
-- \`11-host-key-dialog.bmp\`
-- \`12-command-succeeded.bmp\`
-- \`13-disconnected.bmp\`
-- \`14-vault-locked-after-session.bmp\`
+- \`08-private-key-passphrase-prompt.bmp\`
+- \`09-private-key-passphrase-retry.bmp\`
+- \`10-private-key-imported.bmp\`
+- \`11-system-agent-created.bmp\`
+- \`12-password-entered.bmp\`
+- \`13-host-key-dialog.bmp\`
+- \`14-command-succeeded.bmp\`
+- \`15-disconnected.bmp\`
+- \`16-vault-locked-after-session.bmp\`
 - \`windows.txt\`
 - \`native.log\`
 EOF

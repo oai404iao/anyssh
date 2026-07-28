@@ -2,7 +2,7 @@
 
 - 状态：Active
 - 创建日期：2026-07-27
-- 最后更新：2026-07-27
+- 最后更新：2026-07-28
 - 负责人：项目维护者与执行 Agent
 
 ## 目的与用户价值
@@ -57,9 +57,17 @@ Accepted ADR-0006 禁止 Private Key/Passphrase 进入 WebView。Proposed ADR-00
 
 - [x] 2026-07-27：完成 System Agent Plan，接受 ADR-0013。
 - [x] 2026-07-27：创建 ADR-0014、Design 和本 ExecPlan。
-- [ ] 实现 Application Prompt Boundary 与加密 Key 检测。
-- [ ] 实现 Linux GTK Secure Prompt 和 X11 QA。
-- [ ] 实现 Windows Secure Prompt、Native Picker 和真实 SSH QA。
+- [x] 2026-07-28：开始 Milestone 1，核验 ssh-key、GTK、Tauri Main Thread 和
+  Windows Credential UI 的现有 API。
+- [x] 2026-07-28：实现 Application Prompt Boundary、加密 Key 检测、取消、
+  空/错误 Passphrase、三次上限和错误脱敏测试。
+- [x] 2026-07-28：实现 Linux GTK Secure Prompt；本地 X11
+  `smoke-1785205977-2715042` 通过错误重试、导入、明文扫描和 SSH 回归。
+- [x] 2026-07-28：实现 Windows Credential UI Provider、Native Dialog QA
+  Driver、加密 Key Host/SSH Marker 和重启验证；等待 Windows Runner 实证。
+- [x] 2026-07-28：本地 Workspace、Frontend、OpenSSH、Playwright、
+  agent-browser、X11、Wayland、Android Host 与 Linux/Android Container 回归
+  通过；仅待 Windows Runner 和同 Commit CI。
 - [ ] 完成全部回归、评审 ADR-0014 并收尾本计划。
 
 ## Milestones
@@ -129,7 +137,22 @@ pnpm format:check
 
 ## Surprises & Discoveries
 
-尚无。
+- 2026-07-28：`ssh-key 0.7.0-rc.11` 可以在不知道 Passphrase 时解析 OpenSSH
+  Container，并通过 `PrivateKey::is_encrypted()` 区分加密状态；不需要依赖
+  失败字符串推断。
+- 2026-07-28：Tauri Linux 已使用 `gtk 0.18.2`，可直接取得 Main Window 的
+  `gtk_window()`；Android Target 不应引入 GTK 依赖。
+- 2026-07-28：Windows `CredUIPromptForCredentialsW` 支持 Owner HWND、
+  `DO_NOT_PERSIST` 和错误 Passphrase UI，但底层调用需要隔离审计过的 Unsafe
+  Wrapper。
+- 2026-07-28：Linux X11 真实错误 Passphrase 后会重新创建 GTK Prompt；正确
+  Passphrase 导入后，Vault 文件、截图和日志均未发现 Key Header 或测试
+  Passphrase。
+- 2026-07-28：Windows QA 必须在 AnySSH 进程启动后才把 Fixture Path 和
+  Passphrase 放入外部 Dialog Driver 环境，避免应用进程从父环境继承测试
+  Secret。
+- 2026-07-28：GTK Rust Binding `0.18.2` 为 MIT，Windows Rust Binding
+  `0.61.3` 为 MIT OR Apache-2.0；两者只在目标平台链接，未扩大移动端依赖。
 
 ## Decision Log
 
@@ -138,6 +161,11 @@ pnpm format:check
 - 2026-07-27：v1 保存原始加密 OpenSSH Key 和 Passphrase，不在导入时转存为
   无 Passphrase Key。
 - 2026-07-27：一次 Import 最多尝试三次；取消和失败不创建 Credential。
+- 2026-07-28：Prompt Provider 由 `anyssh-app` 定义受限 Context；Tauri
+  Provider 只在 UI Main Thread 获取平台结果，重试、验证和持久化仍由
+  `ApplicationCore` 负责。
+- 2026-07-28：Linux GTK 和 Windows Credential UI 依赖使用 Target-specific
+  Cargo Dependency，Android/iOS 不链接 Desktop Toolkit。
 
 ## Outcomes & Retrospective
 

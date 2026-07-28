@@ -118,6 +118,7 @@ dependencies = [
  "anyssh-app",
  "anyssh-domain",
  "anyssh-ssh",
+ "gtk",
  "serde",
  "serde_json",
  "tauri",
@@ -125,6 +126,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tokio",
  "tracing",
+ "windows 0.61.3",
  "zeroize",
 ]
 

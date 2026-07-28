@@ -1,4 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { chromium, expect } from "@playwright/test";
@@ -17,6 +18,16 @@ const agentFingerprint = requiredEnvironment(
   "ANYSSH_WINDOWS_AGENT_FINGERPRINT",
 );
 const agentMarkerPath = requiredEnvironment("ANYSSH_WINDOWS_AGENT_MARKER_PATH");
+const encryptedKeyPath = requiredEnvironment(
+  "ANYSSH_WINDOWS_ENCRYPTED_KEY_PATH",
+);
+const keyPassphrase = requiredEnvironment("ANYSSH_WINDOWS_KEY_PASSPHRASE");
+const wrongKeyPassphrase = requiredEnvironment(
+  "ANYSSH_WINDOWS_WRONG_KEY_PASSPHRASE",
+);
+const privateKeyMarkerPath = requiredEnvironment(
+  "ANYSSH_WINDOWS_PRIVATE_KEY_MARKER_PATH",
+);
 const consoleEntries = [];
 const browserErrors = [];
 let browser;
@@ -102,6 +113,10 @@ async function createVaultAndRepository(targetPage) {
       .filter({ hasText: "Windows QA password" }),
   ).toBeVisible();
 
+  await importEncryptedPrivateKey(targetPage);
+  await connectWithEncryptedPrivateKey(targetPage);
+
+  await targetPage.locator(".primary-nav .nav-item").nth(3).click();
   await targetPage.getByRole("button", { name: "New system agent" }).click();
   const agentDialog = targetPage.getByRole("dialog", {
     name: "New System Agent Credential",
@@ -299,6 +314,11 @@ async function unlockRestartedVault(targetPage) {
       .locator(".resource-card")
       .filter({ hasText: "Windows QA system agent" }),
   ).toContainText("System Agent");
+  await assert(
+    targetPage
+      .locator(".resource-card")
+      .filter({ hasText: "Windows QA encrypted key" }),
+  ).toContainText("Private Key");
 
   await targetPage.locator(".primary-nav .nav-item").nth(1).click();
   await assert(
@@ -319,6 +339,11 @@ async function unlockRestartedVault(targetPage) {
   await assert(
     targetPage
       .locator(".resource-card")
+      .filter({ hasText: "Windows QA encrypted key host" }),
+  ).toContainText("Private Key");
+  await assert(
+    targetPage
+      .locator(".resource-card")
       .filter({ hasText: "Windows QA target" }),
   ).toBeVisible();
 
@@ -333,6 +358,143 @@ async function unlockRestartedVault(targetPage) {
     "07-restart-recovered.png",
     "07-restart-recovered.txt",
   );
+}
+
+async function importEncryptedPrivateKey(targetPage) {
+  await targetPage.getByRole("button", { name: "Import private key" }).click();
+  const privateKeyDialog = targetPage.getByRole("dialog", {
+    name: "Import Private Key",
+  });
+  await privateKeyDialog
+    .getByLabel("Credential label")
+    .fill("Windows QA encrypted key");
+  await privateKeyDialog.getByLabel("Username").fill(sshUsername);
+
+  const nativeDialogDriver = runNativeDialogDriver();
+  await privateKeyDialog
+    .getByRole("button", { name: "Choose private key" })
+    .click();
+  const privateKeyCredential = targetPage
+    .locator(".resource-card")
+    .filter({ hasText: "Windows QA encrypted key" });
+  await Promise.all([
+    assert(privateKeyCredential).toContainText("Private Key"),
+    nativeDialogDriver,
+  ]);
+  await assert(privateKeyCredential).not.toContainText(keyPassphrase);
+  await unlink(encryptedKeyPath);
+  await capture(
+    targetPage,
+    "02a4-private-key-imported.png",
+    "02a4-private-key-imported.txt",
+  );
+}
+
+async function connectWithEncryptedPrivateKey(targetPage) {
+  await targetPage.locator(".primary-nav .nav-item").nth(2).click();
+  await targetPage.getByRole("button", { name: "New host" }).click();
+  const privateKeyHostDialog = targetPage.getByRole("dialog", {
+    name: "New Host",
+  });
+  await privateKeyHostDialog
+    .getByLabel("Display name")
+    .fill("Windows QA encrypted key host");
+  await privateKeyHostDialog.getByLabel("Host", { exact: true }).fill(sshHost);
+  await privateKeyHostDialog
+    .getByRole("spinbutton", { name: "Port" })
+    .fill(sshPort);
+  await privateKeyHostDialog
+    .getByLabel("Credential behavior")
+    .selectOption("set");
+  await privateKeyHostDialog.getByLabel("Credential reference").selectOption({
+    label: `Windows QA encrypted key · ${sshUsername}`,
+  });
+  await privateKeyHostDialog.getByRole("button", { name: "Save Host" }).click();
+  const privateKeyHost = targetPage
+    .locator(".resource-card")
+    .filter({ hasText: "Windows QA encrypted key host" });
+  await assert(privateKeyHost).toContainText("Private Key");
+  await privateKeyHost.getByRole("button", { name: "Open" }).click();
+  await assert(
+    targetPage.getByRole("heading", {
+      level: 1,
+      name: "Windows QA encrypted key host",
+    }),
+  ).toBeVisible();
+  await targetPage.getByRole("button", { name: "Connect saved Host" }).click();
+  const hostKeyDialog = targetPage.getByRole("dialog", {
+    name: "Verify server identity",
+  });
+  await assert(hostKeyDialog).toContainText(sshHost);
+  await hostKeyDialog
+    .getByRole("button", { name: "Trust for this session" })
+    .click();
+  await assert(
+    targetPage.getByText("Interactive shell is active."),
+  ).toBeVisible();
+  const terminalInput = targetPage.getByRole("textbox", {
+    name: "Terminal input",
+  });
+  await terminalInput.focus();
+  await terminalInput.pressSequentially(
+    `echo ANYSSH_WINDOWS_ENCRYPTED_KEY_OK > "${privateKeyMarkerPath}"`,
+  );
+  await terminalInput.press("Enter");
+  await targetPage.waitForTimeout(1500);
+  await capture(
+    targetPage,
+    "02a5-private-key-connected.png",
+    "02a5-private-key-connected.txt",
+  );
+  await targetPage.getByRole("button", { name: "Disconnect" }).click();
+  await assert(
+    targetPage.getByText("The SSH session has ended."),
+  ).toBeVisible();
+}
+
+function runNativeDialogDriver() {
+  const driverPath = path.join(
+    process.cwd(),
+    "scripts",
+    "qa",
+    "windows-native-dialog-driver.ps1",
+  );
+  return new Promise((resolve, reject) => {
+    const output = [];
+    const child = spawn(
+      "powershell.exe",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        driverPath,
+      ],
+      {
+        cwd: process.cwd(),
+        env: process.env,
+        windowsHide: true,
+      },
+    );
+    child.stdout.on("data", (chunk) => output.push(String(chunk)));
+    child.stderr.on("data", (chunk) => output.push(String(chunk)));
+    child.on("error", (error) => reject(error));
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(
+          new Error(
+            `native Windows dialog automation failed (${code}): ${redact(
+              output.join(""),
+            )}`,
+          ),
+        );
+      }
+    });
+  });
 }
 
 async function findAnySshPage(connectedBrowser) {
@@ -397,7 +559,9 @@ function redact(value) {
   return value
     .replaceAll(pin, "[REDACTED]")
     .replaceAll(wrongPin, "[REDACTED]")
-    .replaceAll(password, "[REDACTED]");
+    .replaceAll(password, "[REDACTED]")
+    .replaceAll(keyPassphrase, "[REDACTED]")
+    .replaceAll(wrongKeyPassphrase, "[REDACTED]");
 }
 
 function requiredEnvironment(name) {

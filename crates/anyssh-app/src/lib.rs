@@ -3,16 +3,17 @@
 use std::{
     fmt,
     fs::{File, OpenOptions},
+    future::Future,
     io::Read,
     path::{Path, PathBuf},
 };
 
 use anyssh_domain::{SshEndpoint, TerminalSize};
 use anyssh_ssh::{
-    DEFAULT_CONNECTION_TIMEOUT, HostKeyPolicy, MAX_PRIVATE_KEY_BYTES, SessionAuthentication,
-    SpawnedSession, SshConnectionConfig, SshSessionConfig, SystemAgentError,
-    SystemAgentIdentitySummary, list_system_agent_identities, spawn_session,
-    validate_private_key_text,
+    DEFAULT_CONNECTION_TIMEOUT, HostKeyPolicy, MAX_PRIVATE_KEY_BYTES, PrivateKeyTextEncryption,
+    SessionAuthentication, SpawnedSession, SshConnectionConfig, SshSessionConfig, SystemAgentError,
+    SystemAgentIdentitySummary, inspect_openssh_private_key_text, list_system_agent_identities,
+    spawn_session, validate_private_key_text,
 };
 use anyssh_storage::{
     CredentialSecret, DatabaseActorError, DatabaseActorHandle, ResolvedCredential,
@@ -22,11 +23,47 @@ use thiserror::Error;
 use zeroize::Zeroizing;
 
 const _: () = assert!(anyssh_storage::MAX_JUMP_ROUTE_STEPS == anyssh_ssh::MAX_JUMP_HOSTS);
+pub const PRIVATE_KEY_PASSPHRASE_MAX_ATTEMPTS: u8 = 3;
+const MAX_PRIVATE_KEY_PROMPT_LABEL_CHARS: usize = 128;
+const DEFAULT_PRIVATE_KEY_PROMPT_LABEL: &str = "Imported private key";
 
 pub use anyssh_storage::{
     CredentialKind, CredentialSummary, DatabaseActorConfig, DatabaseActorStartError, GroupSummary,
     HostSummary, JumpRouteSummary, MAX_GROUP_DEPTH, Override, VaultState, VaultStatus,
 };
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PrivateKeyPromptContext {
+    label: String,
+    attempt: u8,
+    max_attempts: u8,
+    previous_passphrase_incorrect: bool,
+}
+
+impl PrivateKeyPromptContext {
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    pub const fn attempt(&self) -> u8 {
+        self.attempt
+    }
+
+    pub const fn max_attempts(&self) -> u8 {
+        self.max_attempts
+    }
+
+    pub const fn previous_passphrase_incorrect(&self) -> bool {
+        self.previous_passphrase_incorrect
+    }
+}
+
+pub trait PrivateKeyPassphrasePrompt: Send + Sync {
+    fn request(
+        &self,
+        context: PrivateKeyPromptContext,
+    ) -> impl Future<Output = Result<Option<Zeroizing<String>>, PrivateKeyPromptError>> + Send;
+}
 
 #[derive(Clone)]
 pub struct ApplicationCore {
@@ -138,11 +175,71 @@ impl ApplicationCore {
         username: String,
         path: PathBuf,
     ) -> Result<CredentialSummary, ApplicationError> {
-        let private_key = tokio::task::spawn_blocking(move || read_private_key_file(&path))
+        let candidate = tokio::task::spawn_blocking(move || read_private_key_file(&path))
             .await
             .map_err(|_| PrivateKeyImportError::TaskFailed)??;
-        self.store_private_key_credential(label, username, private_key, None)
+        match candidate.encryption {
+            PrivateKeyTextEncryption::Unencrypted => {
+                self.store_private_key_credential(label, username, candidate.private_key, None)
+                    .await
+            }
+            PrivateKeyTextEncryption::Encrypted => {
+                Err(PrivateKeyImportError::PassphraseRequired.into())
+            }
+        }
+    }
+
+    pub async fn import_private_key_credential_from_path_with_prompt<P>(
+        &self,
+        label: String,
+        username: String,
+        path: PathBuf,
+        prompt: &P,
+    ) -> Result<Option<CredentialSummary>, ApplicationError>
+    where
+        P: PrivateKeyPassphrasePrompt,
+    {
+        let candidate = tokio::task::spawn_blocking(move || read_private_key_file(&path))
             .await
+            .map_err(|_| PrivateKeyImportError::TaskFailed)??;
+        if candidate.encryption == PrivateKeyTextEncryption::Unencrypted {
+            return self
+                .store_private_key_credential(label, username, candidate.private_key, None)
+                .await
+                .map(Some);
+        }
+
+        let prompt_label = sanitize_private_key_prompt_label(&label);
+        let mut private_key = candidate.private_key;
+        for attempt in 1..=PRIVATE_KEY_PASSPHRASE_MAX_ATTEMPTS {
+            let context = PrivateKeyPromptContext {
+                label: prompt_label.clone(),
+                attempt,
+                max_attempts: PRIVATE_KEY_PASSPHRASE_MAX_ATTEMPTS,
+                previous_passphrase_incorrect: attempt > 1,
+            };
+            let Some(passphrase) = prompt.request(context).await? else {
+                return Ok(None);
+            };
+
+            let validation = tokio::task::spawn_blocking(move || {
+                let accepted =
+                    validate_private_key_text(private_key.as_str(), Some(passphrase.as_str()))
+                        .is_ok();
+                (private_key, passphrase, accepted)
+            })
+            .await
+            .map_err(|_| PrivateKeyImportError::TaskFailed)?;
+            private_key = validation.0;
+            if validation.2 {
+                return self
+                    .store_private_key_credential(label, username, private_key, Some(validation.1))
+                    .await
+                    .map(Some);
+            }
+        }
+
+        Err(PrivateKeyImportError::PassphraseRejected.into())
     }
 
     pub async fn update_private_key_credential(
@@ -538,6 +635,8 @@ pub enum ApplicationError {
     #[error(transparent)]
     PrivateKeyImport(#[from] PrivateKeyImportError),
     #[error(transparent)]
+    PrivateKeyPrompt(#[from] PrivateKeyPromptError),
+    #[error(transparent)]
     SystemAgent(#[from] SystemAgentError),
     #[error(transparent)]
     Database(#[from] DatabaseActorError),
@@ -553,13 +652,38 @@ pub enum PrivateKeyImportError {
     InvalidSize,
     #[error("selected private key file must be UTF-8 text")]
     InvalidEncoding,
-    #[error("selected private key is invalid or encrypted")]
+    #[error("selected private key is invalid")]
     InvalidKey,
+    #[error("selected private key requires a native passphrase prompt")]
+    PassphraseRequired,
+    #[error("private key passphrase was not accepted")]
+    PassphraseRejected,
     #[error("private key validation task failed")]
     TaskFailed,
 }
 
-fn read_private_key_file(path: &Path) -> Result<Zeroizing<String>, PrivateKeyImportError> {
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum PrivateKeyPromptError {
+    #[error("private key passphrase prompt is unavailable")]
+    Unavailable,
+}
+
+struct PrivateKeyImportCandidate {
+    private_key: Zeroizing<String>,
+    encryption: PrivateKeyTextEncryption,
+}
+
+impl fmt::Debug for PrivateKeyImportCandidate {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PrivateKeyImportCandidate")
+            .field("private_key", &"<redacted>")
+            .field("encryption", &self.encryption)
+            .finish()
+    }
+}
+
+fn read_private_key_file(path: &Path) -> Result<PrivateKeyImportCandidate, PrivateKeyImportError> {
     let link_metadata =
         std::fs::symlink_metadata(path).map_err(|_| PrivateKeyImportError::Unavailable)?;
     if link_metadata.file_type().is_symlink() {
@@ -587,9 +711,27 @@ fn read_private_key_file(path: &Path) -> Result<Zeroizing<String>, PrivateKeyImp
     if private_key.is_empty() || private_key.len() > MAX_PRIVATE_KEY_BYTES {
         return Err(PrivateKeyImportError::InvalidSize);
     }
-    validate_private_key_text(private_key.as_str(), None)
+    let encryption = inspect_openssh_private_key_text(private_key.as_str())
         .map_err(|_| PrivateKeyImportError::InvalidKey)?;
-    Ok(private_key)
+    Ok(PrivateKeyImportCandidate {
+        private_key,
+        encryption,
+    })
+}
+
+fn sanitize_private_key_prompt_label(label: &str) -> String {
+    let label = label.trim();
+    let label: String = label
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(MAX_PRIVATE_KEY_PROMPT_LABEL_CHARS)
+        .collect();
+    let label = label.trim();
+    if label.is_empty() {
+        DEFAULT_PRIVATE_KEY_PROMPT_LABEL.to_owned()
+    } else {
+        label.to_owned()
+    }
 }
 
 #[cfg(unix)]
@@ -655,6 +797,8 @@ fn normalize_username(username: String) -> Result<String, ApplicationError> {
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::VecDeque, sync::Mutex as StdMutex};
+
     use anyssh_vault::PinKdfParameters;
     use russh::keys::{
         PrivateKey,
@@ -681,6 +825,55 @@ mod tests {
     fn fixture_private_key() -> PrivateKey {
         PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519)
             .expect("generate fixture Private Key")
+    }
+
+    enum TestPromptReply {
+        Passphrase(&'static str),
+        Cancel,
+        Unavailable,
+    }
+
+    struct TestPrompt {
+        replies: StdMutex<VecDeque<TestPromptReply>>,
+        contexts: StdMutex<Vec<PrivateKeyPromptContext>>,
+    }
+
+    impl TestPrompt {
+        fn new(replies: impl IntoIterator<Item = TestPromptReply>) -> Self {
+            Self {
+                replies: StdMutex::new(replies.into_iter().collect()),
+                contexts: StdMutex::new(Vec::new()),
+            }
+        }
+
+        fn contexts(&self) -> Vec<PrivateKeyPromptContext> {
+            self.contexts.lock().expect("prompt contexts").clone()
+        }
+    }
+
+    impl PrivateKeyPassphrasePrompt for TestPrompt {
+        fn request(
+            &self,
+            context: PrivateKeyPromptContext,
+        ) -> impl Future<Output = Result<Option<Zeroizing<String>>, PrivateKeyPromptError>> + Send
+        {
+            self.contexts.lock().expect("prompt contexts").push(context);
+            let reply = self
+                .replies
+                .lock()
+                .expect("prompt replies")
+                .pop_front()
+                .unwrap_or(TestPromptReply::Unavailable);
+            async move {
+                match reply {
+                    TestPromptReply::Passphrase(passphrase) => {
+                        Ok(Some(Zeroizing::new(passphrase.to_owned())))
+                    }
+                    TestPromptReply::Cancel => Ok(None),
+                    TestPromptReply::Unavailable => Err(PrivateKeyPromptError::Unavailable),
+                }
+            }
+        }
     }
 
     #[test]
@@ -832,7 +1025,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn native_private_key_file_import_rejects_invalid_and_encrypted_keys() {
+    async fn native_private_key_file_import_rejects_invalid_and_requires_a_prompt_for_encrypted_keys()
+     {
         let (core, directory) = test_core();
         core.create_vault(Zeroizing::new("123456".to_owned()))
             .await
@@ -870,7 +1064,7 @@ mod tests {
             .expect_err("encrypted Private Key must fail without native passphrase");
         assert!(matches!(
             encrypted_error,
-            ApplicationError::PrivateKeyImport(PrivateKeyImportError::InvalidKey)
+            ApplicationError::PrivateKeyImport(PrivateKeyImportError::PassphraseRequired)
         ));
         assert!(
             core.list_credentials()
@@ -880,37 +1074,212 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn native_encrypted_private_key_import_retries_and_stores_the_original_key() {
+        let (core, directory) = test_core();
+        core.create_vault(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+        let encrypted_key = fixture_private_key()
+            .encrypt(&mut rand::rng(), "correct-passphrase")
+            .expect("encrypt fixture Private Key")
+            .to_openssh(LineEnding::LF)
+            .expect("encode encrypted fixture Private Key");
+        let path = directory.path().join("encrypted-key");
+        std::fs::write(&path, encrypted_key.as_bytes()).expect("write encrypted fixture");
+        let prompt = TestPrompt::new([
+            TestPromptReply::Passphrase(""),
+            TestPromptReply::Passphrase("wrong-passphrase"),
+            TestPromptReply::Passphrase("correct-passphrase"),
+        ]);
+
+        let summary = core
+            .import_private_key_credential_from_path_with_prompt(
+                "  Encrypted fixture  ".to_owned(),
+                "fixture-user".to_owned(),
+                path,
+                &prompt,
+            )
+            .await
+            .expect("import encrypted Private Key")
+            .expect("prompt was accepted");
+        assert_eq!(summary.kind(), CredentialKind::PrivateKey);
+
+        let contexts = prompt.contexts();
+        assert_eq!(contexts.len(), 3);
+        assert_eq!(contexts[0].label(), "Encrypted fixture");
+        assert_eq!(contexts[0].attempt(), 1);
+        assert_eq!(contexts[0].max_attempts(), 3);
+        assert!(!contexts[0].previous_passphrase_incorrect());
+        assert_eq!(contexts[1].attempt(), 2);
+        assert!(contexts[1].previous_passphrase_incorrect());
+        assert_eq!(contexts[2].attempt(), 3);
+        assert!(contexts[2].previous_passphrase_incorrect());
+
+        let resolved = core
+            .database
+            .resolve_credential(summary.id().to_owned())
+            .await
+            .expect("resolve imported Credential");
+        let (_, secret) = resolved.into_parts();
+        let CredentialSecret::PrivateKey {
+            private_key,
+            passphrase,
+        } = secret
+        else {
+            panic!("expected Private Key Credential");
+        };
+        assert_eq!(private_key.as_str(), encrypted_key.as_str());
+        assert_eq!(
+            passphrase.as_deref().map(String::as_str),
+            Some("correct-passphrase")
+        );
+        let debug = format!(
+            "{:?}",
+            CredentialSecret::PrivateKey {
+                private_key,
+                passphrase,
+            }
+        );
+        assert!(!debug.contains("correct-passphrase"));
+    }
+
+    #[tokio::test]
+    async fn native_encrypted_private_key_import_cancellation_and_attempt_limit_do_not_store() {
+        let (core, directory) = test_core();
+        core.create_vault(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+        let encrypted_key = fixture_private_key()
+            .encrypt(&mut rand::rng(), "correct-passphrase")
+            .expect("encrypt fixture Private Key")
+            .to_openssh(LineEnding::LF)
+            .expect("encode encrypted fixture Private Key");
+        let cancelled_path = directory.path().join("cancelled-key");
+        std::fs::write(&cancelled_path, encrypted_key.as_bytes()).expect("write cancelled fixture");
+        let cancelled = TestPrompt::new([TestPromptReply::Cancel]);
+
+        assert!(
+            core.import_private_key_credential_from_path_with_prompt(
+                "\n".to_owned(),
+                "fixture-user".to_owned(),
+                cancelled_path,
+                &cancelled,
+            )
+            .await
+            .expect("cancel import")
+            .is_none()
+        );
+        assert_eq!(
+            cancelled.contexts()[0].label(),
+            DEFAULT_PRIVATE_KEY_PROMPT_LABEL
+        );
+
+        let unavailable_path = directory.path().join("unavailable-key");
+        std::fs::write(&unavailable_path, encrypted_key.as_bytes())
+            .expect("write unavailable fixture");
+        let unavailable = TestPrompt::new([TestPromptReply::Unavailable]);
+        let error = core
+            .import_private_key_credential_from_path_with_prompt(
+                "Unavailable fixture".to_owned(),
+                "fixture-user".to_owned(),
+                unavailable_path,
+                &unavailable,
+            )
+            .await
+            .expect_err("unavailable prompt must fail");
+        assert!(matches!(
+            error,
+            ApplicationError::PrivateKeyPrompt(PrivateKeyPromptError::Unavailable)
+        ));
+
+        let rejected_path = directory.path().join("rejected-key");
+        std::fs::write(&rejected_path, encrypted_key.as_bytes()).expect("write rejected fixture");
+        let rejected = TestPrompt::new([
+            TestPromptReply::Passphrase("wrong-one"),
+            TestPromptReply::Passphrase("wrong-two"),
+            TestPromptReply::Passphrase("wrong-three"),
+        ]);
+        let error = core
+            .import_private_key_credential_from_path_with_prompt(
+                "Rejected fixture".to_owned(),
+                "fixture-user".to_owned(),
+                rejected_path,
+                &rejected,
+            )
+            .await
+            .expect_err("three incorrect passphrases must fail");
+        assert!(matches!(
+            error,
+            ApplicationError::PrivateKeyImport(PrivateKeyImportError::PassphraseRejected)
+        ));
+        assert_eq!(rejected.contexts().len(), 3);
+        assert!(
+            core.list_credentials()
+                .await
+                .expect("list credentials after cancelled and rejected imports")
+                .is_empty()
+        );
+        let error_text = error.to_string();
+        for secret in [
+            "wrong-one",
+            "wrong-two",
+            "wrong-three",
+            "correct-passphrase",
+        ] {
+            assert!(!error_text.contains(secret));
+        }
+    }
+
+    #[test]
+    fn private_key_prompt_label_is_bounded_and_contains_no_control_characters() {
+        assert_eq!(
+            sanitize_private_key_prompt_label("  Encrypted\nfixture\t  "),
+            "Encryptedfixture"
+        );
+        assert_eq!(
+            sanitize_private_key_prompt_label("\n\t"),
+            DEFAULT_PRIVATE_KEY_PROMPT_LABEL
+        );
+        assert_eq!(
+            sanitize_private_key_prompt_label(&"x".repeat(MAX_PRIVATE_KEY_PROMPT_LABEL_CHARS + 5))
+                .chars()
+                .count(),
+            MAX_PRIVATE_KEY_PROMPT_LABEL_CHARS
+        );
+    }
+
     #[test]
     fn native_private_key_reader_rejects_unsafe_file_shapes_without_leaking_paths() {
         let directory = tempdir().expect("tempdir");
         let empty_path = directory.path().join("empty-private-key");
         std::fs::write(&empty_path, "").expect("write empty fixture");
-        assert_eq!(
+        assert!(matches!(
             read_private_key_file(&empty_path),
             Err(PrivateKeyImportError::InvalidSize)
-        );
+        ));
 
         let invalid_utf8_path = directory.path().join("invalid-utf8-private-key");
         std::fs::write(&invalid_utf8_path, [0xff, 0xfe]).expect("write invalid UTF-8 fixture");
-        assert_eq!(
+        assert!(matches!(
             read_private_key_file(&invalid_utf8_path),
             Err(PrivateKeyImportError::InvalidEncoding)
-        );
+        ));
 
         let oversized_path = directory.path().join("oversized-private-key");
         let oversized = File::create(&oversized_path).expect("create oversized fixture");
         oversized
             .set_len(MAX_PRIVATE_KEY_BYTES as u64 + 1)
             .expect("extend oversized fixture");
-        assert_eq!(
+        assert!(matches!(
             read_private_key_file(&oversized_path),
             Err(PrivateKeyImportError::InvalidSize)
-        );
+        ));
 
-        assert_eq!(
+        assert!(matches!(
             read_private_key_file(directory.path()),
             Err(PrivateKeyImportError::UnsupportedFileType)
-        );
+        ));
 
         let missing_path = directory.path().join("secret-path-must-not-leak");
         let error = read_private_key_file(&missing_path).expect_err("missing file must fail");
@@ -930,17 +1299,17 @@ mod tests {
         let link = directory.path().join("linked-key");
         symlink(target, &link).expect("create symlink fixture");
 
-        assert_eq!(
+        assert!(matches!(
             read_private_key_file(&link),
             Err(PrivateKeyImportError::UnsupportedFileType)
-        );
+        ));
 
         let socket_path = directory.path().join("socket-key");
         let _listener = UnixListener::bind(&socket_path).expect("create socket fixture");
-        assert_eq!(
+        assert!(matches!(
             read_private_key_file(&socket_path),
             Err(PrivateKeyImportError::UnsupportedFileType)
-        );
+        ));
     }
 
     #[tokio::test]

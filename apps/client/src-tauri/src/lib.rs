@@ -1,4 +1,6 @@
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
+
+mod native_passphrase;
 
 use std::{
     collections::HashMap,
@@ -29,6 +31,8 @@ use tauri::{
 use tauri_plugin_dialog::{DialogExt, FilePath};
 use tokio::sync::RwLock;
 use zeroize::Zeroizing;
+
+use crate::native_passphrase::NativePrivateKeyPassphrasePrompt;
 
 const OUTPUT_ACK_BUFFER: usize = 64;
 const MAX_IN_FLIGHT_OUTPUT_CHUNKS: usize = 8;
@@ -609,11 +613,16 @@ async fn credential_import_private_key(
         return Ok(None);
     };
 
-    core.import_private_key_credential_from_path(request.label, request.username, path)
-        .await
-        .map(CredentialSummary::from)
-        .map(Some)
-        .map_err(|error| error.to_string())
+    let prompt = NativePrivateKeyPassphrasePrompt::new(app);
+    core.import_private_key_credential_from_path_with_prompt(
+        request.label,
+        request.username,
+        path,
+        &prompt,
+    )
+    .await
+    .map(|summary| summary.map(CredentialSummary::from))
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

@@ -1084,8 +1084,9 @@ function CredentialManager({
                 <strong>Rust-owned file import</strong>
                 <p>
                   The native picker opens after you continue. File path and Key
-                  content never enter the WebView. Encrypted Keys are rejected
-                  until a native Passphrase prompt is available.
+                  content never enter the WebView. On supported desktop
+                  platforms, encrypted Keys use an OS-native Passphrase prompt
+                  that also stays outside the WebView.
                 </p>
               </div>
             ) : (

@@ -1,7 +1,16 @@
-use std::{env, fs, time::Duration};
+use std::{
+    env,
+    future::Future,
+    sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use anyssh_app::{
-    ApplicationCore, AuthenticationSource, DatabaseActorConfig, SshHopRequest, SshSessionRequest,
+    ApplicationCore, AuthenticationSource, DatabaseActorConfig, PrivateKeyPassphrasePrompt,
+    PrivateKeyPromptContext, PrivateKeyPromptError, SshHopRequest, SshSessionRequest,
 };
 use anyssh_domain::{SshEndpoint, TerminalSize};
 use anyssh_ssh::{SessionEvent, SessionHop};
@@ -9,16 +18,46 @@ use anyssh_vault::PinKdfParameters;
 use tokio::time::timeout;
 use zeroize::Zeroizing;
 
+struct FixturePassphrasePrompt {
+    passphrase: Mutex<Option<Zeroizing<String>>>,
+    calls: AtomicUsize,
+}
+
+impl FixturePassphrasePrompt {
+    fn new(passphrase: Zeroizing<String>) -> Self {
+        Self {
+            passphrase: Mutex::new(Some(passphrase)),
+            calls: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl PrivateKeyPassphrasePrompt for FixturePassphrasePrompt {
+    fn request(
+        &self,
+        context: PrivateKeyPromptContext,
+    ) -> impl Future<Output = Result<Option<Zeroizing<String>>, PrivateKeyPromptError>> + Send {
+        assert_eq!(context.label(), "Encrypted fixture key");
+        assert_eq!(context.attempt(), 1);
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        let passphrase = self
+            .passphrase
+            .lock()
+            .expect("fixture prompt")
+            .take()
+            .ok_or(PrivateKeyPromptError::Unavailable);
+        async move { passphrase.map(Some) }
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires the isolated OpenSSH key fixture; run pnpm test:ssh:smoke"]
 async fn encrypted_private_key_flows_from_credential_id_to_ssh_core() {
     let host = required_env("ANYSSH_TEST_JUMP_HOST");
     let port = required_port("ANYSSH_TEST_JUMP_PORT");
-    let private_key = Zeroizing::new(
-        fs::read_to_string(required_env("ANYSSH_TEST_ENCRYPTED_KEY"))
-            .expect("fixture private key should be readable"),
-    );
-    let passphrase = Zeroizing::new(required_env("ANYSSH_TEST_KEY_PASSPHRASE"));
+    let private_key_path = required_env("ANYSSH_TEST_ENCRYPTED_KEY").into();
+    let prompt =
+        FixturePassphrasePrompt::new(Zeroizing::new(required_env("ANYSSH_TEST_KEY_PASSPHRASE")));
     let directory = tempfile::tempdir().expect("tempdir");
     let core = ApplicationCore::spawn(
         directory.path().join("vault"),
@@ -33,14 +72,16 @@ async fn encrypted_private_key_flows_from_credential_id_to_ssh_core() {
         .await
         .expect("create test vault");
     let summary = core
-        .store_private_key_credential(
+        .import_private_key_credential_from_path_with_prompt(
             "Encrypted fixture key".to_owned(),
             "anyssh".to_owned(),
-            private_key,
-            Some(passphrase),
+            private_key_path,
+            &prompt,
         )
         .await
-        .expect("store fixture private key");
+        .expect("import fixture private key")
+        .expect("fixture prompt should be accepted");
+    assert_eq!(prompt.calls.load(Ordering::Relaxed), 1);
     let credential_id = summary.id().to_owned();
     core.lock_vault().await.expect("lock test vault");
     core.unlock_vault(Zeroizing::new("123456".to_owned()))

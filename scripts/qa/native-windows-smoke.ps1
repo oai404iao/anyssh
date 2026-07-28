@@ -21,6 +21,9 @@ $WebViewDataRoot = Join-Path `
 $CdpPort = 9222
 $SshFixtureRoot = Join-Path $env:TEMP "anyssh-windows-ssh-$Timestamp-$PID"
 $SshMarkerPath = Join-Path $env:TEMP "anyssh-windows-agent-ok-$Timestamp-$PID.txt"
+$PrivateKeyMarkerPath = Join-Path `
+  $env:TEMP `
+  "anyssh-windows-encrypted-key-ok-$Timestamp-$PID.txt"
 $script:NativeProcess = $null
 $script:NativeWindowHandle = [IntPtr]::Zero
 $script:StageRecords = @()
@@ -30,12 +33,16 @@ $script:AgentPublicKeyPath = ""
 $script:SshPort = 0
 $script:SshUsername = ""
 $script:AgentFingerprint = ""
+$script:EncryptedKeyPath = ""
+$script:PrivateKeyPassphrase = "windows-key-passphrase"
+$script:WrongPrivateKeyPassphrase = "windows-wrong-key-passphrase"
 
 New-Item -ItemType Directory -Force -Path $RunDirectory | Out-Null
 Remove-Item -LiteralPath $VaultRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $WebViewDataRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $SshFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $SshMarkerPath -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $PrivateKeyMarkerPath -Force -ErrorAction SilentlyContinue
 
 Add-Type -TypeDefinition @"
 using System;
@@ -173,6 +180,7 @@ function Stop-SshFixture {
 
   Remove-Item -LiteralPath $SshFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $SshMarkerPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $PrivateKeyMarkerPath -Force -ErrorAction SilentlyContinue
 }
 
 function Start-SshFixture {
@@ -183,6 +191,8 @@ function Start-SshFixture {
   New-Item -ItemType Directory -Force -Path $SshFixtureRoot | Out-Null
   $AgentKeyPath = Join-Path $SshFixtureRoot "id_ed25519_agent"
   $AgentPublicKeyPath = "$AgentKeyPath.pub"
+  $EncryptedKeyPath = Join-Path $SshFixtureRoot "id_ed25519_encrypted"
+  $EncryptedPublicKeyPath = "$EncryptedKeyPath.pub"
   $HostKeyPath = Join-Path $SshFixtureRoot "ssh_host_ed25519_key"
   $AuthorizedKeysPath = Join-Path $SshFixtureRoot "authorized_keys"
   $SshConfigPath = Join-Path $SshFixtureRoot "sshd_config"
@@ -193,6 +203,15 @@ function Start-SshFixture {
   & $SshKeygen -q -t ed25519 -N '""' -C "anyssh-windows-agent" -f $AgentKeyPath
   if ($LASTEXITCODE -ne 0) {
     throw "Unable to generate the Windows SSH Agent fixture key."
+  }
+  & $SshKeygen `
+    -q `
+    -t ed25519 `
+    -N $script:PrivateKeyPassphrase `
+    -C "anyssh-windows-encrypted-key" `
+    -f $EncryptedKeyPath
+  if ($LASTEXITCODE -ne 0) {
+    throw "Unable to generate the Windows encrypted Private Key fixture."
   }
   & $SshKeygen -q -t ed25519 -N '""' -f $HostKeyPath
   if ($LASTEXITCODE -ne 0) {
@@ -234,9 +253,12 @@ function Start-SshFixture {
   $script:AgentFingerprint = $FingerprintParts[1]
   $script:AgentPublicKeyPath = $AgentPublicKeyPath
 
-  Get-Content -LiteralPath $AgentPublicKeyPath |
-    Set-Content -Encoding ASCII -Path $AuthorizedKeysPath
+  @(
+    Get-Content -LiteralPath $AgentPublicKeyPath
+    Get-Content -LiteralPath $EncryptedPublicKeyPath
+  ) | Set-Content -Encoding ASCII -Path $AuthorizedKeysPath
   Remove-Item -LiteralPath $AgentKeyPath -Force
+  $script:EncryptedKeyPath = $EncryptedKeyPath
 
   $script:SshPort = Get-FreeTcpPort
   $script:SshUsername = $env:USERNAME.ToLowerInvariant()
@@ -306,6 +328,7 @@ host=127.0.0.1
 port=$($script:SshPort)
 username=$($script:SshUsername)
 agent_fingerprint=$($script:AgentFingerprint)
+encrypted_key_source=$($script:EncryptedKeyPath)
 "@ | Set-Content -Encoding UTF8 -Path (Join-Path $RunDirectory "ssh-fixture.txt")
 }
 
@@ -353,6 +376,14 @@ function Start-NativeStage {
     -RedirectStandardOutput $StandardOutput `
     -RedirectStandardError $StandardError `
     -PassThru
+  $env:ANYSSH_WINDOWS_APP_PID = [string]$script:NativeProcess.Id
+  # Set native-dialog QA inputs only after AnySSH starts so the application
+  # process cannot inherit the fixture Path or Passphrases through its
+  # environment. These values are consumed by the external QA driver only.
+  $env:ANYSSH_WINDOWS_ENCRYPTED_KEY_PATH = $script:EncryptedKeyPath
+  $env:ANYSSH_WINDOWS_KEY_PASSPHRASE = $script:PrivateKeyPassphrase
+  $env:ANYSSH_WINDOWS_WRONG_KEY_PASSPHRASE = $script:WrongPrivateKeyPassphrase
+  $env:ANYSSH_WINDOWS_PRIVATE_KEY_MARKER_PATH = $PrivateKeyMarkerPath
 
   $Targets = $null
   $Version = $null
@@ -476,7 +507,12 @@ function Assert-VaultFilesAreEncrypted {
     "246810",
     "000000",
     "windows-fixture-password",
+    "windows-key-passphrase",
+    "windows-wrong-key-passphrase",
+    "BEGIN OPENSSH PRIVATE KEY",
     "Windows QA password",
+    "Windows QA encrypted key",
+    "Windows QA encrypted key host",
     "Windows QA system agent",
     "Windows QA agent host",
     "Windows QA jump",
@@ -511,6 +547,24 @@ function Assert-VaultFilesAreEncrypted {
   }
 }
 
+function Assert-EvidenceContainsNoPrivateKeySecrets {
+  $Needles = @(
+    $script:PrivateKeyPassphrase,
+    $script:WrongPrivateKeyPassphrase,
+    "BEGIN OPENSSH PRIVATE KEY"
+  )
+  foreach ($File in Get-ChildItem -LiteralPath $RunDirectory -Recurse -File) {
+    $Text = [System.Text.Encoding]::UTF8.GetString(
+      [System.IO.File]::ReadAllBytes($File.FullName)
+    )
+    foreach ($Needle in $Needles) {
+      if ($Text.Contains($Needle)) {
+        throw "A Windows encrypted Private Key Secret leaked into QA evidence."
+      }
+    }
+  }
+}
+
 try {
   Start-SshFixture
   Start-NativeStage -Stage "create"
@@ -522,11 +576,23 @@ try {
   if (-not $SshMarker.Contains("ANYSSH_WINDOWS_AGENT_OK")) {
     throw "The Windows System Agent remote marker was invalid."
   }
+  if (Test-Path -LiteralPath $script:EncryptedKeyPath -PathType Leaf) {
+    throw "The Windows encrypted Private Key source still existed before SSH validation."
+  }
+  if (-not (Test-Path -LiteralPath $PrivateKeyMarkerPath -PathType Leaf)) {
+    throw "The Windows encrypted Private Key session did not create its remote marker."
+  }
+  $PrivateKeyMarker = Get-Content -LiteralPath $PrivateKeyMarkerPath -Raw
+  if (-not $PrivateKeyMarker.Contains("ANYSSH_WINDOWS_ENCRYPTED_KEY_OK")) {
+    throw "The Windows encrypted Private Key remote marker was invalid."
+  }
   Assert-VaultFilesAreEncrypted
+  Assert-EvidenceContainsNoPrivateKeySecrets
 
   Start-NativeStage -Stage "restart"
   Stop-NativeProcess
   Assert-VaultFilesAreEncrypted
+  Assert-EvidenceContainsNoPrivateKeySecrets
 
   $CreateRecord = $script:StageRecords |
     Where-Object { $_.stage -eq "create" } |
@@ -555,14 +621,22 @@ try {
   Debug build; the canonical Tauri config and Release builds do not expose it.
 - Native Tauri IPC created a PIN Slot and SQLCipher Vault.
 - Wrong PIN, Lock, Unlock, process termination, relaunch, and restart recovery passed.
+- The native Windows file picker selected an encrypted OpenSSH Private Key
+  without adding Path, Key, or Passphrase fields to WebView IPC.
+- Windows Credential UI displayed masked, non-persistent Passphrase input,
+  rejected one incorrect Passphrase, and accepted the second bounded attempt.
+- The original encrypted Key and accepted Passphrase were stored under separate
+  Record AEAD fields; the source Key file was deleted before SSH connection.
+- The real EXE authenticated with the imported encrypted Key and created the
+  remote marker ``$PrivateKeyMarkerPath``.
 - Windows OpenSSH Authentication Agent enumerated the selected SHA-256 Identity
   through Rust; the temporary Private Key file was deleted before AnySSH launched.
 - The real EXE used the Agent Named Pipe to authenticate to a standalone Windows
   OpenSSH Server and created the remote marker ``$SshMarkerPath``.
 - Password/System Agent Credentials, Group, inherited/direct Hosts, and Jump Route
   metadata persisted across process restart.
-- PIN, Password, Agent Fingerprint, Group, Host, Username, and Route markers were
-  absent from Vault files.
+- PIN, Password, Private Key, Passphrases, Agent Fingerprint, Group, Host,
+  Username, and Route markers were absent from Vault files and QA text evidence.
 - The SQLCipher database did not expose the plaintext SQLite header.
 - Browser error logs were empty.
 
@@ -570,6 +644,11 @@ try {
 
 - ``01-vault-create.png``
 - ``02-native-ready.png``
+- ``02a-private-key-picker.png``
+- ``02a2-private-key-passphrase.png``
+- ``02a3-private-key-passphrase-retry.png``
+- ``02a4-private-key-imported.png``
+- ``02a5-private-key-connected.png``
 - ``02b-system-agent-connected.png``
 - ``03-repository-created.png``
 - ``04-vault-wrong-pin.png``
@@ -593,8 +672,10 @@ try {
 - ``ssh-fixture.txt``
 - ``sshd.stdout.log``
 - ``sshd.stderr.log``
+- ``native-dialog-driver.txt``
 "@ | Set-Content -Encoding UTF8 -Path (Join-Path $RunDirectory "report.md")
 
+  Assert-EvidenceContainsNoPrivateKeySecrets
   Write-Host "Native Windows WebView2 smoke passed: $RunDirectory"
 }
 catch {
@@ -609,11 +690,17 @@ finally {
   Remove-Item Env:ANYSSH_WINDOWS_CDP_URL -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_RUN_DIR -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_STAGE -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_APP_PID -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_SSH_HOST -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_SSH_PORT -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_SSH_USERNAME -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_AGENT_FINGERPRINT -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_AGENT_MARKER_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_ENCRYPTED_KEY_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_KEY_PASSPHRASE -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_WRONG_KEY_PASSPHRASE -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_PRIVATE_KEY_MARKER_PATH -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $VaultRoot -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $WebViewDataRoot -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $PrivateKeyMarkerPath -Force -ErrorAction SilentlyContinue
 }

@@ -54,7 +54,9 @@ any_ssh/
 |   `-- qa/
 |       |-- agent-browser-smoke.sh    # Agent 驱动的浏览器 UI 检查
 |       |-- native-xvfb-smoke.sh      # 无桌面环境的原生 Tauri X11 SSH 检查
-|       `-- native-wayland-ime-smoke.sh # Wayland + IBus + SSH IME 检查
+|       |-- native-wayland-ime-smoke.sh # Wayland + IBus + SSH IME 检查
+|       |-- native-windows-smoke.ps1  # Windows EXE/WebView2/OpenSSH 检查
+|       `-- windows-native-dialog-driver.ps1 # Windows Picker/Prompt QA Driver
 |-- tests/fixtures/openssh/           # 隔离 OpenSSH Docker Fixture
 |-- infra/build/                      # 固定 Rust/Node/Android/Linux Build Images
 `-- docs/
@@ -110,7 +112,8 @@ Proposed ADR 是待验证方案，不是不可变事实。若 Phase 0 验证结�
   SSH Authentication。
 - Native Private Key Import Request 只允许 Label/Username。Tauri Command
   必须在 Rust 内打开 Native Picker，再由 `ApplicationCore` 有界读取和验证；
-  WebView 不得提交 Path、Private Key 或 Passphrase。当前仅允许未加密 Key。
+  WebView 不得提交 Path、Private Key 或 Passphrase。Linux/Windows Desktop
+  支持加密 OpenSSH Key；Android/iOS v1 对加密 Key 明确返回 Unsupported。
 - 加密 Key Passphrase 必须通过进程内/系统原生 Secure Prompt 获取，不得使用
   React Input、普通 IPC、Shell、`zenity` 或 PowerShell 子进程。Prompt Result
   必须立即进入 `Zeroizing<String>`，取消或失败不得创建 Credential。
@@ -238,7 +241,9 @@ Evidence 复制回仓库。
 `pnpm qa:native:xvfb` 还必须覆盖原生 Vault 创建、错误 PIN、锁定和重新解锁。
 同时必须验证 Tauri/xterm Ack 背压能排空 4 MiB 输出并继续执行后续远端命令。
 该检查还必须通过真实 Native File Picker 导入测试 Private Key，确认 UI 只返回
-metadata、Key Header 不出现在 Vault 文件，且临时源文件在 SSH 流程前删除。
+metadata。加密 Key 必须经过进程内 GTK Secure Entry、至少一次错误 Passphrase
+重试和正确 Passphrase 导入；Key Header/测试 Passphrase 不得出现在 Vault 或
+Evidence，且临时源文件在 SSH 流程前删除。
 Linux X11 检查还必须启动真实 `ssh-agent`，由原生 Tauri UI 枚举 Identity 并
 创建 Fingerprint-selected Credential，且 Agent Key/Fingerprint 不得明文落盘。
 
@@ -250,7 +255,10 @@ Build 不得暴露 CDP。测试必须覆盖 Vault Create/Lock/Wrong-PIN/Unlock�
 Repository CRUD、进程重启恢复、SQLCipher 明文扫描和截图；不得上传 WebView2
 Profile 或 Vault 文件。System Agent 变更还必须通过 Windows OpenSSH Agent
 Named Pipe 和临时 standalone OpenSSH Server 完成真实 EXE SSH 交互；Agent
-Private Key 文件必须在 AnySSH 启动前删除。
+Private Key 文件必须在 AnySSH 启动前删除。加密 Private Key 变更还必须通过
+Native Picker、Windows Credential UI 错误/正确 Passphrase、源文件删除和真实
+OpenSSH Marker；QA Driver 的 Path/Passphrase 环境必须在 AnySSH 启动后设置，
+避免应用进程继承测试 Secret。
 
 `pnpm qa:native:wayland` 必须在 AnySSH 进程没有 `DISPLAY` 的条件下：
 
@@ -462,6 +470,7 @@ Native Secure Passphrase Prompt、真实 Picker/SSH/明文扫描、ADR-0014 状�
 | Credential Bridge | `apps/client/src/lib/credential-bridge.ts` |
 | Host/Route Bridge | `apps/client/src/lib/host-bridge.ts` |
 | Tauri IPC | `apps/client/src-tauri/src/lib.rs` |
+| Native Passphrase Provider | `apps/client/src-tauri/src/native_passphrase.rs` |
 | Application Core | `crates/anyssh-app/src/lib.rs` |
 | DB Actor | `crates/anyssh-storage/src/actor.rs` |
 | Credential Model | `crates/anyssh-storage/src/credential.rs` |
@@ -478,6 +487,7 @@ Native Secure Passphrase Prompt、真实 Picker/SSH/明文扫描、ADR-0014 状�
 | Playwright E2E | `apps/client/e2e/connect-preview.spec.ts` |
 | agent-browser 检查 | `scripts/qa/agent-browser-smoke.sh` |
 | Windows Runtime 检查 | `scripts/qa/native-windows-smoke.ps1` |
+| Windows Native Dialog Driver | `scripts/qa/windows-native-dialog-driver.ps1` |
 | CI | `.github/workflows/ci.yml` |
 | 产品目标 | `docs/project/product-brief.md` |
 | 项目状态 | `docs/project/status.md` |
