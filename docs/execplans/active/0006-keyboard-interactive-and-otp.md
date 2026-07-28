@@ -226,6 +226,11 @@ git diff --check
   Passphrase Driver 环境进入下一次 AnySSH 进程。`Start-NativeStage` 现在在
   启动每个 EXE 前显式清除 Driver Secret，再在进程启动后重新提供给外部 Driver；
   Keyboard-interactive Response 使用同一规则。
+- 2026-07-28：首个同提交 CI Run `30357730425` 的 Windows WebView2 截图已显示
+  Quick Connection 切换为 Keyboard-interactive 且 Password Field 不可见，
+  但非精确 ARIA `getByLabel("Password")` 仍报告一个匹配项。Windows QA 改用
+  唯一 DOM ID `#connection-password` 断言敏感 Input 已从 Form 移除；ARIA
+  Locator 继续用于用户可见控件交互。
 
 ## Decision Log
 

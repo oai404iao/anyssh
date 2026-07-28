@@ -615,7 +615,7 @@ async function verifyKeyboardInteractive(targetPage) {
   await connectionForm
     .getByLabel("Authentication")
     .selectOption("keyboardInteractive");
-  await assert(connectionForm.getByLabel("Password")).toHaveCount(0);
+  await assert(connectionForm.locator("#connection-password")).toHaveCount(0);
   await connectionForm.getByRole("button", { name: "Connect" }).click();
 
   const hostKeyDialog = targetPage.getByRole("dialog", {
