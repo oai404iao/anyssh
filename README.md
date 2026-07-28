@@ -63,15 +63,18 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
 - Linux X11/Wayland 已通过真实 OpenSSH PAM 完成纯 Keyboard-interactive
   Challenge；Docker OpenSSH 还覆盖 Password/Private Key/System Agent
   Partial-success + OTP、Saved Host 和 Interactive Jump Hop。
-- Head `a75da9cf6d4ba73f8b93257c683fb97ad2c0b90f` 的 GitHub Actions Run
-  `30344638562` 九个 Job 全部通过，关键截图、Error Log、Build Hash 和测试
-  Secret Scan 已人工检查。
+- Windows 2025 Runner 已通过 controlled russh Server 和真实 EXE/WebView2
+  完成 masked Keyboard-interactive Challenge、Interactive Credential 重启和
+  Response/Vault/Evidence 扫描。
+- Head `0ceb5b332967a9b1fc7fdf73967ae49bf44505d7` 的 GitHub Actions Run
+  `30360000884` 九个 Job 全部通过，Browser、X11、Wayland、Windows、Android、
+  Linux 的关键截图、Error Log、Build Hash 和测试 Secret Scan 已人工检查。
 
 iOS 因当前没有 macOS/Xcode 环境暂缓。
 
 当前活动计划：
 
-- [`Phase 1：Keyboard-interactive and OTP`](docs/execplans/active/0006-keyboard-interactive-and-otp.md)
+- [`Phase 1：Multi Tab Terminal and Session Lifecycle`](docs/execplans/active/0007-multi-tab-terminal-and-session-lifecycle.md)
 
 已完成计划：
 
@@ -80,6 +83,7 @@ iOS 因当前没有 macOS/Xcode 环境暂缓。
 - [`Phase 1：系统 SSH Agent 认证`](docs/execplans/completed/0003-system-ssh-agent-authentication.md)
 - [`Phase 1：Native Encrypted Private Key Passphrase`](docs/execplans/completed/0004-native-encrypted-private-key-passphrase.md)
 - [`Phase 1：Known Host Repository and Durable TOFU`](docs/execplans/completed/0005-known-host-repository-and-durable-tofu.md)
+- [`Phase 1：Keyboard-interactive and OTP`](docs/execplans/completed/0006-keyboard-interactive-and-otp.md)
 
 ## 文档入口
 

@@ -19,8 +19,8 @@ React/xterm.js UI
 
 仓库已完成 **Phase 0 技术验证**、**Phase 1 Group 持久化/三态继承**、
 **System SSH Agent 认证**、**Native Encrypted Private Key Passphrase** 和
-**Known Host Repository/Durable TOFU**。当前活动计划是
-**Keyboard-interactive and OTP**。
+**Known Host Repository/Durable TOFU**、**Keyboard-interactive and OTP**。
+当前活动计划是 **Multi Tab Terminal and Session Lifecycle**。
 已经存在可构建的 React 前端、Rust Workspace、russh SSH/Jump Host、SQLCipher/
 PIN Vault、Tauri IPC、Host/Credential/Route Repository、Windows WebView2、
 OpenSSH Fixture、Playwright E2E、agent-browser 与原生 X11/Wayland 检查。
@@ -496,11 +496,12 @@ Clear
 
 当前唯一活动计划是：
 
-- [`0006-keyboard-interactive-and-otp.md`](docs/execplans/active/0006-keyboard-interactive-and-otp.md)
+- [`0007-multi-tab-terminal-and-session-lifecycle.md`](docs/execplans/active/0007-multi-tab-terminal-and-session-lifecycle.md)
 
-除非用户明确改变优先级，应先完成 Schema v7 Interactive Credential、
-Partial-success Challenge/Response、OpenSSH PAM 和 Linux/Windows Native
-Evidence；不要直接跳到 WebDAV、Forwarding、多 Tab 或高级脚本系统。
+除非用户明确改变优先级，应先完成每 Tab Session State、独立 xterm.js、
+Output/Input/Resize/Host Key/Challenge Routing、Disconnect/Close/Vault Lock
+Lifecycle 和 Linux/Windows Native Multi-session Evidence；不要直接跳到
+WebDAV、Forwarding、SFTP 或高级脚本系统。
 
 ## 关键文件
 
@@ -531,6 +532,7 @@ Evidence；不要直接跳到 WebDAV、Forwarding、多 Tab 或高级脚本系�
 | Encrypted Key Prompt Design | `docs/design/native-encrypted-private-key-passphrase-v1.md` |
 | Known Host Design | `docs/design/known-host-repository-v1.md` |
 | Keyboard-interactive Design | `docs/design/keyboard-interactive-authentication-v1.md` |
+| Multi Tab Session Design | `docs/design/multi-tab-session-lifecycle-v1.md` |
 | OpenSSH Known Hosts Reference | `docs/reference/openssh-known-hosts-baseline-2026.md` |
 | Threat Model | `docs/design/threat-model-v1.md` |
 | SSH Core | `crates/anyssh-ssh/src/lib.rs` |
@@ -547,13 +549,14 @@ Evidence；不要直接跳到 WebDAV、Forwarding、多 Tab 或高级脚本系�
 | 总体技术设计 | `docs/design/technical-architecture-2026.md` |
 | ADR 索引 | `docs/adr/README.md` |
 | ExecPlan 规范 | `docs/execplans/README.md` |
-| 当前活动计划 | `docs/execplans/active/0006-keyboard-interactive-and-otp.md` |
-| 最新完成计划 | `docs/execplans/completed/0005-known-host-repository-and-durable-tofu.md` |
+| 当前活动计划 | `docs/execplans/active/0007-multi-tab-terminal-and-session-lifecycle.md` |
+| 最新完成计划 | `docs/execplans/completed/0006-keyboard-interactive-and-otp.md` |
 | Phase 0 结果 | `docs/execplans/completed/0001-phase-0-technical-validation.md` |
 | Group 结果 | `docs/execplans/completed/0002-group-persistence-and-inheritance.md` |
 | System Agent 结果 | `docs/execplans/completed/0003-system-ssh-agent-authentication.md` |
 | Encrypted Key Prompt 结果 | `docs/execplans/completed/0004-native-encrypted-private-key-passphrase.md` |
 | Known Host 结果 | `docs/execplans/completed/0005-known-host-repository-and-durable-tofu.md` |
+| Keyboard-interactive 结果 | `docs/execplans/completed/0006-keyboard-interactive-and-otp.md` |
 | 2026 技术基线 | `docs/reference/technology-baseline-2026.md` |
 | 术语表 | `docs/reference/glossary.md` |
 

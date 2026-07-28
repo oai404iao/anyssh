@@ -286,7 +286,7 @@ Request/Hop/Round 绑定、120 秒 Timeout 和取消。Interactive Credential �
 Label/Username；Server Prompt 不会触发 Saved Password 自动填充。Password、
 Private Key 或 System Agent 只有在 Server 明确返回 Partial Success 且继续提供
 Keyboard-interactive 时才进入第二因子；普通失败不降级。Linux OpenSSH PAM、
-Browser、X11 和 Wayland 已验证该边界，完整设计见
+Browser、X11、Wayland 和 Windows 真实 EXE/WebView2 已验证该边界，完整设计见
 [Keyboard-interactive Authentication v1](keyboard-interactive-authentication-v1.md)。
 
 后续支持：
@@ -639,6 +639,7 @@ Queue，再 Join Actor Thread，确保数据库连接按顺序销毁。
 - [System SSH Agent Authentication v1](system-ssh-agent-authentication-v1.md)
 - [Known Host Repository v1](known-host-repository-v1.md)
 - [Keyboard-interactive Authentication v1](keyboard-interactive-authentication-v1.md)
+- [Multi Tab Terminal and Session Lifecycle v1](multi-tab-session-lifecycle-v1.md)
 
 Tauri 只调用 `anyssh-app::ApplicationCore`；它不直接解析 Credential Secret、
 构造 SSH Authentication 或访问 SQLCipher Connection。
@@ -886,6 +887,11 @@ Desktop
 - Host 编辑采用分段页面，不照搬桌面双栏。
 - Terminal 全屏优先。
 - Jump、Forward、Credential 使用独立可复用对象。
+
+当前 Multi Tab 实施计划使用独立的 Frontend Tab ID、Rust Session ID、xterm.js
+Instance 和 Event/Data Channel。非活动 Terminal 仍保持 Mounted 并继续发送
+Output Ack；Disconnect 保留 Scrollback，Close/Vault Lock 才移除。完整设计见
+[Multi Tab Terminal and Session Lifecycle v1](multi-tab-session-lifecycle-v1.md)。
 
 主题系统：
 

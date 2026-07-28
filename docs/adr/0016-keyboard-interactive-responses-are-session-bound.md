@@ -1,6 +1,6 @@
 # ADR-0016：Keyboard-interactive 响应是 Session-bound 临时秘密
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-07-28
 - 决策人：项目维护者
 
@@ -94,7 +94,7 @@ Prompt 文本自动匹配 Saved Secret 会扩大 WebView 和远端 Server 对 Cr
 ## 相关文档
 
 - Design：[Keyboard-interactive Authentication v1](../design/keyboard-interactive-authentication-v1.md)
-- ExecPlan：[Keyboard-interactive and OTP](../execplans/active/0006-keyboard-interactive-and-otp.md)
+- ExecPlan：[Keyboard-interactive and OTP](../execplans/completed/0006-keyboard-interactive-and-otp.md)
 - ADR：[ADR-0006](0006-secrets-stay-out-of-webview.md)
 - ADR：[ADR-0010](0010-saved-host-plans-resolve-in-rust.md)
 - ADR：[ADR-0015](0015-known-host-trust-is-endpoint-scoped.md)

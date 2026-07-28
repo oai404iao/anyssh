@@ -1,6 +1,6 @@
 # ExecPlan 0006：Keyboard-interactive and OTP
 
-- 状态：Active
+- 状态：Completed
 - 创建日期：2026-07-28
 - 最后更新：2026-07-28
 - 负责人：项目维护者与执行 Agent
@@ -93,8 +93,13 @@ Public Key/Password/System Agent + 第二因子的 SSH Server，同时保持响�
 - [x] 2026-07-28：本地通过 Workspace Clippy/Test、Client Test、Vitest 16、
   Playwright 5、OpenSSH Smoke、agent-browser、X11、Wayland、Android ARM64、
   Linux/Android Container、Docs、Format 和 `git diff --check`。
-- [ ] 完成 Milestone 4：OpenSSH 与 Native QA。
-- [ ] 完成 Milestone 5：全量回归、Artifact 检查、ADR 状态评审和收尾。
+- [x] 2026-07-28：完成 Milestone 4：OpenSSH 与 Native QA。
+- [x] 2026-07-28：Head
+  `0ceb5b332967a9b1fc7fdf73967ae49bf44505d7` 的 GitHub Actions Run
+  `30360000884` 九个 Job 全部通过；人工检查 Browser、X11、Wayland、Windows、
+  Android、Linux Artifact、Build Hash、Error Log 和 Secret Scan 后接受
+  ADR-0016。
+- [x] 2026-07-28：完成 Milestone 5，将本计划移动到 `completed/`。
 
 ## Milestones
 
@@ -258,7 +263,7 @@ git diff --check
   `crates/anyssh-ssh/examples/keyboard_interactive_server.rs` 作为 controlled
   Test Server；它只用于 QA，不进入产品 Runtime，也不调用系统 `ssh`。
 
-## 当前本地证据
+## 最终证据
 
 - OpenSSH：`pnpm test:ssh:smoke`，覆盖纯 Interactive、错误/正确 Response、
   Password/Private Key/System Agent + OTP、Saved Host 和 Jump 1/2/Target。
@@ -274,9 +279,44 @@ git diff --check
   `/home/u/dev/local/any_ssh/artifacts/linux-build/build-1785240001-1`。
 - Android Container：
   `/home/u/dev/local/any_ssh/artifacts/android-build/build-1785240065-1`。
-- Windows：脚本与 controlled Server 已完成，等待同 Commit Windows Runner
-  生成 Artifact。
+- 同 Commit CI：Head `0ceb5b332967a9b1fc7fdf73967ae49bf44505d7`，
+  GitHub Actions Run `30360000884`，九个 Job 全部通过。
+- agent-browser：`smoke-1785242505`，Desktop/Mobile 多 Prompt Challenge、
+  Connected Snapshot、Interactive Credential 和空 Browser Error Log。
+- X11：`smoke-1785242545-6148`，真实 OpenSSH PAM masked Challenge、远端
+  Marker、Encrypted Key、System Agent、Durable TOFU 和 4 MiB 回归。
+- Wayland：`smoke-1785242661-8323`，无 `DISPLAY`、IBus/libpinyin、OpenSSH
+  PAM Challenge 和远端 Marker。
+- Windows：`smoke-20260728-124329-4352`，真实 EXE/WebView2、controlled russh
+  Server、masked Challenge、Interactive Credential 重启、远端 Marker 和
+  Vault/Evidence Secret Scan。
+- Android ARM64 APK SHA-256：
+  `5598790fc1490d3319546ceed31423547130d54351e4f04a740294a87dad4c9a`。
+- Linux ELF SHA-256：
+  `f8778bfc5f745b109c4f7921b4d47d0aac37a9f3cf0eecdf7150ee266405c879`。
+- Windows EXE SHA-256：
+  `390b27119fbc09bcc9ea8603a6637ef516a63dd2d86e6725eb7e2e493c2d4e70`。
+- Artifact 二次扫描未发现测试 Response、Private Key Passphrase、System Agent
+  Fingerprint 或 OTP-shaped Value；Browser/Windows Error Log 为空，Linux Vault
+  不含明文 SQLite Header。人工检查的 Challenge/Connected 截图未发现截断、
+  遮挡、未清空 Response 或错误回显。
 
 ## Outcomes & Retrospective
 
-尚未完成。
+完成。
+
+- SQLCipher Schema v7 现在能表达无 Saved Secret 的
+  `keyboard_interactive` Credential，同时保持 Password、Private Key 和 System
+  Agent 的 Record AEAD Constraint。
+- SSH Core 已实现有界多轮 RFC 4256、Request/Hop/Round 绑定、Timeout/Cancel、
+  零 Prompt 和明确 Partial-success 第二因子；普通失败不降级。
+- Quick、Saved、Jump 1/Jump 2/Target 共用同一 Rust-owned 状态机。OpenSSH PAM
+  证明真实 Password/Private Key/System Agent + OTP，controlled russh Server
+  补齐多 Prompt/多 Round/Echo/异常边界。
+- React Challenge Response 只存在于按 Request ID 重建的局部表单和当前 Typed
+  IPC；Interactive Credential 只保存 Label/Username。Browser、Linux Native 和
+  Windows Native Secret Scan 均未发现 Response 持久化或日志泄漏。
+- 同 Commit Run `30360000884` 的九个 Job、Build Hash、截图和 Error Log 已人工
+  检查。ADR-0016 因此由 Proposed 转为 Accepted。
+- 后续工作转向 Multi Tab Terminal 与 Session Lifecycle；物理 Linux Desktop、
+  Android Runtime/软键盘/生命周期和 iOS Xcode 验证仍保留为平台后续工作。

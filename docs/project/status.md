@@ -138,14 +138,20 @@
 - Alpine OpenSSH PAM 已验证纯 Interactive、Password/Private Key/System Agent
   + OTP、Saved Host 和 Interactive Jump Hop。Browser、X11 和无 `DISPLAY`
   Wayland/IBus Native Evidence 已通过并人工检查。
-- Windows QA 已接入 controlled russh Server、真实 EXE/WebView2 Challenge、
-  Interactive Credential 重启和 Response/Vault/Evidence 扫描；等待同 Commit
-  Windows Runner 复核后评审 ADR-0016。
+- Head `0ceb5b332967a9b1fc7fdf73967ae49bf44505d7` 的 GitHub Actions Run
+  `30360000884` 全部九个 Job 通过；Windows controlled russh Server、真实
+  EXE/WebView2 Challenge、Interactive Credential 重启和
+  Response/Vault/Evidence 扫描通过，Browser/Linux/Windows Screenshot、Error
+  Log 和 Android/Linux/Windows Build Hash 已人工检查。
+- ADR-0016 已接受，Keyboard-interactive and OTP ExecPlan 已完成。
+- Proposed ADR-0017、Multi Tab Session Lifecycle Design 和 ExecPlan 0007 已
+  创建。Tauri Registry 已具备多 Session Map，下一步是把 React 单 Session State
+  重构为独立 Tab/xterm/Lifecycle。
 - CI 工作流。
 
 当前仓库尚未完成：
 
-- OpenSSH `known_hosts` 导入/导出、Forwarding、多 Tab 和后续 Key 管理。
+- OpenSSH `known_hosts` 导入/导出、Forwarding、Multi Tab 实现和后续 Key 管理。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
 - Android Runtime、Content URI、软键盘与生命周期验证。
 - iOS 构建验证；当前没有 macOS/Xcode 环境，按维护者指示暂缓。
@@ -167,7 +173,7 @@
 
 ## 当前活动计划
 
-- [`Phase 1：Keyboard-interactive and OTP`](../execplans/active/0006-keyboard-interactive-and-otp.md)
+- [`Phase 1：Multi Tab Terminal and Session Lifecycle`](../execplans/active/0007-multi-tab-terminal-and-session-lifecycle.md)
 
 ## 已完成计划
 
@@ -176,3 +182,4 @@
 - [`Phase 1：系统 SSH Agent 认证`](../execplans/completed/0003-system-ssh-agent-authentication.md)
 - [`Phase 1：Native Encrypted Private Key Passphrase`](../execplans/completed/0004-native-encrypted-private-key-passphrase.md)
 - [`Phase 1：Known Host Repository and Durable TOFU`](../execplans/completed/0005-known-host-repository-and-durable-tofu.md)
+- [`Phase 1：Keyboard-interactive and OTP`](../execplans/completed/0006-keyboard-interactive-and-otp.md)

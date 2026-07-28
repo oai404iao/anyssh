@@ -11,3 +11,4 @@
 - [0003：系统 SSH Agent 认证](0003-system-ssh-agent-authentication.md)
 - [0004：Native Encrypted Private Key Passphrase](0004-native-encrypted-private-key-passphrase.md)
 - [0005：Known Host Repository and Durable TOFU](0005-known-host-repository-and-durable-tofu.md)
+- [0006：Keyboard-interactive and OTP](0006-keyboard-interactive-and-otp.md)

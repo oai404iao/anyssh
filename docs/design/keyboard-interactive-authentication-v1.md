@@ -1,11 +1,11 @@
 # Keyboard-interactive Authentication v1
 
-> 状态：已实现，等待同 Commit Windows/CI Artifact 复核与 ADR 评审
+> 状态：已实现；ADR-0016 已接受
 > 日期：2026-07-28
 
 本文定义 Phase 1 Desktop MVP 的 RFC 4256 Keyboard-interactive/OTP
 Authentication、Partial-success 第二因子、Session-bound Response 和产品 UI。
-长期决策见 Proposed ADR-0016。
+长期决策见 Accepted ADR-0016。
 
 ## 目标
 
@@ -249,8 +249,13 @@ PAM Stack 不稳定表达全部协议边界。
   Partial-success + OTP、Saved Host，以及 Jump 1、Jump 2 和 Target Prompt
   归属。
 - Browser、Playwright、agent-browser、X11 与无 `DISPLAY` Wayland/IBus Native
-  Evidence 已通过并检查；Windows controlled russh Server/真实 EXE 代码已接入，
-  等待同 Commit Windows Runner 复核。
+  Evidence 已通过并检查。
+- Head `0ceb5b332967a9b1fc7fdf73967ae49bf44505d7` 的同 Commit GitHub Actions
+  Run `30360000884` 九个 Job 全部通过。Windows 真实 EXE/WebView2 已使用
+  controlled russh Server 完成 masked Challenge、Interactive Credential 重启、
+  远端 Marker 和 Response/Vault/Evidence 扫描。
+- Browser、X11、Wayland 和 Windows Challenge/Connected Screenshot、Error Log
+  与 Android/Linux/Windows Build Hash 已人工检查；ADR-0016 已接受。
 
 ## 相关文档
 
@@ -259,4 +264,4 @@ PAM Stack 不稳定表达全部协议边界。
 - [Credential Repository v1](credential-repository-v1.md)
 - [Saved Host Connection Plan v1](saved-host-connection-plan-v1.md)
 - [Known Host Repository v1](known-host-repository-v1.md)
-- [ExecPlan 0006](../execplans/active/0006-keyboard-interactive-and-otp.md)
+- [ExecPlan 0006](../execplans/completed/0006-keyboard-interactive-and-otp.md)
