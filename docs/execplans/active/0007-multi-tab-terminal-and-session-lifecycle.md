@@ -66,11 +66,35 @@
 - [x] 2026-07-28：确认 Tauri Registry 已支持多个独立 Session Entry，主要缺口在
   React 单 Session Model 和 Lifecycle Race。
 - [x] 2026-07-28：创建 Proposed ADR-0017、Design 和本 ExecPlan。
-- [ ] 完成 Milestone 1：Per-tab Frontend Session Model。
-- [ ] 完成 Milestone 2：Terminal Mount、Routing 与 Lifecycle。
-- [ ] 完成 Milestone 3：Desktop/Mobile Product UI。
-- [ ] 完成 Milestone 4：Native Multi-session QA。
+- [x] 2026-07-28：完成 Milestone 1。React 使用独立 Tab ID、Connection
+  Generation、Rust Session ID、Status、Form、Host Key 和 Challenge State；Late
+  Connect Return 会立即 Disconnect，Stale Event 被忽略。
+- [x] 2026-07-28：完成 Milestone 2。每 Tab xterm.js 保持 Mounted，隐藏 Tab
+  不执行 Fit 但继续写入/Ack；Disconnect 保留 Scrollback，Close 删除 Tab；
+  Tauri 补充 Channel-loss Disconnect、`remove_and_disconnect`、
+  `disconnect_all` 和 20 项 Registry/IPC Unit Test。
+- [x] 2026-07-28：完成 Milestone 3。Desktop/Mobile Tab Strip、Status Dot、
+  文本 Pending Indicator、Close/New Tab、ARIA Tab/Panel 和键盘方向键导航已完成；
+  Playwright 9 项测试覆盖双 Session、同时 Challenge、8 Tab 上限和
+  Close-during-connect。
+- [ ] 完成 Milestone 4：Linux X11/Wayland 已通过真实多 Session；Windows
+  EXE/WebView2 流程已实现，等待 GitHub Actions Windows Runner 验证。
 - [ ] 完成 Milestone 5：全量回归、Artifact 检查、ADR 评审和收尾。
+- [x] 2026-07-28：本地 Browser Evidence
+  `artifacts/agent-browser/smoke-1785247643` 通过，Desktop/Mobile 双 Tab 截图和
+  Browser Error 空日志已人工检查。
+- [x] 2026-07-28：本地 X11 Evidence
+  `artifacts/native-xvfb/smoke-1785247712-1543598` 通过，证明双 OpenSSH
+  Session、隐藏 Tab 4 MiB Output、单 Tab Close、并发 Keyboard-interactive 和
+  双 Session Vault Lock。
+- [x] 2026-07-28：本地 Wayland Evidence
+  `artifacts/native-wayland/smoke-1785247870-1556406` 通过，证明无 `DISPLAY`
+  的 Wayland/IBus、一个 Connected Tab 加一个 Challenge Tab，以及单 Tab Close。
+- [x] 2026-07-28：本地 Linux Container ELF
+  `e2b093f9fe713ee1a2d42b70598ae02289de8a25511e94fdf9e7c7ef48efaa86`
+  和 Android ARM64 APK
+  `71bf1ed4db046565c95ca9d5b8cc1155288db4249ec70c9cf37c35148a9bd2da`
+  构建通过。
 
 ## Milestones
 
@@ -180,6 +204,18 @@ git diff --check
   “只 Mount Active Tab”不是可接受实现。
 - 2026-07-28：`vault_lock` 已先 Drain/Disconnect 全部 Rust Session；前端多 Tab
   必须同步清除所有 Terminal/Challenge State，不能只清 Active Tab。
+- 2026-07-28：Configuration Workspace 若只用 CSS 隐藏 Connection Form，
+  Browser Automation/Accessible Name 查询仍会匹配隐藏 Password Field。Terminal
+  Workspace 保持 Mounted，但 Connection Panel 只在 Terminal View Mount。
+- 2026-07-28：同时多个 Challenge 到达时，不能让后到事件持续抢走用户正在填写的
+  Dialog。当前只在 Active Tab 没有 Pending Host Key/Challenge/Changed-Key 时
+  自动激活新 Action，其余通过 Tab Pending Indicator 提示。
+- 2026-07-28：第一次 X11 隐藏 Tab 大输出脚本用分号后的 Marker 产生了假阳性：
+  自动输入漏掉 `head` 的首字符后仍执行了 `touch`。脚本现用前导空格保护首字符，
+  并让 Marker 排在实际 4 MiB 输出命令之后；截图和后续命令同时复核。
+- 2026-07-28：Event/Data Channel 丢失时只从 Registry Remove 会依赖隐式 Drop。
+  显式 `remove_and_disconnect` 能统一 Channel Loss、Close、Vault Lock 和 App Exit
+  的 Fail-closed 语义。
 
 ## Decision Log
 
@@ -190,6 +226,13 @@ git diff --check
 - 2026-07-28：非活动 xterm.js 保持 Mounted 并继续消费/Ack Output。
 - 2026-07-28：Frontend Tab ID 与 Rust Session ID 分离；异步回调还必须校验
   Generation。
+- 2026-07-28：实际实现采用 Ref-backed Immutable Session Controller，而不是单独
+  Reducer；所有更新仍通过按 Tab ID/Generation 的单一 Helper 路由，Terminal
+  Handle 继续留在不可序列化的 Ref Map。
+- 2026-07-28：只有 Visible Terminal 执行 Fit/Resize；Inactive Terminal 保持
+  Mounted 并继续完成 xterm Write Callback/Ack。
+- 2026-07-28：多个 Pending Action 不持续抢焦点。第一个 Action 可自动激活；
+  Active Tab 已有 Dialog 时，其他 Tab 只显示文本 Pending Indicator。
 
 ## Outcomes & Retrospective
 

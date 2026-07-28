@@ -469,7 +469,8 @@ Key、Proxy 和其他三态继承字段仍待后续领域模型实现。
 1. Windows/Linux 优先 WebGL。
 2. WebGL 初始化失败或 Context Lost 时自动切换备用 Renderer。
 3. 移动端根据设备能力决定是否启用 WebGL。
-4. 终端实例不因切换 Tab 而销毁，使用 LRU 控制后台实例数量。
+4. 终端实例不因切换 Tab 而销毁；v1 固定最多 8 个 Tab，达到上限后要求用户
+   显式关闭，不使用 LRU 自动回收 Live Session。
 
 2026 年的 `libghostty` 已很有潜力，但其 C API 仍处于演进阶段。因此：
 

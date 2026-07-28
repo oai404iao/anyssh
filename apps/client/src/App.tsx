@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   ConfigurationWorkspace,
   type ConfigurationSection,
@@ -69,6 +70,23 @@ interface ConnectionForm {
 
 type WorkspaceView = "terminal" | ConfigurationSection;
 
+interface SessionTab {
+  id: string;
+  generation: number;
+  title: string;
+  form: ConnectionForm;
+  status: ConnectionStatus;
+  statusDetail: string;
+  sessionId: string | null;
+  pendingHostKey: HostKeyEvent | null;
+  changedHostKey: HostKeyChangedEvent | null;
+  pendingAuthentication: AuthenticationChallengeEvent | null;
+  passwordVisible: boolean;
+  error: string | null;
+  selectedSavedHostId: string | null;
+  terminalSize: { columns: number; rows: number };
+}
+
 const INITIAL_FORM: ConnectionForm = {
   name: "Local lab",
   host: "127.0.0.1",
@@ -77,6 +95,8 @@ const INITIAL_FORM: ConnectionForm = {
   authenticationKind: "password",
   password: "",
 };
+
+const MAX_SESSION_TABS = 8;
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
   idle: "Ready",
@@ -89,26 +109,71 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
   closed: "Disconnected",
 };
 
-function App() {
-  const terminalRef = useRef<TerminalHandle>(null);
-  const terminalSizeRef = useRef({ columns: 120, rows: 32 });
-  const [form, setForm] = useState<ConnectionForm>(INITIAL_FORM);
-  const [status, setStatus] = useState<ConnectionStatus>("idle");
-  const [statusDetail, setStatusDetail] = useState(
-    isNativeRuntime
+let nextSessionTabId = 1;
+
+function createSessionTab(
+  source:
+    | { kind: "quick" }
+    | {
+        kind: "savedHost";
+        host: HostSummary;
+      } = { kind: "quick" },
+): SessionTab {
+  const id = `session-tab-${nextSessionTabId++}`;
+  if (source.kind === "savedHost") {
+    return {
+      id,
+      generation: 0,
+      title: source.host.displayName,
+      form: {
+        ...INITIAL_FORM,
+        name: source.host.displayName,
+        host: source.host.host,
+        port: String(source.host.port),
+      },
+      status: "idle",
+      statusDetail: "Ready to connect the saved Host.",
+      sessionId: null,
+      pendingHostKey: null,
+      changedHostKey: null,
+      pendingAuthentication: null,
+      passwordVisible: false,
+      error: null,
+      selectedSavedHostId: source.host.id,
+      terminalSize: { columns: 120, rows: 32 },
+    };
+  }
+
+  return {
+    id,
+    generation: 0,
+    title: INITIAL_FORM.name,
+    form: { ...INITIAL_FORM },
+    status: "idle",
+    statusDetail: isNativeRuntime
       ? "Native SSH runtime is available."
       : "Browser QA mode uses a local terminal simulation.",
-  );
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [pendingHostKey, setPendingHostKey] = useState<HostKeyEvent | null>(
-    null,
-  );
-  const [changedHostKey, setChangedHostKey] =
-    useState<HostKeyChangedEvent | null>(null);
-  const [pendingAuthentication, setPendingAuthentication] =
-    useState<AuthenticationChallengeEvent | null>(null);
-  const [passwordVisible, setPasswordVisible] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+    sessionId: null,
+    pendingHostKey: null,
+    changedHostKey: null,
+    pendingAuthentication: null,
+    passwordVisible: false,
+    error: null,
+    selectedSavedHostId: null,
+    terminalSize: { columns: 120, rows: 32 },
+  };
+}
+
+function App() {
+  const [initialTab] = useState<SessionTab>(() => createSessionTab());
+  const appMountedRef = useRef(false);
+  const terminalRefs = useRef(new Map<string, TerminalHandle>());
+  const sessionTabsRef = useRef<SessionTab[]>([initialTab]);
+  const activeTabIdRef = useRef(initialTab.id);
+  const [sessionTabs, setSessionTabsState] = useState<SessionTab[]>(() => [
+    initialTab,
+  ]);
+  const [activeTabId, setActiveTabIdState] = useState(initialTab.id);
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
   const [vaultError, setVaultError] = useState<string | null>(null);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("terminal");
@@ -119,8 +184,84 @@ function App() {
   const [knownHosts, setKnownHosts] = useState<KnownHostSummary[]>([]);
   const [repositoryLoading, setRepositoryLoading] = useState(false);
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
-  const [selectedSavedHostId, setSelectedSavedHostId] = useState<string | null>(
-    null,
+
+  const replaceSessionTabs = useCallback(
+    (update: (current: SessionTab[]) => SessionTab[]) => {
+      const next = update(sessionTabsRef.current);
+      sessionTabsRef.current = next;
+      setSessionTabsState(next);
+    },
+    [],
+  );
+
+  const updateSessionTab = useCallback(
+    (
+      tabId: string,
+      update: (current: SessionTab) => SessionTab,
+      expectedGeneration?: number,
+    ) => {
+      replaceSessionTabs((current) =>
+        current.map((tab) =>
+          tab.id === tabId &&
+          (expectedGeneration === undefined ||
+            tab.generation === expectedGeneration)
+            ? update(tab)
+            : tab,
+        ),
+      );
+    },
+    [replaceSessionTabs],
+  );
+
+  const setActiveTabId = useCallback((tabId: string) => {
+    activeTabIdRef.current = tabId;
+    setActiveTabIdState(tabId);
+  }, []);
+
+  const activateSessionTab = useCallback(
+    (tabId: string) => {
+      const previousTabId = activeTabIdRef.current;
+      if (previousTabId !== tabId) {
+        updateSessionTab(previousTabId, (tab) => ({
+          ...tab,
+          form: { ...tab.form, password: "" },
+          passwordVisible: false,
+        }));
+      }
+      setActiveTabId(tabId);
+      setWorkspaceView("terminal");
+    },
+    [setActiveTabId, updateSessionTab],
+  );
+
+  const appendSessionTab = useCallback(
+    (tab: SessionTab) => {
+      if (sessionTabsRef.current.length >= MAX_SESSION_TABS) {
+        updateSessionTab(activeTabIdRef.current, (current) => ({
+          ...current,
+          error: `AnySSH supports up to ${MAX_SESSION_TABS} open Session Tabs in v1.`,
+        }));
+        return false;
+      }
+      const previousTabId = activeTabIdRef.current;
+      replaceSessionTabs((current) => [
+        ...current.map((currentTab) =>
+          currentTab.id === previousTabId
+            ? {
+                ...currentTab,
+                form: { ...currentTab.form, password: "" },
+                passwordVisible: false,
+              }
+            : currentTab,
+        ),
+        tab,
+      ]);
+      setActiveTabId(tab.id);
+      setWorkspaceView("terminal");
+      setRepositoryError(null);
+      return true;
+    },
+    [replaceSessionTabs, setActiveTabId, updateSessionTab],
   );
 
   const refreshRepository = useCallback(async () => {
@@ -145,17 +286,24 @@ function App() {
       setHosts(nextHosts);
       setRoutes(nextRoutes);
       setKnownHosts(nextKnownHosts);
-      setSelectedSavedHostId((current) =>
-        current && nextHosts.some((host) => host.id === current)
-          ? current
-          : null,
+      replaceSessionTabs((current) =>
+        current.map((tab) =>
+          tab.selectedSavedHostId &&
+          !nextHosts.some((host) => host.id === tab.selectedSavedHostId)
+            ? {
+                ...tab,
+                selectedSavedHostId: null,
+                title: tab.form.name || "New connection",
+              }
+            : tab,
+        ),
       );
     } catch (loadError) {
       setRepositoryError(String(loadError));
     } finally {
       setRepositoryLoading(false);
     }
-  }, []);
+  }, [replaceSessionTabs]);
 
   useEffect(() => {
     if (!isNativeRuntime) return;
@@ -187,6 +335,90 @@ function App() {
     }, 0);
     return () => window.clearTimeout(refreshTimer);
   }, [refreshRepository, vaultStatus?.state]);
+
+  useEffect(() => {
+    appMountedRef.current = true;
+    return () => {
+      appMountedRef.current = false;
+      for (const tab of sessionTabsRef.current) {
+        if (tab.sessionId) {
+          void disconnectSsh(tab.sessionId).catch(() => undefined);
+        }
+      }
+    };
+  }, []);
+
+  const activeTab =
+    sessionTabs.find((tab) => tab.id === activeTabId) ?? sessionTabs[0];
+  const form = activeTab.form;
+  const status = activeTab.status;
+  const statusDetail = activeTab.statusDetail;
+  const sessionId = activeTab.sessionId;
+  const pendingHostKey = activeTab.pendingHostKey;
+  const changedHostKey = activeTab.changedHostKey;
+  const pendingAuthentication = activeTab.pendingAuthentication;
+  const passwordVisible = activeTab.passwordVisible;
+  const error = activeTab.error;
+  const selectedSavedHostId = activeTab.selectedSavedHostId;
+
+  useEffect(() => {
+    if (workspaceView === "terminal") return;
+    updateSessionTab(activeTabIdRef.current, (tab) => ({
+      ...tab,
+      form: { ...tab.form, password: "" },
+      passwordVisible: false,
+    }));
+  }, [updateSessionTab, workspaceView]);
+
+  const setForm = useCallback(
+    (
+      update: ConnectionForm | ((current: ConnectionForm) => ConnectionForm),
+    ) => {
+      updateSessionTab(activeTabIdRef.current, (tab) => {
+        const nextForm =
+          typeof update === "function" ? update(tab.form) : update;
+        return {
+          ...tab,
+          form: nextForm,
+          title: tab.selectedSavedHostId
+            ? tab.title
+            : nextForm.name || "New connection",
+        };
+      });
+    },
+    [updateSessionTab],
+  );
+
+  const setChangedHostKey = useCallback(
+    (changedHostKey: HostKeyChangedEvent | null) => {
+      updateSessionTab(activeTabIdRef.current, (tab) => ({
+        ...tab,
+        changedHostKey,
+      }));
+    },
+    [updateSessionTab],
+  );
+
+  const setPasswordVisible = useCallback(
+    (update: boolean | ((current: boolean) => boolean)) => {
+      updateSessionTab(activeTabIdRef.current, (tab) => ({
+        ...tab,
+        passwordVisible:
+          typeof update === "function" ? update(tab.passwordVisible) : update,
+      }));
+    },
+    [updateSessionTab],
+  );
+
+  const setError = useCallback(
+    (error: string | null) => {
+      updateSessionTab(activeTabIdRef.current, (tab) => ({
+        ...tab,
+        error,
+      }));
+    },
+    [updateSessionTab],
+  );
 
   const connected = status === "connected";
   const busy = [
@@ -225,25 +457,52 @@ function App() {
     [routes, selectedSavedHost],
   );
 
-  const writeSystemLine = useCallback((message: string) => {
-    terminalRef.current?.write(`\r\n\x1b[38;5;110m${message}\x1b[0m\r\n`);
+  const writeSystemLine = useCallback((tabId: string, message: string) => {
+    terminalRefs.current
+      .get(tabId)
+      ?.write(`\r\n\x1b[38;5;110m${message}\x1b[0m\r\n`);
   }, []);
 
   const handleClientEvent = useCallback(
-    (event: SshClientEvent) => {
+    (tabId: string, generation: number, event: SshClientEvent) => {
+      if (!appMountedRef.current) {
+        return;
+      }
+      const currentTab = sessionTabsRef.current.find((tab) => tab.id === tabId);
+      if (!currentTab || currentTab.generation !== generation) {
+        return;
+      }
+
+      let shouldActivate = false;
+      let systemLine: string | null = null;
+
       switch (event.type) {
         case "connecting":
-          setStatus("connecting");
-          setStatusDetail("Negotiating SSH transport…");
+          updateSessionTab(
+            tabId,
+            (tab) => ({
+              ...tab,
+              status: "connecting",
+              statusDetail: "Negotiating SSH transport…",
+            }),
+            generation,
+          );
           break;
         case "hostKey":
-          setStatus("verifying");
-          setStatusDetail(
-            event.hop.kind === "target"
-              ? "Target host confirmation is required."
-              : `Jump host ${event.hop.index} confirmation is required.`,
+          updateSessionTab(
+            tabId,
+            (tab) => ({
+              ...tab,
+              status: "verifying",
+              statusDetail:
+                event.hop.kind === "target"
+                  ? "Target host confirmation is required."
+                  : `Jump host ${event.hop.index} confirmation is required.`,
+              pendingHostKey: event,
+            }),
+            generation,
           );
-          setPendingHostKey(event);
+          shouldActivate = true;
           break;
         case "hostKeyChanged": {
           const hop =
@@ -251,15 +510,23 @@ function App() {
               ? "Target host"
               : `Jump host ${event.hop.index}`;
           const message = `${hop} key changed for ${event.host}:${event.port}. Connection blocked.`;
-          setPendingHostKey(null);
-          setPendingAuthentication(null);
-          setChangedHostKey(event);
-          setStatus("error");
-          setStatusDetail(message);
-          setError(message);
-          setForm((current) => ({ ...current, password: "" }));
-          setPasswordVisible(false);
-          writeSystemLine(message);
+          updateSessionTab(
+            tabId,
+            (tab) => ({
+              ...tab,
+              status: "error",
+              statusDetail: message,
+              error: message,
+              pendingHostKey: null,
+              pendingAuthentication: null,
+              changedHostKey: event,
+              form: { ...tab.form, password: "" },
+              passwordVisible: false,
+            }),
+            generation,
+          );
+          shouldActivate = true;
+          systemLine = message;
           break;
         }
         case "authenticationChallenge": {
@@ -267,174 +534,311 @@ function App() {
             event.hop.kind === "target"
               ? "Target host"
               : `Jump host ${event.hop.index}`;
-          setStatus("authenticating");
-          setStatusDetail(`${hop} requires additional authentication.`);
-          setPendingAuthentication(event);
+          updateSessionTab(
+            tabId,
+            (tab) => ({
+              ...tab,
+              status: "authenticating",
+              statusDetail: `${hop} requires additional authentication.`,
+              pendingAuthentication: event,
+            }),
+            generation,
+          );
+          shouldActivate = true;
           break;
         }
         case "authenticated":
-          setPendingAuthentication(null);
-          setStatus("authenticated");
-          setStatusDetail("Opening an interactive PTY…");
+          updateSessionTab(
+            tabId,
+            (tab) => ({
+              ...tab,
+              status: "authenticated",
+              statusDetail: "Opening an interactive PTY…",
+              pendingAuthentication: null,
+            }),
+            generation,
+          );
           break;
         case "connected":
-          setStatus("connected");
-          setStatusDetail("Interactive shell is active.");
-          setError(null);
-          terminalRef.current?.focus();
+          updateSessionTab(
+            tabId,
+            (tab) => ({
+              ...tab,
+              status: "connected",
+              statusDetail: "Interactive shell is active.",
+              error: null,
+            }),
+            generation,
+          );
+          if (activeTabIdRef.current === tabId) {
+            terminalRefs.current.get(tabId)?.focus();
+          }
           break;
         case "exitStatus":
-          writeSystemLine(`Remote process exited with status ${event.code}.`);
+          systemLine = `Remote process exited with status ${event.code}.`;
           break;
         case "error":
-          setStatus("error");
-          setStatusDetail(event.message);
-          setError(event.message);
-          setPendingAuthentication(null);
-          setForm((current) => ({ ...current, password: "" }));
-          setPasswordVisible(false);
-          writeSystemLine(`Connection error: ${event.message}`);
+          updateSessionTab(
+            tabId,
+            (tab) => ({
+              ...tab,
+              status: "error",
+              statusDetail: event.message,
+              error: event.message,
+              pendingAuthentication: null,
+              form: { ...tab.form, password: "" },
+              passwordVisible: false,
+            }),
+            generation,
+          );
+          systemLine = `Connection error: ${event.message}`;
           break;
         case "closed":
-          setStatus((current) => (current === "error" ? current : "closed"));
-          setStatusDetail("The SSH session has ended.");
-          setSessionId(null);
-          setPendingHostKey(null);
-          setPendingAuthentication(null);
-          setForm((current) => ({ ...current, password: "" }));
-          setPasswordVisible(false);
+          updateSessionTab(
+            tabId,
+            (tab) => ({
+              ...tab,
+              status: tab.status === "error" ? tab.status : "closed",
+              statusDetail: "The SSH session has ended.",
+              sessionId: null,
+              pendingHostKey: null,
+              pendingAuthentication: null,
+              form: { ...tab.form, password: "" },
+              passwordVisible: false,
+            }),
+            generation,
+          );
           break;
       }
+
+      if (systemLine) {
+        writeSystemLine(tabId, systemLine);
+      }
+      if (shouldActivate) {
+        const currentActiveTab = sessionTabsRef.current.find(
+          (tab) => tab.id === activeTabIdRef.current,
+        );
+        const anotherTabOwnsVisibleAction =
+          currentActiveTab !== undefined &&
+          currentActiveTab.id !== tabId &&
+          (currentActiveTab.pendingHostKey !== null ||
+            currentActiveTab.pendingAuthentication !== null ||
+            currentActiveTab.changedHostKey !== null);
+        if (!anotherTabOwnsVisibleAction) {
+          activateSessionTab(tabId);
+        }
+      }
     },
-    [writeSystemLine],
+    [activateSessionTab, updateSessionTab, writeSystemLine],
   );
 
   async function handleConnect(event: FormEvent) {
     event.preventDefault();
 
-    const port = Number(form.port);
+    const tab = sessionTabsRef.current.find(
+      (candidate) => candidate.id === activeTabIdRef.current,
+    );
+    if (!tab) return;
+
+    const selectedHost =
+      hosts.find((host) => host.id === tab.selectedSavedHostId) ?? null;
+    const port = Number(tab.form.port);
     if (
-      !selectedSavedHost &&
-      (!form.host.trim() || !form.username.trim() || !Number.isInteger(port))
+      !selectedHost &&
+      (!tab.form.host.trim() ||
+        !tab.form.username.trim() ||
+        !Number.isInteger(port))
     ) {
       setError("Host, port, and username are required.");
       return;
     }
 
-    setError(null);
-    setPendingHostKey(null);
-    setChangedHostKey(null);
-    setPendingAuthentication(null);
-    setStatus("connecting");
-    setStatusDetail("Preparing connection…");
-    terminalRef.current?.reset();
-    terminalRef.current?.write(
+    const tabId = tab.id;
+    const generation = tab.generation + 1;
+    const terminalSize = tab.terminalSize;
+    const connectionForm = { ...tab.form };
+    updateSessionTab(tabId, (current) => ({
+      ...current,
+      generation,
+      status: "connecting",
+      statusDetail: "Preparing connection…",
+      sessionId: null,
+      pendingHostKey: null,
+      changedHostKey: null,
+      pendingAuthentication: null,
+      passwordVisible: false,
+      error: null,
+      form: { ...current.form, password: "" },
+    }));
+    const terminal = terminalRefs.current.get(tabId);
+    terminal?.reset();
+    terminal?.write(
       `\x1b[1;36mAnySSH Phase 1\x1b[0m\r\nStarting ${
-        selectedSavedHost ? "saved Host" : "a secure"
+        selectedHost ? "saved Host" : "a secure"
       } SSH session…\r\n`,
     );
 
     try {
       const callbacks = {
-        onEvent: handleClientEvent,
+        onEvent: (clientEvent: SshClientEvent) =>
+          handleClientEvent(tabId, generation, clientEvent),
         onData: (data: Uint8Array) =>
           new Promise<void>((resolve) => {
-            const terminal = terminalRef.current;
-            if (terminal) {
-              terminal.write(data, resolve);
+            const targetTerminal = terminalRefs.current.get(tabId);
+            if (targetTerminal) {
+              targetTerminal.write(data, resolve);
             } else {
               resolve();
             }
           }),
       };
-      const id = selectedSavedHost
+      const id = selectedHost
         ? await connectSavedHost(
             {
-              hostId: selectedSavedHost.id,
-              columns: terminalSizeRef.current.columns,
-              rows: terminalSizeRef.current.rows,
+              hostId: selectedHost.id,
+              columns: terminalSize.columns,
+              rows: terminalSize.rows,
             },
             callbacks,
           )
         : await connectSsh(
             {
-              host: form.host.trim(),
+              host: connectionForm.host.trim(),
               port,
               authentication:
-                form.authenticationKind === "keyboardInteractive"
+                connectionForm.authenticationKind === "keyboardInteractive"
                   ? {
                       kind: "keyboardInteractive",
-                      username: form.username.trim(),
+                      username: connectionForm.username.trim(),
                     }
                   : {
                       kind: "temporaryPassword",
-                      username: form.username.trim(),
-                      password: form.password,
+                      username: connectionForm.username.trim(),
+                      password: connectionForm.password,
                     },
-              columns: terminalSizeRef.current.columns,
-              rows: terminalSizeRef.current.rows,
+              columns: terminalSize.columns,
+              rows: terminalSize.rows,
             },
             callbacks,
           );
 
-      setSessionId(id);
-      setForm((current) => ({ ...current, password: "" }));
-      setPasswordVisible(false);
+      const current = sessionTabsRef.current.find(
+        (candidate) => candidate.id === tabId,
+      );
+      if (
+        !appMountedRef.current ||
+        !current ||
+        current.generation !== generation ||
+        current.status === "closed" ||
+        current.status === "error"
+      ) {
+        await disconnectSsh(id).catch(() => undefined);
+        return;
+      }
+      updateSessionTab(
+        tabId,
+        (currentTab) => ({
+          ...currentTab,
+          sessionId: id,
+          form: { ...currentTab.form, password: "" },
+          passwordVisible: false,
+        }),
+        generation,
+      );
     } catch (connectionError) {
       const message =
         connectionError instanceof Error
           ? connectionError.message
           : String(connectionError);
-      handleClientEvent({ type: "error", message });
+      handleClientEvent(tabId, generation, { type: "error", message });
     }
   }
 
   async function handleHostKeyDecision(accepted: boolean) {
-    if (!sessionId || !pendingHostKey) return;
+    const tab = sessionTabsRef.current.find(
+      (candidate) => candidate.id === activeTabIdRef.current,
+    );
+    if (!tab?.sessionId || !tab.pendingHostKey) return;
 
-    setPendingHostKey(null);
+    const { id: tabId, generation, sessionId: targetSessionId } = tab;
+    const requestId = tab.pendingHostKey.requestId;
+    updateSessionTab(
+      tabId,
+      (current) => ({ ...current, pendingHostKey: null }),
+      generation,
+    );
     try {
-      await confirmHostKey(sessionId, pendingHostKey.requestId, accepted);
+      await confirmHostKey(targetSessionId, requestId, accepted);
       if (accepted) {
         await refreshRepository();
       }
       if (!accepted) {
-        setStatus("closed");
-        setStatusDetail("Host key was rejected.");
+        updateSessionTab(
+          tabId,
+          (current) => ({
+            ...current,
+            status: "closed",
+            statusDetail: "Host key was rejected.",
+          }),
+          generation,
+        );
       }
     } catch (decisionError) {
       const message =
         decisionError instanceof Error
           ? decisionError.message
           : String(decisionError);
-      handleClientEvent({ type: "error", message });
+      handleClientEvent(tabId, generation, { type: "error", message });
     }
   }
 
   async function handleAuthenticationDecision(responses: string[] | null) {
-    if (!sessionId || !pendingAuthentication) return;
+    const tab = sessionTabsRef.current.find(
+      (candidate) => candidate.id === activeTabIdRef.current,
+    );
+    if (!tab?.sessionId || !tab.pendingAuthentication) return;
 
-    const requestId = pendingAuthentication.requestId;
-    setPendingAuthentication(null);
+    const { id: tabId, generation, sessionId: targetSessionId } = tab;
+    const requestId = tab.pendingAuthentication.requestId;
+    updateSessionTab(
+      tabId,
+      (current) => ({ ...current, pendingAuthentication: null }),
+      generation,
+    );
     try {
-      await respondAuthentication(sessionId, requestId, responses);
+      await respondAuthentication(targetSessionId, requestId, responses);
       if (responses === null) {
-        setStatus("closed");
-        setStatusDetail("Additional authentication was cancelled.");
+        updateSessionTab(
+          tabId,
+          (current) => ({
+            ...current,
+            status: "closed",
+            statusDetail: "Additional authentication was cancelled.",
+          }),
+          generation,
+        );
       }
     } catch (responseError) {
       const message =
         responseError instanceof Error
           ? responseError.message
           : String(responseError);
-      handleClientEvent({ type: "error", message });
+      handleClientEvent(tabId, generation, { type: "error", message });
     }
   }
 
   async function handleDisconnect() {
-    if (!sessionId) return;
-    setPendingAuthentication(null);
-    await disconnectSsh(sessionId);
+    const tab = sessionTabsRef.current.find(
+      (candidate) => candidate.id === activeTabIdRef.current,
+    );
+    if (!tab?.sessionId) return;
+    updateSessionTab(tab.id, (current) => ({
+      ...current,
+      pendingAuthentication: null,
+      form: { ...current.form, password: "" },
+      passwordVisible: false,
+    }));
+    await disconnectSsh(tab.sessionId);
   }
 
   async function handleVaultSubmit(pin: string) {
@@ -446,30 +850,28 @@ function App() {
           : await unlockVault(pin);
       setVaultStatus(nextStatus);
       await refreshRepository();
-      setStatus("idle");
-      setStatusDetail("Native SSH runtime is available.");
-      setError(null);
+      updateSessionTab(activeTabIdRef.current, (tab) => ({
+        ...tab,
+        status: "idle",
+        statusDetail: "Native SSH runtime is available.",
+        error: null,
+      }));
     } catch (vaultOperationError) {
       setVaultError(String(vaultOperationError));
     }
   }
 
   async function handleVaultLock() {
-    setForm((current) => ({ ...current, password: "" }));
-    setPasswordVisible(false);
-    setPendingHostKey(null);
-    setChangedHostKey(null);
-    setPendingAuthentication(null);
-    setSessionId(null);
-    setSelectedSavedHostId(null);
+    const freshTab = createSessionTab();
+    replaceSessionTabs(() => [freshTab]);
+    setActiveTabId(freshTab.id);
+    terminalRefs.current.clear();
     setCredentials([]);
     setGroups([]);
     setHosts([]);
     setRoutes([]);
     setKnownHosts([]);
     setWorkspaceView("terminal");
-    setStatus("closed");
-    setStatusDetail("The Vault is locked.");
     setVaultError(null);
 
     try {
@@ -479,47 +881,136 @@ function App() {
     }
   }
 
-  const handleTerminalInput = useCallback(
-    (input: string) => {
-      if (!sessionId || !connected) return;
-      void sendSshInput(sessionId, input);
-    },
-    [connected, sessionId],
-  );
+  const handleTerminalInput = useCallback((tabId: string, input: string) => {
+    const tab = sessionTabsRef.current.find(
+      (candidate) => candidate.id === tabId,
+    );
+    if (!tab?.sessionId || tab.status !== "connected") return;
+    void sendSshInput(tab.sessionId, input);
+  }, []);
 
   const handleTerminalResize = useCallback(
-    (columns: number, rows: number) => {
-      terminalSizeRef.current = { columns, rows };
-      if (sessionId && connected) {
-        void resizeSsh(sessionId, columns, rows);
+    (tabId: string, columns: number, rows: number) => {
+      if (columns < 2 || rows < 1) return;
+      const tab = sessionTabsRef.current.find(
+        (candidate) => candidate.id === tabId,
+      );
+      if (!tab) return;
+      updateSessionTab(tabId, (current) => ({
+        ...current,
+        terminalSize: { columns, rows },
+      }));
+      if (tab.sessionId && tab.status === "connected") {
+        void resizeSsh(tab.sessionId, columns, rows);
       }
     },
-    [connected, sessionId],
+    [updateSessionTab],
   );
 
   function selectSavedHost(host: HostSummary) {
-    setSelectedSavedHostId(host.id);
-    setWorkspaceView("terminal");
-    setError(null);
-    setChangedHostKey(null);
-    setPendingAuthentication(null);
-    setPasswordVisible(false);
-    setForm((current) => ({
-      ...current,
-      name: host.displayName,
-      host: host.host,
-      port: String(host.port),
-      password: "",
-    }));
+    const current = sessionTabsRef.current.find(
+      (tab) => tab.id === activeTabIdRef.current,
+    );
+    if (
+      current &&
+      !current.sessionId &&
+      current.status === "idle" &&
+      current.generation === 0 &&
+      current.selectedSavedHostId === null
+    ) {
+      updateSessionTab(current.id, (tab) => ({
+        ...tab,
+        title: host.displayName,
+        form: {
+          ...INITIAL_FORM,
+          name: host.displayName,
+          host: host.host,
+          port: String(host.port),
+        },
+        statusDetail: "Ready to connect the saved Host.",
+        error: null,
+        changedHostKey: null,
+        pendingAuthentication: null,
+        passwordVisible: false,
+        selectedSavedHostId: host.id,
+      }));
+      activateSessionTab(current.id);
+      return;
+    }
+    appendSessionTab(createSessionTab({ kind: "savedHost", host }));
   }
 
   function useQuickConnection() {
-    setSelectedSavedHostId(null);
-    setForm(INITIAL_FORM);
-    setError(null);
-    setChangedHostKey(null);
-    setPendingAuthentication(null);
-    setPasswordVisible(false);
+    const current = sessionTabsRef.current.find(
+      (tab) => tab.id === activeTabIdRef.current,
+    );
+    if (current && !current.sessionId && current.status === "idle") {
+      const quick = createSessionTab();
+      updateSessionTab(current.id, () => ({
+        ...quick,
+        id: current.id,
+      }));
+      activateSessionTab(current.id);
+      return;
+    }
+    appendSessionTab(createSessionTab());
+  }
+
+  function newQuickSessionTab() {
+    appendSessionTab(createSessionTab());
+  }
+
+  function handleSessionTabKeyDown(
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    tabId: string,
+  ) {
+    const tabs = sessionTabsRef.current;
+    const currentIndex = tabs.findIndex((tab) => tab.id === tabId);
+    if (currentIndex < 0) return;
+
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight") {
+      nextIndex = (currentIndex + 1) % tabs.length;
+    } else if (event.key === "ArrowLeft") {
+      nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = tabs.length - 1;
+    }
+    if (nextIndex === null) return;
+
+    event.preventDefault();
+    const nextTab = tabs[nextIndex];
+    activateSessionTab(nextTab.id);
+    window.requestAnimationFrame(() => {
+      document.getElementById(`session-tab-${nextTab.id}`)?.focus();
+    });
+  }
+
+  async function closeSessionTab(tabId: string) {
+    const currentTabs = sessionTabsRef.current;
+    const closingIndex = currentTabs.findIndex((tab) => tab.id === tabId);
+    if (closingIndex < 0) return;
+
+    const closingTab = currentTabs[closingIndex];
+    let nextTabs = currentTabs.filter((tab) => tab.id !== tabId);
+    if (nextTabs.length === 0) {
+      nextTabs = [createSessionTab()];
+    }
+
+    replaceSessionTabs(() => nextTabs);
+    terminalRefs.current.delete(tabId);
+
+    if (activeTabIdRef.current === tabId) {
+      const nextActive =
+        nextTabs[Math.min(closingIndex, nextTabs.length - 1)] ?? nextTabs[0];
+      setActiveTabId(nextActive.id);
+    }
+
+    if (closingTab.sessionId) {
+      await disconnectSsh(closingTab.sessionId).catch(() => undefined);
+    }
   }
 
   const configurationTitle: Record<ConfigurationSection, string> = {
@@ -566,7 +1057,7 @@ function App() {
           >
             <NavIcon name="terminal" />
             Terminal
-            <span className="nav-count">{sessionId ? "1" : "0"}</span>
+            <span className="nav-count">{sessionTabs.length}</span>
           </button>
           <button
             className={`nav-item ${workspaceView === "groups" ? "active" : ""}`}
@@ -742,33 +1233,139 @@ function App() {
           ))}
         </nav>
 
-        {workspaceView === "terminal" ? (
-          <div className="workspace-body">
-            <section className="terminal-card" aria-label="SSH terminal">
-              <div className="terminal-toolbar">
-                <div className="window-controls" aria-hidden="true">
-                  <span />
-                  <span />
-                  <span />
-                </div>
-                <div className="terminal-title">
-                  <span>
-                    {selectedCredential?.username || form.username || "user"}@
-                  </span>
-                  {selectedSavedHost?.host || form.host || "host"}
-                </div>
-                <span className="terminal-security">
-                  <LockIcon />
-                  Host key verification
-                </span>
+        <div
+          aria-hidden={workspaceView !== "terminal"}
+          className={`workspace-body ${
+            workspaceView === "terminal" ? "" : "workspace-body-hidden"
+          }`}
+          inert={workspaceView !== "terminal"}
+        >
+          <section className="terminal-card" aria-label="SSH terminal">
+            <div className="session-tab-strip">
+              <div
+                aria-label="SSH sessions"
+                className="session-tab-list"
+                role="tablist"
+              >
+                {sessionTabs.map((tab) => {
+                  const tabConnected = tab.status === "connected";
+                  const tabPending =
+                    tab.pendingHostKey !== null ||
+                    tab.pendingAuthentication !== null;
+                  return (
+                    <div
+                      className={`session-tab ${
+                        tab.id === activeTab.id ? "active" : ""
+                      }`}
+                      key={tab.id}
+                    >
+                      <button
+                        aria-controls={`session-panel-${tab.id}`}
+                        aria-selected={tab.id === activeTab.id}
+                        className="session-tab-activate"
+                        id={`session-tab-${tab.id}`}
+                        onClick={() => activateSessionTab(tab.id)}
+                        onKeyDown={(event) =>
+                          handleSessionTabKeyDown(event, tab.id)
+                        }
+                        role="tab"
+                        tabIndex={tab.id === activeTab.id ? 0 : -1}
+                        type="button"
+                      >
+                        <span
+                          className={`session-tab-status ${
+                            tabConnected
+                              ? "connected"
+                              : tab.status === "error"
+                                ? "error"
+                                : tabPending
+                                  ? "pending"
+                                  : ""
+                          }`}
+                        />
+                        <span className="session-tab-title">{tab.title}</span>
+                        {tabPending && (
+                          <span className="session-tab-pending">Action</span>
+                        )}
+                      </button>
+                      <button
+                        aria-label={`Close ${tab.title} session tab`}
+                        className="session-tab-close"
+                        onClick={() => void closeSessionTab(tab.id)}
+                        title={
+                          tab.sessionId
+                            ? "Disconnect and close session"
+                            : "Close session tab"
+                        }
+                        type="button"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
-              <TerminalPane
-                onInput={handleTerminalInput}
-                onResize={handleTerminalResize}
-                ref={terminalRef}
-              />
-            </section>
+              <button
+                aria-label="New session tab"
+                className="new-session-tab"
+                disabled={sessionTabs.length >= MAX_SESSION_TABS}
+                onClick={newQuickSessionTab}
+                type="button"
+              >
+                +
+              </button>
+            </div>
+            <div className="terminal-toolbar">
+              <div className="window-controls" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </div>
+              <div className="terminal-title">
+                <span>
+                  {selectedCredential?.username || form.username || "user"}@
+                </span>
+                {selectedSavedHost?.host || form.host || "host"}
+              </div>
+              <span className="terminal-security">
+                <LockIcon />
+                Host key verification
+              </span>
+            </div>
+            <div className="terminal-tab-panels">
+              {sessionTabs.map((tab) => {
+                const visible =
+                  workspaceView === "terminal" && tab.id === activeTab.id;
+                return (
+                  <div
+                    aria-labelledby={`session-tab-${tab.id}`}
+                    className="terminal-tab-panel"
+                    hidden={!visible}
+                    id={`session-panel-${tab.id}`}
+                    key={tab.id}
+                    role="tabpanel"
+                  >
+                    <TerminalPane
+                      onInput={(input) => handleTerminalInput(tab.id, input)}
+                      onResize={(columns, rows) =>
+                        handleTerminalResize(tab.id, columns, rows)
+                      }
+                      ref={(handle) => {
+                        if (handle) {
+                          terminalRefs.current.set(tab.id, handle);
+                        } else {
+                          terminalRefs.current.delete(tab.id);
+                        }
+                      }}
+                      visible={visible}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </section>
 
+          {workspaceView === "terminal" && (
             <aside className="connection-panel">
               <div className="panel-heading">
                 <div>
@@ -1007,8 +1604,9 @@ function App() {
                 </div>
               </div>
             </aside>
-          </div>
-        ) : (
+          )}
+        </div>
+        {workspaceView !== "terminal" && (
           <ConfigurationWorkspace
             credentials={credentials}
             groups={groups}

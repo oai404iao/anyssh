@@ -1,6 +1,6 @@
 # Multi Tab Terminal and Session Lifecycle v1
 
-> 状态：设计中；等待 ExecPlan 0007 实现与验证
+> 状态：本地实现完成；等待 ExecPlan 0007 同 Commit CI 与 ADR 评审
 > 日期：2026-07-28
 
 本文定义 Phase 1 Desktop MVP 的多 Session Tab、Terminal Instance、Event
@@ -26,21 +26,23 @@ Routing、Close/Disconnect/Vault Lock 生命周期和 Browser/Native 验证。�
 - Terminal Search、Copy Mode、Recording 或加密 Session Log。
 - Forwarding UI；Forwarding 仍属于后续 ExecPlan。
 
-## 当前实现差距
+## 当前实现
 
-- Tauri `SessionRegistry` 已是 `HashMap<String, SessionEntry>`，每个 Entry 有独立
+- Tauri `SessionRegistry` 是 `HashMap<String, SessionEntry>`，每个 Entry 有独立
   `SessionControl` 和 Output Ack Sender。
-- `register_spawned_session` 已为每次连接创建独立 Event/Data Channel Pump。
-- React `App.tsx` 仍只有一个 `sessionId`、Status、Pending Host Key、Pending
-  Authentication、Terminal Ref 和 Terminal Size。
-- `TerminalPane` 自己创建 xterm.js、FitAddon 和 Unicode Grapheme Addon；卸载会
-  Dispose Terminal 并丢失 Scrollback。
-- Vault Lock 已在 Rust 侧 Drain Registry 并 Disconnect 全部 Session，但前端只
-  清理一个 Session State。
+- `register_spawned_session` 为每次连接创建独立 Event/Data Channel Pump；Channel
+  丢失时显式 `remove_and_disconnect`。
+- React `App.tsx` 使用 Ref-backed Immutable Session Controller，按 Tab ID 和
+  Generation 更新独立 Status、Form、Rust Session ID、Pending Host Key、
+  Changed-Key、Authentication 和 Terminal Size。
+- 每个 Tab 有独立 `TerminalPane` 和 xterm.js。Inactive Terminal 保持 Mounted，
+  但 `visible` Guard 阻止隐藏 Surface 执行 Fit/发送 0x0 Resize。
+- Vault Lock 在 Rust 侧 `disconnect_all`，前端同时替换为一个全新 Quick Tab 并
+  清除全部 Terminal Ref、Challenge 和临时 Password。
 
 ## Frontend Session Model
 
-建议使用 Reducer 管理：
+Session Controller 管理的等价模型为：
 
 ```ts
 type SessionTabId = string;
@@ -95,7 +97,7 @@ Any state --Vault Lock--> Disconnect all -> Remove all -> PIN Gate
 
 - 新建 Tab 立即成为 Active。
 - 同一 Saved Host 可以打开多个 Tab；Tab Identity 不是 Host ID。
-- Live Tab 的 Close 要求显式确认，或使用清晰的“Disconnect and close”操作。
+- Live Tab 的 Close 使用明确的“Disconnect and close”语义。
 - Closed/Error Tab 可直接关闭。
 - Session Event 到达已删除 Tab 时忽略；若仍有 Rust Session ID，则请求
   Disconnect。
@@ -135,8 +137,8 @@ Connected 时发送 Resize。隐藏 Tab 的 ResizeObserver 不应把 0x0 发送�
   Tab 会卸载当前 Response Form 并清空未提交内容。
 - Submit/Cancel 使用该 Tab 当前 `nativeSessionId + requestId`。若二者已变化则
   Fail Closed，不发送 Response。
-- 可选择在第一个 Pending Challenge 到达且用户没有正在编辑其他 Challenge 时
-  自动激活该 Tab；不得在多个 Challenge 间持续抢焦点。
+- 第一个 Pending Action 到达且 Active Tab 没有 Host Key/Challenge/Changed-Key
+  Dialog 时自动激活；其他 Pending Tab 只显示文本 Indicator，不持续抢焦点。
 
 ## Tauri Session Registry
 
@@ -182,7 +184,8 @@ Mobile：
 - 两个 Preview Session 的 Output/Input 不串线。
 - 一个 Tab 的 Host Key/OTP Decision 不影响另一个。
 - 关闭一个 Preview Session 后另一个继续响应命令。
-- Vault Lock 模拟清空全部 Preview Session。
+- Close-during-connect 会 Disconnect Late Preview Session；Native Vault Lock
+  负责全量清理真实 Session。
 
 Browser QA 仍不得打开网络或保存 Response。
 

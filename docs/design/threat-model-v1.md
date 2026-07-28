@@ -111,16 +111,17 @@ System SSH Agent Socket / Named Pipe
 | T-18 | 加密 Key Passphrase 经 WebView、外部进程或 Prompt Buffer 泄露 | Accepted ADR-0014：进程内 GTK/Windows Credential UI、无 Passphrase IPC、`Zeroizing<String>`、三次上限、失败不落库、Artifact 明文扫描 | Toolkit/OS 和解锁进程内存仍短暂持有 Secret；Android/iOS Adapter 尚未实现 |
 | T-19 | 被攻陷的 WebView 删除 Known Host 后自动接受 MITM Key | Accepted ADR-0015：Forget 只提交 ID，由 ApplicationCore 解析并通过 WebView 外 Linux/Windows 原生确认后删除；Changed-Key 无接受入口 | Android/iOS 原生确认 Adapter 尚未实现；OS/Toolkit Prompt 仍是平台信任边界 |
 | T-20 | 恶意 Server Prompt 或延迟 OTP Response 泄露 Saved Secret/应用到错误 Hop | Accepted ADR-0016：不自动填充 Saved Secret；Request-scoped 局部表单、Typed IPC、`Zeroizing<String>`、Request/Hop/Round 绑定、Count/Size/Timeout 上限和普通失败不降级；OpenSSH PAM/X11/Wayland/Windows Evidence | 当前 Renderer 被攻陷时仍可能读取本次临时 Response |
-| T-21 | 多 Tab 把 Output/Input/Host Key/OTP 路由到错误 Session，或关闭 UI 后留下孤儿连接 | Proposed ADR-0017：Tab ID/Generation 与 Rust Session ID 分离；每 Tab Event/Data Channel、xterm/Ack/Pending Request；Close 先 Disconnect；Vault Lock/App Exit Drain 全部 Session | Multi Tab 尚未实现；需验证 Close-during-connect、非活动大输出和同时多个 Challenge |
+| T-21 | 多 Tab 把 Output/Input/Host Key/OTP 路由到错误 Session，或关闭 UI 后留下孤儿连接 | Proposed ADR-0017 的本地实现：Tab ID/Generation 与 Rust Session ID 分离；每 Tab Event/Data Channel、Mounted xterm/Ack/Pending Request；Late Return Disconnect；Close、Channel Loss、Vault Lock 和 App Exit Fail Closed | Browser、X11、Wayland 已覆盖 Close-during-connect、同时 Challenge、非活动 4 MiB 输出和双 Session Vault Lock；Windows Multi Tab Evidence 等待同 Commit CI |
 
 ## 6. 平台结论
 
 - Linux X11：真实 Tauri/WebKitGTK、Vault、加密 Key GTK Prompt/错误重试、
   Native Picker、`SSH_AUTH_SOCK` Identity UI、Durable TOFU、原生 Forget、
-  Host Key Rotation 硬阻断、OpenSSH PAM Keyboard-interactive、SSH 和 4 MiB
-  输出已验证。
+  Host Key Rotation 硬阻断、OpenSSH PAM Keyboard-interactive、双 SSH Session、
+  非活动 Tab 4 MiB 输出、单 Tab Close 和双 Session Vault Lock 已验证。
 - Linux Wayland：无 `DISPLAY`、Weston、IBus/libpinyin、xterm、SSH 和
-  OpenSSH PAM Keyboard-interactive 已验证。
+  OpenSSH PAM Keyboard-interactive 已验证；一个 Connected Tab 与一个
+  Challenge Tab 的并发路由和单 Tab Close 也已验证。
 - Windows：真实 EXE/WebView2、非零窗口句柄、Vault/Repository、Durable TOFU、
   原生 Forget、重启恢复和 Changed-Key 硬阻断已验证。Run `30360000884` 还覆盖
   Native Picker、Credential UI、加密 Key SSH、System Agent Named Pipe、

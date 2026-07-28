@@ -124,6 +124,190 @@ test("cancels and clears a pending keyboard-interactive challenge", async ({
   ).toHaveCount(0);
 });
 
+test("routes simultaneous authentication challenges to their owning tabs", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  await page.getByLabel("Display name").fill("Trust setup");
+  await page
+    .getByRole("textbox", { name: "Host", exact: true })
+    .fill("otp.example");
+  await page.getByLabel("Authentication").selectOption("keyboardInteractive");
+  await page.getByRole("button", { name: "Connect" }).click();
+  await page
+    .getByRole("dialog", { name: "Verify server identity" })
+    .getByRole("button", { name: "Trust and continue" })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Multi-factor authentication" })
+    .getByRole("button", { name: "Cancel authentication" })
+    .click();
+  await page
+    .getByRole("button", { name: "Close Trust setup session tab" })
+    .click();
+
+  async function configureInteractiveTab(displayName: string): Promise<void> {
+    await page.getByLabel("Display name").fill(displayName);
+    await page
+      .getByRole("textbox", { name: "Host", exact: true })
+      .fill("otp.example");
+    await page.getByLabel("Authentication").selectOption("keyboardInteractive");
+  }
+
+  await configureInteractiveTab("OTP one");
+  await page.getByRole("button", { name: "New session tab" }).click();
+  await configureInteractiveTab("OTP two");
+
+  await page.getByRole("tab", { name: "OTP one" }).click();
+  await page.getByRole("button", { name: "Connect" }).click();
+  await page.getByRole("tab", { name: "OTP two" }).click();
+  await page.getByRole("button", { name: "Connect" }).click();
+
+  await expect(page.locator(".session-tab-pending")).toHaveCount(2);
+  await expect(page.getByRole("tab", { name: /OTP one/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  let challenge = page.getByRole("dialog", {
+    name: "Multi-factor authentication",
+  });
+  await challenge.getByLabel("Verification code:").fill("111111");
+  await challenge.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByText("Interactive shell is active.")).toBeVisible();
+
+  await page.getByRole("tab", { name: /OTP two/ }).click();
+  challenge = page.getByRole("dialog", {
+    name: "Multi-factor authentication",
+  });
+  await expect(challenge).toBeVisible();
+  await challenge.getByLabel("Verification code:").fill("222222");
+  await challenge.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByText("Interactive shell is active.")).toBeVisible();
+  await expect(page.locator(".session-tab-pending")).toHaveCount(0);
+  await expect(page.getByText("111111", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("222222", { exact: true })).toHaveCount(0);
+});
+
+test("keeps concurrent session tabs isolated when one closes", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  async function connectActiveTab(
+    displayName: string,
+    host: string,
+  ): Promise<void> {
+    await page.getByLabel("Display name").fill(displayName);
+    await page.getByRole("textbox", { name: "Host", exact: true }).fill(host);
+    await page.getByLabel("Password", { exact: true }).fill("fixture");
+    await page.getByRole("button", { name: "Connect" }).click();
+    await page
+      .getByRole("dialog", { name: "Verify server identity" })
+      .getByRole("button", { name: "Trust and continue" })
+      .click();
+    await expect(page.getByText("Interactive shell is active.")).toBeVisible();
+  }
+
+  await page.getByLabel("Display name").fill("Session one");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("draft-password-must-clear");
+  await page.getByRole("button", { name: "New session tab" }).click();
+  await page.getByRole("tab", { name: "Session one" }).click();
+  await expect(page.getByLabel("Password", { exact: true })).toHaveValue("");
+
+  await connectActiveTab("Session one", "one.example");
+  await page.getByRole("tab", { name: "Local lab" }).click();
+  await connectActiveTab("Session two", "two.example");
+
+  await expect(page.getByRole("tab")).toHaveCount(2);
+  const secondTab = page.getByRole("tab", { name: "Session two" });
+  await secondTab.focus();
+  await secondTab.press("ArrowLeft");
+  await expect(page.getByRole("tab", { name: "Session one" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const firstPanel = page.getByRole("tabpanel");
+  await expect(firstPanel).toContainText("one.example:2222");
+  const firstTerminal = page.getByRole("textbox", { name: "Terminal input" });
+  await firstTerminal.focus();
+  await firstTerminal.pressSequentially("unicode");
+  await firstTerminal.press("Enter");
+  await expect(firstPanel).toContainText("中文");
+
+  await page.getByRole("tab", { name: "Session two" }).click();
+  const secondPanel = page.getByRole("tabpanel");
+  await expect(secondPanel).toContainText("two.example:2222");
+  await expect(secondPanel).not.toContainText("中文");
+
+  await page.getByRole("tab", { name: "Session one" }).click();
+  await page
+    .getByRole("button", { name: "Close Session one session tab" })
+    .click();
+  await expect(page.getByRole("tab", { name: "Session one" })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "Session two" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByText("Interactive shell is active.")).toBeVisible();
+
+  const remainingTerminal = page.getByRole("textbox", {
+    name: "Terminal input",
+  });
+  await remainingTerminal.focus();
+  await remainingTerminal.pressSequentially("help");
+  await remainingTerminal.press("Enter");
+  await expect(page.getByRole("tabpanel")).toContainText("Available commands");
+});
+
+test("closes a connecting tab without accepting late events", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByLabel("Display name").fill("Closing session");
+  await page.getByLabel("Password", { exact: true }).fill("fixture");
+  await page.getByRole("button", { name: "Connect" }).click();
+  await page
+    .getByRole("button", { name: "Close Closing session session tab" })
+    .click();
+
+  await page.waitForTimeout(350);
+  await expect(
+    page.getByRole("dialog", { name: "Verify server identity" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("tab")).toHaveCount(1);
+  await expect(page.getByRole("tab", { name: "Local lab" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.locator(".status-pill")).toHaveText("Ready");
+});
+
+test("enforces the eight-tab session limit without evicting a tab", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const newTab = page.getByRole("button", { name: "New session tab" });
+
+  for (let index = 1; index < 8; index += 1) {
+    await newTab.click();
+  }
+
+  await expect(page.getByRole("tab")).toHaveCount(8);
+  await expect(newTab).toBeDisabled();
+
+  await page
+    .getByRole("button", { name: "Close Local lab session tab" })
+    .last()
+    .click();
+  await expect(page.getByRole("tab")).toHaveCount(7);
+  await expect(newTab).toBeEnabled();
+  await newTab.click();
+  await expect(page.getByRole("tab")).toHaveCount(8);
+});
+
 test("blocks a changed Known Host without an accept action", async ({
   page,
 }) => {
@@ -145,7 +329,9 @@ test("blocks a changed Known Host without an accept action", async ({
   await expect(
     page.getByRole("heading", { level: 2, name: "Known Hosts" }),
   ).toBeVisible();
-  await expect(page.getByText("changed.example:22")).toBeVisible();
+  await expect(
+    page.locator(".known-host-card").filter({ hasText: "changed.example:22" }),
+  ).toBeVisible();
 });
 
 test("manages Groups, Credentials, Hosts, and ordered Jump Routes", async ({

@@ -437,6 +437,10 @@ select:focus-visible {
   padding: 18px;
 }
 
+.workspace-body-hidden {
+  display: none;
+}
+
 .terminal-card,
 .connection-panel {
   min-height: 0;
@@ -451,6 +455,130 @@ select:focus-visible {
   min-width: 0;
   flex-direction: column;
   overflow: hidden;
+}
+
+.session-tab-strip {
+  display: flex;
+  min-height: 42px;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.012);
+}
+
+.session-tab-list {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: stretch;
+  gap: 3px;
+  padding: 5px 4px 5px 6px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.session-tab {
+  display: flex;
+  min-width: 132px;
+  max-width: 220px;
+  flex: 0 1 190px;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: #7f8ba1;
+  background: transparent;
+}
+
+.session-tab.active {
+  border-color: rgba(107, 230, 210, 0.18);
+  color: #d8e1ef;
+  background: rgba(107, 230, 210, 0.07);
+}
+
+.session-tab-activate {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  padding: 0 5px 0 9px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.session-tab-status {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #59647a;
+}
+
+.session-tab-status.connected {
+  background: var(--cyan);
+  box-shadow: 0 0 6px rgba(107, 230, 210, 0.68);
+}
+
+.session-tab-status.pending {
+  background: var(--warning);
+}
+
+.session-tab-status.error {
+  background: var(--danger);
+}
+
+.session-tab-title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-tab-pending {
+  padding: 2px 4px;
+  border-radius: 5px;
+  color: #e6bb72;
+  background: rgba(255, 198, 109, 0.09);
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.session-tab-close,
+.new-session-tab {
+  border: 0;
+  color: #778399;
+  background: transparent;
+  cursor: pointer;
+}
+
+.session-tab-close {
+  width: 28px;
+  align-self: stretch;
+  border-radius: 0 8px 8px 0;
+  font-size: 16px;
+}
+
+.session-tab-close:hover,
+.new-session-tab:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.new-session-tab {
+  width: 38px;
+  flex: 0 0 auto;
+  border-left: 1px solid var(--border);
+  font-size: 18px;
+}
+
+.new-session-tab:disabled {
+  cursor: not-allowed;
+  opacity: 0.36;
 }
 
 .terminal-toolbar {
@@ -507,6 +635,27 @@ select:focus-visible {
   gap: 6px;
   color: #667188;
   font-size: 9px;
+}
+
+.terminal-tab-panels,
+.terminal-tab-panel {
+  min-height: 0;
+  flex: 1;
+}
+
+.terminal-tab-panels {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-tab-panel:not([hidden]) {
+  display: flex;
+  min-width: 0;
+}
+
+.terminal-tab-panel > .terminal-surface {
+  width: 100%;
 }
 
 .terminal-security svg,
@@ -1719,6 +1868,21 @@ select:focus-visible {
 
   .terminal-card {
     min-height: 52vh;
+  }
+
+  .session-tab {
+    min-width: 118px;
+    flex-basis: 150px;
+  }
+
+  .session-tab-pending {
+    padding: 2px 3px;
+    font-size: 0;
+  }
+
+  .session-tab-pending::after {
+    content: "!";
+    font-size: 8px;
   }
 
   .connection-panel {

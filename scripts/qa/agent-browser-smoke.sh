@@ -117,6 +117,50 @@ agent-browser --session "$SESSION" wait 400
 agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/03-connected-unicode.png"
 
+agent-browser --session "$SESSION" find role button click \
+  --name "New session tab"
+agent-browser --session "$SESSION" find label "Display name" fill \
+  "Browser QA second"
+agent-browser --session "$SESSION" find label "Password" fill \
+  "fixture-password"
+agent-browser --session "$SESSION" find role button click --name "Connect"
+agent-browser --session "$SESSION" wait --text "Interactive shell is active."
+agent-browser --session "$SESSION" snapshot -i \
+  >"$OUTPUT_DIR/03b-multi-tab-snapshot.txt"
+if ! grep -F "Browser QA second" \
+  "$OUTPUT_DIR/03b-multi-tab-snapshot.txt" >/dev/null; then
+  echo "The second Session Tab was not exposed in the accessibility tree." >&2
+  exit 1
+fi
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/03b-multi-tab-desktop.png"
+agent-browser --session "$SESSION" set viewport 390 844
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/03c-multi-tab-mobile.png"
+agent-browser --session "$SESSION" set viewport 1440 900
+agent-browser --session "$SESSION" find role button click \
+  --name "Close Browser QA second session tab"
+agent-browser --session "$SESSION" wait --text "Interactive shell is active."
+
+REMAINING_SESSION_SNAPSHOT="$(agent-browser --session "$SESSION" snapshot -i)"
+TERMINAL_REF="$(
+  printf '%s\n' "$REMAINING_SESSION_SNAPSHOT" |
+    sed -n 's/.*textbox "Terminal input" \[ref=\([^]]*\)\].*/@\1/p' |
+    head -n1
+)"
+if [[ -z "$TERMINAL_REF" ]]; then
+  echo "The remaining Session Tab lost its Terminal input." >&2
+  exit 1
+fi
+agent-browser --session "$SESSION" focus "$TERMINAL_REF"
+for key in s t a t u s; do
+  agent-browser --session "$SESSION" press "$key"
+done
+agent-browser --session "$SESSION" press Enter
+agent-browser --session "$SESSION" wait 300
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/03d-first-tab-after-close.png"
+
 agent-browser --session "$SESSION" set viewport 390 844
 agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/04-mobile-connected.png"
@@ -379,6 +423,8 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
   terminal session.
 - Real keyboard events reached xterm.js.
 - Unicode/CJK/Nerd Font preview command rendered.
+- Two concurrent Preview Session Tabs rendered at desktop/mobile widths; closing
+  the second Tab left the first Terminal connected and accepting input.
 - Compact 1024x768 layout rendered with an icon-only sidebar.
 - Responsive layout rendered at 390x844.
 - Disconnect returned the UI to the disconnected state.
@@ -413,6 +459,9 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
 - \`screenshots/01-initial-desktop.png\`
 - \`screenshots/02-host-key-dialog.png\`
 - \`screenshots/03-connected-unicode.png\`
+- \`screenshots/03b-multi-tab-desktop.png\`
+- \`screenshots/03c-multi-tab-mobile.png\`
+- \`screenshots/03d-first-tab-after-close.png\`
 - \`screenshots/04-mobile-connected.png\`
 - \`screenshots/05-disconnected.png\`
 - \`screenshots/05b-known-hosts.png\`

@@ -441,6 +441,13 @@ impl SessionRegistry {
         self.sessions.write().await.remove(id);
     }
 
+    async fn remove_and_disconnect(&self, id: &str) {
+        let entry = { self.sessions.write().await.remove(id) };
+        if let Some(entry) = entry {
+            let _ = entry.control.disconnect().await;
+        }
+    }
+
     async fn drain(&self) -> Vec<SessionControl> {
         self.sessions
             .write()
@@ -448,6 +455,12 @@ impl SessionRegistry {
             .drain()
             .map(|(_, entry)| entry.control)
             .collect()
+    }
+
+    async fn disconnect_all(&self) {
+        for control in self.drain().await {
+            let _ = control.disconnect().await;
+        }
     }
 }
 
@@ -659,9 +672,7 @@ async fn vault_lock(
     core: State<'_, ApplicationCore>,
     sessions: State<'_, SessionRegistry>,
 ) -> Result<VaultStatus, String> {
-    for session in sessions.drain().await {
-        let _ = session.disconnect().await;
-    }
+    sessions.disconnect_all().await;
     core.lock_vault()
         .await
         .map(VaultStatus::from)
@@ -1131,7 +1142,6 @@ async fn register_spawned_session(
                     )
                     .await
                     {
-                        registry.remove(&event_session_id).await;
                         break;
                     }
 
@@ -1152,10 +1162,11 @@ async fn register_spawned_session(
             };
 
             if result.is_err() {
-                registry.remove(&event_session_id).await;
                 break;
             }
         }
+
+        registry.remove_and_disconnect(&event_session_id).await;
     });
 
     Ok(session_id)
@@ -1248,7 +1259,7 @@ async fn ssh_disconnect(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(SessionRegistry::default())
         .setup(|app| {
@@ -1295,13 +1306,40 @@ pub fn run() {
             ssh_resize,
             ssh_disconnect
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running AnySSH");
+        .build(tauri::generate_context!())
+        .expect("error while building AnySSH");
+
+    app.run(|app_handle, event| {
+        if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+            let registry = app_handle.state::<SessionRegistry>().inner().clone();
+            tauri::async_runtime::block_on(registry.disconnect_all());
+        }
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    use anyssh_ssh::{
+        HostKeyPolicy, SessionAuthentication, SshConnectionConfig, SshSessionConfig, spawn_session,
+    };
+
+    fn spawn_registry_test_session() -> SpawnedSession {
+        spawn_session(SshSessionConfig {
+            target: SshConnectionConfig {
+                endpoint: SshEndpoint::new("192.0.2.1", 65_000)
+                    .expect("documentation-only test endpoint"),
+                username: "registry-test".to_owned(),
+                authentication: SessionAuthentication::KeyboardInteractive,
+                host_key_policy: HostKeyPolicy::Prompt,
+            },
+            jump_hosts: Vec::new(),
+            terminal_size: TerminalSize::new(80, 24).expect("test terminal size"),
+            connection_timeout: Duration::from_secs(60),
+        })
+    }
 
     #[test]
     fn host_key_event_uses_the_typed_bridge_field_names() {
@@ -1828,6 +1866,91 @@ mod tests {
         ] {
             assert!(serde_json::from_value::<ConnectSavedHostRequest>(extra).is_err());
         }
+    }
+
+    #[tokio::test]
+    async fn session_registry_routes_acknowledgements_and_removal_by_id() {
+        let registry = SessionRegistry::default();
+        let first_id = registry.new_id();
+        let second_id = registry.new_id();
+        assert_ne!(first_id, second_id);
+
+        let first = spawn_registry_test_session();
+        let first_control = first.control.clone();
+        let _first_events = first.events;
+        let second = spawn_registry_test_session();
+        let _second_events = second.events;
+        let (first_acknowledgements, mut first_acks) = tokio::sync::mpsc::channel(2);
+        let (second_acknowledgements, mut second_acks) = tokio::sync::mpsc::channel(2);
+
+        registry
+            .insert(first_id.clone(), first.control, first_acknowledgements)
+            .await;
+        registry
+            .insert(second_id.clone(), second.control, second_acknowledgements)
+            .await;
+
+        registry
+            .acknowledge_output(&first_id)
+            .await
+            .expect("first Session acknowledgement");
+        assert_eq!(first_acks.recv().await, Some(()));
+        assert!(second_acks.try_recv().is_err());
+
+        registry
+            .acknowledge_output(&second_id)
+            .await
+            .expect("second Session acknowledgement");
+        assert_eq!(second_acks.recv().await, Some(()));
+        assert!(first_acks.try_recv().is_err());
+
+        registry.remove_and_disconnect(&first_id).await;
+        assert!(registry.get(&first_id).await.is_err());
+        assert!(first_control.send_input("ignored").await.is_err());
+        assert!(registry.get(&second_id).await.is_ok());
+        registry
+            .acknowledge_output(&second_id)
+            .await
+            .expect("remaining Session acknowledgement");
+        assert_eq!(second_acks.recv().await, Some(()));
+
+        registry.disconnect_all().await;
+    }
+
+    #[tokio::test]
+    async fn session_registry_disconnect_all_drains_every_session() {
+        let registry = SessionRegistry::default();
+        let first = spawn_registry_test_session();
+        let first_control = first.control.clone();
+        let _first_events = first.events;
+        let second = spawn_registry_test_session();
+        let second_control = second.control.clone();
+        let _second_events = second.events;
+        let (first_acknowledgements, _first_acks) = tokio::sync::mpsc::channel(1);
+        let (second_acknowledgements, _second_acks) = tokio::sync::mpsc::channel(1);
+
+        registry
+            .insert(
+                "ssh-first".to_owned(),
+                first.control,
+                first_acknowledgements,
+            )
+            .await;
+        registry
+            .insert(
+                "ssh-second".to_owned(),
+                second.control,
+                second_acknowledgements,
+            )
+            .await;
+
+        registry.disconnect_all().await;
+
+        assert!(registry.get("ssh-first").await.is_err());
+        assert!(registry.get("ssh-second").await.is_err());
+        assert!(first_control.send_input("ignored").await.is_err());
+        assert!(second_control.send_input("ignored").await.is_err());
+        registry.disconnect_all().await;
     }
 
     #[tokio::test]

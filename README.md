@@ -28,6 +28,10 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
   Forget 和 Changed-Key 硬阻断。
 - RFC 4256 Keyboard-interactive/OTP、多轮 Challenge/Response、Partial-success
   第二因子和 Session-bound Response。
+- 最多 8 个独立 Session Tab；每 Tab 隔离 Rust Session ID、Generation、
+  xterm.js、Status、Resize、Host Key 和 Authentication Challenge。Inactive
+  Terminal 保持 Mounted 并继续 Ack Output，Disconnect 保留 Scrollback，Close
+  只移除目标 Tab。
 - 4 MiB 终端输出下的 64 项 Core Queue、8 项 WebView Window 和 xterm Ack 背压。
 - 随机 VMK、Argon2id PIN Slot、HKDF 子密钥和版本化 Bootstrap。
 - SQLCipher 4.10 整库加密与 XChaCha20-Poly1305 Credential 字段加密。
@@ -66,6 +70,9 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
 - Windows 2025 Runner 已通过 controlled russh Server 和真实 EXE/WebView2
   完成 masked Keyboard-interactive Challenge、Interactive Credential 重启和
   Response/Vault/Evidence 扫描。
+- 本地 Browser、X11 和无 `DISPLAY` Wayland 已验证双 Session、同时 Pending
+  Challenge、单 Tab Close、Inactive Tab 4 MiB Output 和双 Session Vault Lock；
+  Windows Multi Tab QA 已实现，等待同 Commit CI Runner 验证。
 - Head `0ceb5b332967a9b1fc7fdf73967ae49bf44505d7` 的 GitHub Actions Run
   `30360000884` 九个 Job 全部通过，Browser、X11、Wayland、Windows、Android、
   Linux 的关键截图、Error Log、Build Hash 和测试 Secret Scan 已人工检查。

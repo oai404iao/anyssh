@@ -782,6 +782,9 @@ try {
   if (-not $SshMarker.Contains("ANYSSH_WINDOWS_AGENT_OK")) {
     throw "The Windows System Agent remote marker was invalid."
   }
+  if (-not $SshMarker.Contains("ANYSSH_WINDOWS_AGENT_TAB_SURVIVED")) {
+    throw "The Windows System Agent Session did not survive closing the second Tab."
+  }
   if (Test-Path -LiteralPath $script:EncryptedKeyPath -PathType Leaf) {
     throw "The Windows encrypted Private Key source still existed before SSH validation."
   }
@@ -858,8 +861,11 @@ try {
 - The real EXE used the Agent Named Pipe to authenticate to a standalone Windows
   OpenSSH Server and created the remote marker ``$SshMarkerPath``.
 - The real EXE used Quick Connection against a controlled russh Server,
-  displayed a masked Keyboard-interactive Challenge, and created the marker
-  ``$InteractiveMarkerPath``.
+  displayed a masked Keyboard-interactive Challenge in a second Session Tab,
+  and created the marker ``$InteractiveMarkerPath`` while the Agent Session
+  remained connected.
+- Closing the Keyboard-interactive Tab left the Agent Tab connected and able to
+  append ``ANYSSH_WINDOWS_AGENT_TAB_SURVIVED`` to its remote marker.
 - The Interactive Credential persisted only Label/Username metadata, while the
   session response remained absent from Vault files and QA evidence.
 - The first connection durably persisted TOFU before authentication; a second
@@ -897,6 +903,7 @@ try {
 - ``02c3-tofu-after-forget.png``
 - ``02d-interactive-challenge.png``
 - ``02e-interactive-connected.png``
+- ``02f-agent-tab-after-close.png``
 - ``03-repository-created.png``
 - ``04-vault-wrong-pin.png``
 - ``05-vault-reunlocked.png``

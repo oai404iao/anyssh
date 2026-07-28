@@ -19,14 +19,17 @@ export interface TerminalHandle {
 interface TerminalPaneProps {
   onInput(input: string): void;
   onResize(columns: number, rows: number): void;
+  visible?: boolean;
 }
 
 export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
-  function TerminalPane({ onInput, onResize }, forwardedRef) {
+  function TerminalPane({ onInput, onResize, visible = true }, forwardedRef) {
     const mountRef = useRef<HTMLDivElement>(null);
     const terminalRef = useRef<Terminal | null>(null);
+    const fitRef = useRef<(() => void) | null>(null);
     const inputHandlerRef = useLatest(onInput);
     const resizeHandlerRef = useLatest(onResize);
+    const visibleRef = useLatest(visible);
 
     useImperativeHandle(
       forwardedRef,
@@ -99,12 +102,14 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
       );
 
       const fit = () => {
+        if (!visibleRef.current) return;
         try {
           fitAddon.fit();
         } catch {
           // The WebView can briefly report a zero-sized mount during layout changes.
         }
       };
+      fitRef.current = fit;
 
       const observer = new ResizeObserver(fit);
       observer.observe(mount);
@@ -116,8 +121,14 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
         resizeDisposable.dispose();
         terminal.dispose();
         terminalRef.current = null;
+        fitRef.current = null;
       };
-    }, [inputHandlerRef, resizeHandlerRef]);
+    }, [inputHandlerRef, resizeHandlerRef, visibleRef]);
+
+    useEffect(() => {
+      if (!visible) return;
+      queueMicrotask(() => fitRef.current?.());
+    }, [visible]);
 
     return (
       <div className="terminal-surface">

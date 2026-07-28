@@ -24,14 +24,15 @@
 
 状态：进行中；Group、System Agent、加密 Private Key 原生 Passphrase Prompt
 Known Host Repository/Durable TOFU 和 Keyboard-interactive/OTP 已完成。
-Multi Tab Terminal 与 Session Lifecycle 正在执行。
+Multi Tab Terminal 与 Session Lifecycle 已完成本地 Browser/X11/Wayland/
+Container 验证，等待同 Commit Windows/CI Evidence 与 ADR 评审。
 
 - Host 与 Group 继承（已完成）。
 - 密码、私钥（含 Linux/Windows 加密 Key Prompt）、系统 Agent（已完成）。
 - known_hosts（Endpoint-scoped Durable TOFU 已完成；OpenSSH 文件导入/导出
   后续实施）。
 - Keyboard-interactive/OTP（已完成）。
-- 多 Tab Terminal（当前活动计划）。
+- 多 Tab Terminal（本地实现完成；当前活动计划等待 Windows/CI 收尾）。
 - Jump Host（任意长度 Route 与两跳 Native/Protocol 验证已完成）。
 - Local/Remote/Dynamic Forward。
 - Key 管理（Native Import 已完成；生成、Reveal/Export 待实施）。

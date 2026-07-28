@@ -470,6 +470,94 @@ if [[ "$TRUSTED_RECONNECT_SUCCEEDED" -ne 1 ]]; then
   exit 1
 fi
 "$DRIVER" probe "$RUN_DIR/16-durable-tofu-reconnect.bmp" >/dev/null
+
+docker exec "$CONTAINER_NAME" rm -f \
+  /tmp/anyssh-native-tab-two-ok \
+  /tmp/anyssh-native-tab-inactive-ok \
+  /tmp/anyssh-native-tab-after-close-ok
+"$DRIVER" click 912 128
+sleep 1
+"$DRIVER" click 1100 220
+sleep 0.5
+"$DRIVER" ctrl-a
+"$DRIVER" type "Native second"
+sleep 0.25
+"$DRIVER" click 1100 440
+sleep 0.5
+"$DRIVER" type "anyssh-test"
+sleep 0.5
+"$DRIVER" click 1100 495
+sleep 3
+"$DRIVER" click 500 280
+sleep 0.5
+"$DRIVER" type " touch /tmp/anyssh-native-tab-two-ok"
+"$DRIVER" enter
+
+TAB_TWO_CONNECTED=0
+for _ in $(seq 1 20); do
+  if docker exec "$CONTAINER_NAME" \
+    test -f /tmp/anyssh-native-tab-two-ok >/dev/null 2>&1; then
+    TAB_TWO_CONNECTED=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$TAB_TWO_CONNECTED" -ne 1 ]]; then
+  echo "The second native Session Tab did not connect independently." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-multi-tab-connect.bmp" >/dev/null || true
+  exit 1
+fi
+"$DRIVER" probe "$RUN_DIR/16a-multi-tab-connected.bmp" >/dev/null
+
+"$DRIVER" click 365 128
+sleep 0.5
+"$DRIVER" click 500 280
+sleep 0.5
+"$DRIVER" type \
+  " head -c 4194304 /dev/zero; touch /tmp/anyssh-native-tab-inactive-ok"
+"$DRIVER" enter
+sleep 0.15
+"$DRIVER" click 555 128
+
+INACTIVE_TAB_OUTPUT_SUCCEEDED=0
+for _ in $(seq 1 120); do
+  if docker exec "$CONTAINER_NAME" \
+    test -f /tmp/anyssh-native-tab-inactive-ok >/dev/null 2>&1; then
+    INACTIVE_TAB_OUTPUT_SUCCEEDED=1
+    break
+  fi
+  sleep 0.5
+done
+if [[ "$INACTIVE_TAB_OUTPUT_SUCCEEDED" -ne 1 ]]; then
+  echo "The inactive native Session Tab did not drain its 4 MiB output." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-inactive-tab-output.bmp" >/dev/null || true
+  exit 1
+fi
+"$DRIVER" probe "$RUN_DIR/16b-inactive-tab-output.bmp" >/dev/null
+
+"$DRIVER" click 648 128
+sleep 1
+"$DRIVER" click 500 280
+sleep 0.5
+"$DRIVER" type " touch /tmp/anyssh-native-tab-after-close-ok"
+"$DRIVER" enter
+
+FIRST_TAB_SURVIVED_CLOSE=0
+for _ in $(seq 1 20); do
+  if docker exec "$CONTAINER_NAME" \
+    test -f /tmp/anyssh-native-tab-after-close-ok >/dev/null 2>&1; then
+    FIRST_TAB_SURVIVED_CLOSE=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$FIRST_TAB_SURVIVED_CLOSE" -ne 1 ]]; then
+  echo "Closing the second native Session Tab affected the first Session." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-first-tab-after-close.bmp" >/dev/null || true
+  exit 1
+fi
+"$DRIVER" probe "$RUN_DIR/16c-first-tab-after-close.bmp" >/dev/null
+
 "$DRIVER" click 1117 44
 sleep 1
 
@@ -629,12 +717,59 @@ if grep -R -a -F "$INTERACTIVE_RESPONSE" "$VAULT_ROOT" >/dev/null 2>&1 \
   exit 1
 fi
 "$DRIVER" probe "$RUN_DIR/24-interactive-connected.bmp" >/dev/null
-"$DRIVER" click 1117 44
+
+docker exec "$PAM_CONTAINER_NAME" rm -f /tmp/anyssh-native-interactive-lock-ok
+"$DRIVER" click 912 128
 sleep 1
-"$DRIVER" probe "$RUN_DIR/25-interactive-disconnected.bmp" >/dev/null
+"$DRIVER" click 1100 220
+sleep 0.5
+"$DRIVER" ctrl-a
+"$DRIVER" type "Native lock companion"
+sleep 0.25
+"$DRIVER" click 1100 440
+sleep 0.5
+"$DRIVER" shift-tab
+"$DRIVER" shift-tab
+"$DRIVER" shift-tab
+"$DRIVER" ctrl-a
+"$DRIVER" type "2223"
+"$DRIVER" tab
+"$DRIVER" tab
+"$DRIVER" down
+"$DRIVER" tab
+"$DRIVER" enter
+sleep 2
+"$DRIVER" probe "$RUN_DIR/25-multi-tab-interactive-challenge.bmp" >/dev/null
+"$DRIVER" type "$INTERACTIVE_RESPONSE"
+"$DRIVER" enter
+
+LOCK_COMPANION_CONNECTED=0
+for _ in $(seq 1 40); do
+  "$DRIVER" click 500 260
+  sleep 0.25
+  "$DRIVER" type " touch /tmp/anyssh-native-interactive-lock-ok"
+  "$DRIVER" enter
+  sleep 0.5
+  if docker exec "$PAM_CONTAINER_NAME" \
+    test -f /tmp/anyssh-native-interactive-lock-ok >/dev/null 2>&1; then
+    LOCK_COMPANION_CONNECTED=1
+    break
+  fi
+done
+if [[ "$LOCK_COMPANION_CONNECTED" -ne 1 ]]; then
+  echo "The second Session did not connect before the multi-Tab Vault lock." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-multi-tab-vault-lock.bmp" >/dev/null || true
+  exit 1
+fi
+"$DRIVER" probe "$RUN_DIR/25a-multi-tab-before-vault-lock.bmp" >/dev/null
 "$DRIVER" click 1208 44
 sleep 1
 "$DRIVER" probe "$RUN_DIR/26-vault-locked-after-session.bmp" >/dev/null
+if grep -R -a -F "$INTERACTIVE_RESPONSE" "$VAULT_ROOT" >/dev/null 2>&1 \
+  || grep -a -F "$INTERACTIVE_RESPONSE" "$RUN_DIR/native.log" >/dev/null 2>&1; then
+  echo "The repeated Keyboard-interactive response leaked during Vault lock." >&2
+  exit 1
+fi
 
 if ! kill -0 "$APP_GROUP" >/dev/null 2>&1; then
   echo "The native process exited unexpectedly." >&2
@@ -678,6 +813,9 @@ cat >"$RUN_DIR/report.md" <<EOF
 - Disconnect returned the UI to the disconnected state.
 - A second connection to the same Endpoint used durable Trust without another
   Host Key prompt.
+- Two native Session Tabs connected independently. The first Tab drained a
+  4 MiB stream while inactive, and closing the second Tab left the first
+  Session connected and accepting a follow-up command.
 - Known Hosts displayed metadata-only Trust, required a native GTK confirmation
   to forget it, and the next connection required TOFU again.
 - Rotating the same OpenSSH Endpoint produced a hard-block dialog and no remote
@@ -687,7 +825,8 @@ cat >"$RUN_DIR/report.md" <<EOF
 - The masked Challenge response authenticated, created
   \`/tmp/anyssh-native-interactive-ok\`, and remained absent from Vault files
   and the native log.
-- Lock Vault returned to the PIN gate after the SSH session ended.
+- A second Keyboard-interactive Tab connected concurrently, then Lock Vault
+  drained both Sessions, removed their Tabs, and returned to the PIN gate.
 
 ## Evidence
 
@@ -707,6 +846,9 @@ cat >"$RUN_DIR/report.md" <<EOF
 - \`14-command-succeeded.bmp\`
 - \`15-disconnected.bmp\`
 - \`16-durable-tofu-reconnect.bmp\`
+- \`16a-multi-tab-connected.bmp\`
+- \`16b-inactive-tab-output.bmp\`
+- \`16c-first-tab-after-close.bmp\`
 - \`17-known-hosts.bmp\`
 - \`18-known-host-forget-confirmation.bmp\`
 - \`19-known-host-forgotten.bmp\`
@@ -715,7 +857,8 @@ cat >"$RUN_DIR/report.md" <<EOF
 - \`22-interactive-host-key.bmp\`
 - \`23-interactive-challenge.bmp\`
 - \`24-interactive-connected.bmp\`
-- \`25-interactive-disconnected.bmp\`
+- \`25-multi-tab-interactive-challenge.bmp\`
+- \`25a-multi-tab-before-vault-lock.bmp\`
 - \`26-vault-locked-after-session.bmp\`
 - \`windows.txt\`
 - \`native.log\`

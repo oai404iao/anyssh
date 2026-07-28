@@ -479,11 +479,18 @@ if [[ "$TRUSTED_RECONNECT_SUCCEEDED" -ne 1 ]]; then
   exit 1
 fi
 "$DRIVER" probe "$RUN_DIR/06-durable-tofu-reconnect.bmp" >/dev/null
-"$DRIVER" click 1117 44
-sleep 1
-"$DRIVER" probe "$RUN_DIR/07-disconnected-after-reconnect.bmp" >/dev/null
 
+docker exec "$CONTAINER_NAME" rm -f /tmp/anyssh-wayland-tab-after-close-ok
+docker exec "$PAM_CONTAINER_NAME" rm -f /tmp/anyssh-wayland-interactive-ok
+"$DRIVER" click 912 128
+sleep 1
+"$DRIVER" click 1100 220
+sleep 0.5
+"$DRIVER" ctrl-a
+"$DRIVER" type "Wayland interactive"
+sleep 0.25
 "$DRIVER" click 1100 440
+sleep 0.5
 "$DRIVER" shift-tab
 "$DRIVER" shift-tab
 "$DRIVER" shift-tab
@@ -495,19 +502,19 @@ sleep 1
 "$DRIVER" tab
 "$DRIVER" enter
 sleep 2
-"$DRIVER" probe "$RUN_DIR/08-interactive-host-key.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/06a-multi-tab-interactive-host-key.bmp" >/dev/null
 "$DRIVER" click 700 532
 sleep 2
-"$DRIVER" probe "$RUN_DIR/09-interactive-challenge.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/06b-multi-tab-interactive-challenge.bmp" >/dev/null
 "$DRIVER" type "$INTERACTIVE_RESPONSE"
 "$DRIVER" enter
 sleep 1
 
-docker exec "$PAM_CONTAINER_NAME" rm -f /tmp/anyssh-wayland-interactive-ok
 INTERACTIVE_SUCCEEDED=0
 for _ in $(seq 1 40); do
   "$DRIVER" click 500 260
-  "$DRIVER" type "touch /tmp/anyssh-wayland-interactive-ok"
+  sleep 0.25
+  "$DRIVER" type " touch /tmp/anyssh-wayland-interactive-ok"
   "$DRIVER" enter
   sleep 0.5
   if docker exec "$PAM_CONTAINER_NAME" \
@@ -527,10 +534,32 @@ if grep -R -a -F "$INTERACTIVE_RESPONSE" "$VAULT_ROOT" >/dev/null 2>&1 \
   echo "The Keyboard-interactive response leaked into Wayland evidence or Vault files." >&2
   exit 1
 fi
-"$DRIVER" probe "$RUN_DIR/10-interactive-connected.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/06c-multi-tab-interactive-connected.bmp" >/dev/null
+"$DRIVER" click 648 128
+sleep 1
+"$DRIVER" click 500 260
+sleep 0.5
+"$DRIVER" type " touch /tmp/anyssh-wayland-tab-after-close-ok"
+"$DRIVER" enter
+
+FIRST_TAB_SURVIVED_CLOSE=0
+for _ in $(seq 1 20); do
+  if docker exec "$CONTAINER_NAME" \
+    test -f /tmp/anyssh-wayland-tab-after-close-ok >/dev/null 2>&1; then
+    FIRST_TAB_SURVIVED_CLOSE=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$FIRST_TAB_SURVIVED_CLOSE" -ne 1 ]]; then
+  echo "Closing the interactive Wayland Tab affected the first Session." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-wayland-first-tab-after-close.bmp" >/dev/null || true
+  exit 1
+fi
+"$DRIVER" probe "$RUN_DIR/06d-wayland-first-tab-after-close.bmp" >/dev/null
 "$DRIVER" click 1117 44
 sleep 1
-"$DRIVER" probe "$RUN_DIR/11-interactive-disconnected.bmp" >/dev/null
+"$DRIVER" probe "$RUN_DIR/07-disconnected-after-reconnect.bmp" >/dev/null
 
 if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
   echo "The AnySSH process exited unexpectedly." >&2
@@ -561,9 +590,11 @@ cat >"$RUN_DIR/report.md" <<EOF
 - Disconnect returned the application to the disconnected state.
 - A second native Wayland connection used durable Trust without another Host
   Key prompt.
-- The same native Wayland WebView completed a masked RFC 4256 Challenge against
-  OpenSSH PAM on a separate Endpoint and created
-  \`/tmp/anyssh-wayland-interactive-ok\`.
+- While the durably trusted Session remained connected, a second Wayland Tab
+  completed a masked RFC 4256 Challenge against OpenSSH PAM on a separate
+  Endpoint and created \`/tmp/anyssh-wayland-interactive-ok\`.
+- Closing the interactive Tab left the first Session connected and accepting
+  a follow-up command.
 - The session-bound response remained absent from Vault files and
   \`app.log\`.
 
@@ -575,11 +606,11 @@ cat >"$RUN_DIR/report.md" <<EOF
 - \`04-terminal-ime-command.bmp\`
 - \`05-disconnected.bmp\`
 - \`06-durable-tofu-reconnect.bmp\`
+- \`06a-multi-tab-interactive-host-key.bmp\`
+- \`06b-multi-tab-interactive-challenge.bmp\`
+- \`06c-multi-tab-interactive-connected.bmp\`
+- \`06d-wayland-first-tab-after-close.bmp\`
 - \`07-disconnected-after-reconnect.bmp\`
-- \`08-interactive-host-key.bmp\`
-- \`09-interactive-challenge.bmp\`
-- \`10-interactive-connected.bmp\`
-- \`11-interactive-disconnected.bmp\`
 - \`app-backend-environment.txt\`
 - \`ibus-engines.txt\`
 - \`remote-ime-path.txt\`

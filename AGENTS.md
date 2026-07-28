@@ -260,6 +260,9 @@ Linux X11 检查还必须启动真实 `ssh-agent`，由原生 Tauri UI 枚举 Id
 创建 Fingerprint-selected Credential，且 Agent Key/Fingerprint 不得明文落盘。
 它还必须通过独立 OpenSSH PAM Endpoint 完成 masked Keyboard-interactive
 Challenge，并确认 Response 不出现在 Vault 或 Native Log。
+Multi Tab 变更还必须同时连接两个真实 OpenSSH Session，证明 Inactive Tab 能
+排空 4 MiB Output、关闭一个 Tab 后另一个继续接受命令，并在两个 Session
+Connected 时由 Lock Vault 全量清理。
 
 `pnpm qa:native:windows` 只在 Windows 执行。它必须启动实际构建的 EXE、确认
 标题为 `AnySSH` 的非零窗口句柄，并通过
@@ -275,6 +278,9 @@ OpenSSH Marker；QA Driver 的 Path/Passphrase 环境必须在 AnySSH 启动后�
 避免应用进程继承测试 Secret。Keyboard-interactive 变更还必须通过 controlled
 russh Server 和真实 EXE/WebView2 完成 Challenge/Response；测试 Response 环境
 同样只能在 AnySSH 启动后提供给外部 QA Driver。
+Multi Tab 变更还必须保持一个真实 Agent Session Connected，在第二个 Tab 完成
+Keyboard-interactive Challenge，关闭第二个 Tab 后再次通过第一个 Session 创建
+远端 Marker。
 
 `pnpm qa:native:wayland` 必须在 AnySSH 进程没有 `DISPLAY` 的条件下：
 
@@ -284,6 +290,8 @@ russh Server 和真实 EXE/WebView2 完成 Challenge/Response；测试 Response 
 - 通过远端 OpenSSH 文件 Marker 验证 UTF-8 文本真正到达 SSH Shell。
 - 通过独立 OpenSSH PAM Endpoint 完成一次 masked Keyboard-interactive
   Challenge，并扫描 Response 不进入 Vault/App Log。
+- 保持第一个 OpenSSH Session Connected，在第二个 Tab 完成 Challenge；关闭
+  第二个 Tab 后第一个 Session 必须继续接受远端命令。
 
 `pnpm check:android` 必须产出 ARM64 Debug APK，并验证：
 
@@ -300,6 +308,8 @@ QA 报告不得保存完整进程环境；只允许白名单式记录当前测�
 ### Playwright E2E
 
 `pnpm test:e2e` 验证标准浏览器工作流。Browser QA mode 是 UI 模拟，不打开网络连接；它不能替代 OpenSSH smoke。
+Multi Tab 变更至少覆盖两个 Preview Session 的 Output 隔离、同时 Pending
+Challenge、Close-during-connect、单 Tab Close 和 8 Tab 上限。
 
 ### agent-browser 真实检查
 
@@ -313,6 +323,8 @@ pnpm qa:browser
 
 - 实际点击和填写页面，而不只断言 DOM。
 - 覆盖 Host Key Dialog、密码显示/隐藏、终端真实键盘输入和 Disconnect。
+- Multi Tab 变更必须实际创建两个 Preview Tab，在 Desktop/Mobile 截图中检查
+  Tab Strip，并关闭一个 Tab 后继续向另一个 Terminal 输入。
 - 检查桌面与移动视口。
 - 检查 Browser Errors。
 - 生成并人工查看 `artifacts/agent-browser/` 中的截图和报告。
@@ -401,6 +413,18 @@ Clear
   数量不匹配、取消和 UI 丢失都 Fail Closed。
 - 零 Prompt Round 自动提交空 Response，但仍计入最多 8 Round 的上限。
 - 不根据 Prompt 文本自动填充 Saved Password，也不保存 OTP Seed 或 Response。
+
+### 9. Session Tab 拥有独立 Runtime Lifecycle
+
+- Frontend Tab ID、Rust Session ID 和 Connection Generation 必须分离。
+- 每 Tab 独立拥有 Event/Data Callback、xterm.js、Terminal Size、Status、
+  Host Key 和 Authentication State。
+- Inactive Terminal 必须保持 Mounted 并继续 xterm Write Ack；只有 Visible
+  Terminal 执行 Fit/Resize。
+- Disconnect 保留 Tab/Scrollback；Close 只 Disconnect 并移除目标 Tab。
+- 最多 8 个 Tab，达到上限不得自动回收 Live Session。
+- Late Connect Return、Stale Event、Channel Loss、Vault Lock 和 App Exit 必须
+  Fail Closed；多个 Pending Action 不得持续抢焦点或交叉提交 Response。
 
 ## 文档规则
 

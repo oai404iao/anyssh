@@ -145,13 +145,25 @@
   Log 和 Android/Linux/Windows Build Hash 已人工检查。
 - ADR-0016 已接受，Keyboard-interactive and OTP ExecPlan 已完成。
 - Proposed ADR-0017、Multi Tab Session Lifecycle Design 和 ExecPlan 0007 已
-  创建。Tauri Registry 已具备多 Session Map，下一步是把 React 单 Session State
-  重构为独立 Tab/xterm/Lifecycle。
+  创建。React 已重构为最多 8 个独立 Session Tab，每 Tab 拥有独立
+  Generation、Rust Session ID、xterm.js、Status、Terminal Size、Host Key 和
+  Authentication State；Inactive Terminal 保持 Mounted 并继续 Ack Output。
+- Disconnect 保留 Tab/Scrollback，Close 只断开并移除目标 Tab；Late Connect
+  Return、Stale Event、Channel Loss、Vault Lock 和 App Exit 使用 Fail-closed
+  Cleanup。Tauri Registry 多 Session/Ack/单项 Remove/全量 Drain 测试通过。
+- Browser Preview 已验证双 Session 隔离、同时 Challenge、8 Tab 上限和
+  Close-during-connect。X11 已验证双 OpenSSH Session、Inactive Tab 4 MiB
+  Output、单 Tab Close 和双 Session Vault Lock；Wayland 已验证 Connected Tab
+  与 Keyboard-interactive Challenge Tab 并发及单 Tab Close。
+- 本地 Browser/X11/Wayland、OpenSSH、Workspace、Linux Container 和 Android
+  Container 回归通过；Windows Multi Tab QA 已实现，等待同 Commit GitHub
+  Actions Windows Runner 和 Artifact 评审。
 - CI 工作流。
 
 当前仓库尚未完成：
 
-- OpenSSH `known_hosts` 导入/导出、Forwarding、Multi Tab 实现和后续 Key 管理。
+- Multi Tab 同 Commit Windows/CI Evidence、ADR-0017 评审和 ExecPlan 收尾。
+- OpenSSH `known_hosts` 导入/导出、Forwarding 和后续 Key 管理。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
 - Android Runtime、Content URI、软键盘与生命周期验证。
 - iOS 构建验证；当前没有 macOS/Xcode 环境，按维护者指示暂缓。

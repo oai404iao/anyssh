@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -594,17 +594,14 @@ async function verifyKnownHostForgetAndRetrust(targetPage) {
   await assert(
     targetPage.getByText("Interactive shell is active."),
   ).toBeVisible();
-  await targetPage.getByRole("button", { name: "Disconnect" }).click();
-  await assert(
-    targetPage.getByText("The SSH session has ended."),
-  ).toBeVisible();
 }
 
 async function verifyKeyboardInteractive(targetPage) {
-  await targetPage
-    .getByRole("button", { name: "Use quick connection" })
-    .click();
+  await targetPage.getByRole("button", { name: "New session tab" }).click();
   const connectionForm = targetPage.locator(".connection-panel form");
+  await connectionForm
+    .getByLabel("Display name")
+    .fill("Windows QA interactive tab");
   await connectionForm
     .getByLabel("Host", { exact: true })
     .fill(interactiveHost);
@@ -659,6 +656,38 @@ async function verifyKeyboardInteractive(targetPage) {
     targetPage,
     "02e-interactive-connected.png",
     "02e-interactive-connected.txt",
+  );
+
+  await targetPage
+    .getByRole("button", { name: "Close Windows QA interactive tab" })
+    .click();
+  await assert(
+    targetPage.getByRole("heading", {
+      level: 1,
+      name: "Windows QA agent host",
+    }),
+  ).toBeVisible();
+  await assert(
+    targetPage.getByText("Interactive shell is active."),
+  ).toBeVisible();
+
+  const survivingTerminalInput = targetPage.getByRole("textbox", {
+    name: "Terminal input",
+  });
+  await survivingTerminalInput.focus();
+  await survivingTerminalInput.pressSequentially(
+    `echo ANYSSH_WINDOWS_AGENT_TAB_SURVIVED >> "${agentMarkerPath}"`,
+  );
+  await survivingTerminalInput.press("Enter");
+  await assert
+    .poll(() =>
+      fileContains(agentMarkerPath, "ANYSSH_WINDOWS_AGENT_TAB_SURVIVED"),
+    )
+    .toBe(true);
+  await capture(
+    targetPage,
+    "02f-agent-tab-after-close.png",
+    "02f-agent-tab-after-close.txt",
   );
   await targetPage.getByRole("button", { name: "Disconnect" }).click();
   await assert(
@@ -791,6 +820,14 @@ async function fileExists(filePath) {
   try {
     await access(filePath);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+async function fileContains(filePath, marker) {
+  try {
+    return (await readFile(filePath, "utf8")).includes(marker);
   } catch {
     return false;
   }
