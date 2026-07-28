@@ -404,7 +404,7 @@ AllowTcpForwarding no
 AllowAgentForwarding no
 X11Forwarding no
 PrintMotd no
-LogLevel VERBOSE
+LogLevel ERROR
 "@ | Set-Content -Encoding ASCII -Path $SshConfigPath
 
   $script:SshdProcess = Start-Process `
@@ -450,7 +450,6 @@ LogLevel VERBOSE
 host=127.0.0.1
 port=$($script:SshPort)
 username=$($script:SshUsername)
-agent_fingerprint=$($script:AgentFingerprint)
 encrypted_key_source=$($script:EncryptedKeyPath)
 "@ | Set-Content -Encoding UTF8 -Path (Join-Path $RunDirectory "ssh-fixture.txt")
 }
@@ -751,11 +750,12 @@ function Assert-VaultFilesAreEncrypted {
   }
 }
 
-function Assert-EvidenceContainsNoPrivateKeySecrets {
+function Assert-EvidenceContainsNoSensitiveFixtureValues {
   $Needles = @(
     $script:PrivateKeyPassphrase,
     $script:WrongPrivateKeyPassphrase,
     $script:InteractiveResponse,
+    $script:AgentFingerprint,
     "BEGIN OPENSSH PRIVATE KEY"
   )
   foreach ($File in Get-ChildItem -LiteralPath $RunDirectory -Recurse -File) {
@@ -764,7 +764,7 @@ function Assert-EvidenceContainsNoPrivateKeySecrets {
     )
     foreach ($Needle in $Needles) {
       if ($Text.Contains($Needle)) {
-        throw "A Windows encrypted Private Key Secret leaked into QA evidence."
+        throw "A Windows sensitive fixture value leaked into QA evidence."
       }
     }
   }
@@ -812,7 +812,7 @@ try {
   Stop-KeyboardInteractiveFixture
   Stop-SshFixture
   Assert-VaultFilesAreEncrypted
-  Assert-EvidenceContainsNoPrivateKeySecrets
+  Assert-EvidenceContainsNoSensitiveFixtureValues
 
   $CreateRecord = $script:StageRecords |
     Where-Object { $_.stage -eq "create" } |
@@ -875,7 +875,9 @@ try {
 - Password/System Agent Credentials, Group, inherited/direct Hosts, and Jump Route
   metadata persisted across process restart.
 - PIN, Password, Private Key, Passphrases, Agent Fingerprint, Group, Host,
-  Username, and Route markers were absent from Vault files and QA text evidence.
+  Username, and Route markers were absent from Vault files. Private Key
+  material, Passphrases, the Agent Fingerprint, and the Keyboard-interactive
+  Response were also absent from QA text evidence.
 - The SQLCipher database did not expose the plaintext SQLite header.
 - Browser error logs were empty.
 
@@ -935,7 +937,7 @@ try {
 - ``known-host-forget-driver.txt``
 "@ | Set-Content -Encoding UTF8 -Path (Join-Path $RunDirectory "report.md")
 
-  Assert-EvidenceContainsNoPrivateKeySecrets
+  Assert-EvidenceContainsNoSensitiveFixtureValues
   Write-Host "Native Windows WebView2 smoke passed: $RunDirectory"
 }
 catch {

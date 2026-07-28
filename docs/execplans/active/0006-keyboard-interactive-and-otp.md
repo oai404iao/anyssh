@@ -231,6 +231,12 @@ git diff --check
   但非精确 ARIA `getByLabel("Password")` 仍报告一个匹配项。Windows QA 改用
   唯一 DOM ID `#connection-password` 断言敏感 Input 已从 Form 移除；ARIA
   Locator 继续用于用户可见控件交互。
+- 2026-07-28：通过的 Run `30358929562` 证明了 Windows Challenge，但 Artifact
+  Review 发现 standalone OpenSSH 的 `LogLevel VERBOSE` 和
+  `ssh-fixture.txt` 会把 System Agent Public Key Fingerprint 写入 QA Evidence。
+  Fixture 改为 `LogLevel ERROR`、不再记录 Fingerprint，并把该次随机 Fingerprint
+  加入 Evidence Secret Scan；真实 Agent Authentication 继续由远端 Marker 和
+  EXE/WebView2 Screenshot 证明。
 
 ## Decision Log
 
