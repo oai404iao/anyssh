@@ -5,6 +5,24 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+function Get-FileSha256Hex {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path
+  )
+
+  $Algorithm = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $Bytes = [System.IO.File]::ReadAllBytes($Path)
+    return [System.BitConverter]::ToString(
+      $Algorithm.ComputeHash($Bytes)
+    ).Replace("-", "")
+  }
+  finally {
+    $Algorithm.Dispose()
+  }
+}
+
 $ScriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDirectory = (Resolve-Path (Join-Path $ScriptDirectory "..\..")).Path
 if ([string]::IsNullOrWhiteSpace($ExecutablePath)) {
@@ -92,7 +110,7 @@ $BundledFontPath = Join-Path `
   $RootDirectory `
   "apps\client\src\assets\fonts\JetBrainsMonoNerdFontMono-Regular.ttf"
 Copy-Item -LiteralPath $BundledFontPath -Destination $FontFixturePath
-$FontFixtureHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $FontFixturePath).Hash
+$FontFixtureHash = Get-FileSha256Hex -Path $FontFixturePath
 $ThemeFixture = @"
 {
   "version": 1,
@@ -983,9 +1001,7 @@ try {
   if ($null -eq $ManagedFont) {
     throw "The Windows imported Font managed asset was not created."
   }
-  $ManagedFontHash = (
-    Get-FileHash -Algorithm SHA256 -LiteralPath $ManagedFont.FullName
-  ).Hash
+  $ManagedFontHash = Get-FileSha256Hex -Path $ManagedFont.FullName
   if ($ManagedFontHash -ne $FontFixtureHash) {
     throw "The Windows imported Font managed asset digest did not match its source."
   }

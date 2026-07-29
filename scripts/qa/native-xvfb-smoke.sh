@@ -408,13 +408,12 @@ if [[ "$THEME_PICKER_READY" -ne 1 ]]; then
   "$DRIVER" probe "$RUN_DIR/failed-terminal-theme-picker.bmp" >/dev/null || true
   exit 1
 fi
+sleep 1
 "$DRIVER" ctrl-l
 sleep 0.5
-"$DRIVER" type "/tmp"
+"$DRIVER" type "$THEME_FIXTURE"
 "$DRIVER" enter
-sleep 0.5
-"$DRIVER" enter
-sleep 2
+sleep 1
 "$DRIVER" enter
 sleep 3
 
@@ -433,13 +432,12 @@ if [[ "$FONT_PICKER_READY" -ne 1 ]]; then
   "$DRIVER" probe "$RUN_DIR/failed-terminal-font-picker.bmp" >/dev/null || true
   exit 1
 fi
+sleep 1
 "$DRIVER" ctrl-l
 sleep 0.5
-"$DRIVER" type "/tmp"
+"$DRIVER" type "$FONT_FIXTURE"
 "$DRIVER" enter
-sleep 0.5
-"$DRIVER" enter
-sleep 2
+sleep 1
 "$DRIVER" enter
 
 IMPORTED_FONT_PATH=""
