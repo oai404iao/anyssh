@@ -11,7 +11,8 @@ DRIVER="$RUN_DIR/anyssh-x11-driver"
 PRIVATE_KEY_FIXTURE="/tmp/000-anyssh-native-import-key"
 PRIVATE_KEY_PASSPHRASE="native-key-passphrase"
 WRONG_PRIVATE_KEY_PASSPHRASE="wrong-key-passphrase"
-GENERATED_EXPORT_PATH="/tmp/anyssh-native-generated-export-$RANDOM-$$.key"
+GENERATED_EXPORT_FILE_NAME="anyssh-native-generated-export-$RANDOM-$$.key"
+GENERATED_EXPORT_PATH="$ROOT_DIR/apps/client/src-tauri/$GENERATED_EXPORT_FILE_NAME"
 GENERATED_EXPORT_PUBLIC_PATH="$GENERATED_EXPORT_PATH.pub"
 GENERATED_REIMPORT_PATH="/tmp/000-anyssh-native-reimport-key"
 GENERATED_EXPORT_PASSPHRASE="native-export-passphrase"
@@ -447,15 +448,13 @@ if [[ "$EXPORT_PICKER_READY" -ne 1 ]]; then
 fi
 ANYSSH_X11_WINDOW_MATCH="Export encrypted SSH private key" \
   "$DRIVER" probe "$RUN_DIR/10c-private-key-export-picker.bmp" >/dev/null
-"$DRIVER" ctrl-l
-sleep 0.5
-"$DRIVER" type "$GENERATED_EXPORT_PATH"
-"$DRIVER" enter
-sleep 1
+"$DRIVER" click 500 27
+"$DRIVER" ctrl-a
+"$DRIVER" type "$GENERATED_EXPORT_FILE_NAME"
 "$DRIVER" enter
 
 STEP_UP_READY=0
-for _ in $(seq 1 40); do
+for _ in $(seq 1 80); do
   if ANYSSH_X11_WINDOW_MATCH="Confirm AnySSH PIN" \
     "$DRIVER" probe >/dev/null 2>&1; then
     STEP_UP_READY=1

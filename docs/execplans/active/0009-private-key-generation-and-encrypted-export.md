@@ -103,6 +103,11 @@
   `artifacts/android-build/build-1785303420-1/AnySSH-arm64-debug.apk`
   SHA-256 为
   `847abd61804aaf827a100d15d9de72333b59725e61206a0cb82359d009f6f3cd`。
+- [x] 2026-07-29：实现 Commit
+  `2d5312df073937bbf0b0f48b25fa565182a7e5a9` 的 GitHub Actions Run
+  `30425670349` 完成；Frontend、Browser E2E、OpenSSH、agent-browser、
+  Rust、Linux Container 和 Android Build 通过，Windows/Linux Native QA
+  暴露自动化兼容问题并已修复，等待新 Commit 同 Commit CI。
 - [ ] 运行同 Commit GitHub Actions，检查全部 Artifact 和 Windows/Linux/
   Android Build Hash。
 
@@ -224,6 +229,13 @@ git diff --check
 - 2026-07-29：`spawn_blocking` 的 Join Future 被取消时 Blocking Task 不会自动
   停止；Operation Permit 必须移入 Blocking Closure，并在 Generation 完成后
   随 Key 一起返回，才能避免取消窗口提前释放并发槽。
+- 2026-07-29：GitHub Ubuntu 的 GTK Save Picker 保持 Filename Entry Focus，
+  `Ctrl+L` 没有切换到 Location Entry；QA 改为在已知 `src-tauri` Current
+  Directory 中输入随机 Filename，再按确定的绝对路径验证和清理。
+- 2026-07-29：Windows PowerShell 5.1 在
+  `$ErrorActionPreference = "Stop"` 下会把 `cargo test 2>&1 | Tee-Object`
+  的正常编译 stderr 变成终止性 `NativeCommandError`；QA 改为
+  `Start-Process` 分离重定向 stdout/stderr，并只按 Process Exit Code 判定。
 
 ## Decision Log
 

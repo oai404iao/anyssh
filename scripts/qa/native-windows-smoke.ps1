@@ -837,20 +837,36 @@ function Assert-EvidenceContainsNoSensitiveFixtureValues {
 
 function Test-WindowsExportReparseGuard {
   $EvidencePath = Join-Path $RunDirectory "windows-export-reparse-test.txt"
-  Push-Location $RootDirectory
+  $StdoutPath = Join-Path $RunDirectory "windows-export-reparse-test.stdout.tmp"
+  $StderrPath = Join-Path $RunDirectory "windows-export-reparse-test.stderr.tmp"
   try {
-    & cargo test `
-      --package anyssh-app `
-      windows_private_key_export_rejects_reparse_points_and_alternate_streams `
-      -- `
-      --nocapture 2>&1 |
-      Tee-Object -FilePath $EvidencePath
-    if ($LASTEXITCODE -ne 0) {
+    $CargoProcess = Start-Process `
+      -FilePath (Get-Command cargo.exe -ErrorAction Stop).Source `
+      -WorkingDirectory $RootDirectory `
+      -ArgumentList @(
+        "test",
+        "--package",
+        "anyssh-app",
+        "windows_private_key_export_rejects_reparse_points_and_alternate_streams",
+        "--",
+        "--nocapture"
+      ) `
+      -RedirectStandardOutput $StdoutPath `
+      -RedirectStandardError $StderrPath `
+      -NoNewWindow `
+      -Wait `
+      -PassThru
+    @(
+      Get-Content -LiteralPath $StdoutPath -ErrorAction SilentlyContinue
+      Get-Content -LiteralPath $StderrPath -ErrorAction SilentlyContinue
+    ) | Set-Content -Encoding UTF8 -Path $EvidencePath
+    if ($CargoProcess.ExitCode -ne 0) {
       throw "The Windows Private Key export reparse-point guard test failed."
     }
   }
   finally {
-    Pop-Location
+    Remove-Item -LiteralPath $StdoutPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $StderrPath -Force -ErrorAction SilentlyContinue
   }
 }
 
