@@ -77,9 +77,12 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
 - SSH Port Forwarding 的 Rust Core、Metadata-only Tauri/React UI 和 Browser
   Preview 已实现。真实 OpenSSH Protocol 已覆盖 Direct/Jump Local、Dynamic
   SOCKS5、Remote、4 MiB/Half-close、16 Forward/64 Connection 和 Cleanup；
-  X11/Wayland 原生 UI 已通过真实 Local/Dynamic/Remote Marker、Tab Close、
-  Disconnect、Vault Lock 与 Payload Evidence Scan。Windows Native 与同 Commit
-  CI 仍待最终核验。
+-  X11/Wayland/Windows 原生 UI 已通过真实 Local/Dynamic/Remote Marker、Tab
+  Close、Disconnect、Vault Lock 与 Payload Evidence Scan。
+- Head `6fcb1a68d5d791d164f3ed43209aa3a9613b5acf` 的 GitHub Actions Run
+  `30416305300` 九个 Job 全部通过；Forwarding 的 Browser/Linux/Windows
+  Screenshot、Error Log、Payload Scan 和 Android/Linux/Windows Build Hash 已
+  人工检查。ADR-0018 已接受。
 - Head `56b37a10bf91c2c7bb20c88bb99041ca404c5691` 的 GitHub Actions Run
   `30368134792` 九个 Job 全部通过，Browser、X11、Wayland、Windows、Android、
   Linux 的 Multi Tab 截图、Error Log、Build Hash 和 Secret Scan 已人工检查。
@@ -91,7 +94,7 @@ iOS 因当前没有 macOS/Xcode 环境暂缓。
 
 当前活动计划：
 
-- [`Phase 1：SSH Port Forwarding`](docs/execplans/active/0008-ssh-port-forwarding.md)
+- [`Phase 1：Private Key Generation and Encrypted Export`](docs/execplans/active/0009-private-key-generation-and-encrypted-export.md)
 
 已完成计划：
 
@@ -102,6 +105,7 @@ iOS 因当前没有 macOS/Xcode 环境暂缓。
 - [`Phase 1：Known Host Repository and Durable TOFU`](docs/execplans/completed/0005-known-host-repository-and-durable-tofu.md)
 - [`Phase 1：Keyboard-interactive and OTP`](docs/execplans/completed/0006-keyboard-interactive-and-otp.md)
 - [`Phase 1：Multi Tab Terminal and Session Lifecycle`](docs/execplans/completed/0007-multi-tab-terminal-and-session-lifecycle.md)
+- [`Phase 1：SSH Port Forwarding`](docs/execplans/completed/0008-ssh-port-forwarding.md)
 
 ## 文档入口
 

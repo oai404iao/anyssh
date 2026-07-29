@@ -1,6 +1,6 @@
 # ExecPlan 0008：SSH Port Forwarding
 
-- 状态：Active
+- 状态：Completed
 - 创建日期：2026-07-28
 - 最后更新：2026-07-29
 - 负责人：项目维护者与执行 Agent
@@ -94,7 +94,23 @@
   Tab Close/Disconnect/Vault Lock Cleanup 和 Payload Evidence Scan。
 - [x] 2026-07-29：独立 Linux Container Build `build-1785290669-1` 与 Android
   ARM64 Container Build `build-1785290750-1` 通过。
-- [ ] 完成 Milestone 5：Native QA、全量回归与治理。
+- [x] 2026-07-29：Head
+  `6fcb1a68d5d791d164f3ed43209aa3a9613b5acf` 的 GitHub Actions Run
+  `30416305300` 九个 Job 全部通过。
+- [x] 2026-07-29：人工检查远端 Browser
+  `smoke-1785291333`、X11 `smoke-1785291361-5978`、Wayland
+  `smoke-1785291518-8738` 和 Windows
+  `smoke-20260729-021700-9484` 的 Forward、Multi Tab、Vault Lock 截图、空
+  Browser Error Log 和 Payload/Secret Scan。
+- [x] 2026-07-29：远端 Linux ELF
+  `9f2d409feb9c32d3a415886e63f5af4b0cb7e04717e4fc3cd7665e8a5111a0dd`、
+  Android APK
+  `794c988bc07d8fce907d2f434852d26ac9f5b852b17b5a5473f8e058ea34b989`
+  和 Windows EXE
+  `a6c3d7e3beccf77cdc3a895dac8133e211e9549084d23ee035db540abb906d1b`
+  已记录。
+- [x] 2026-07-29：完成 Milestone 5，接受 ADR-0018 并将本计划移动到
+  `completed/`。
 
 ## Milestones
 
@@ -224,4 +240,24 @@ git diff --check
 
 ## Outcomes & Retrospective
 
-尚未完成。
+完成。
+
+- russh Target Session 现在拥有 Local、Remote 和 Dynamic Forward Registry。
+  Terminal 与 Forward Command 使用独立有界 Queue；Forward ID、Listener、
+  Remote Registration、Handshake 和 Connection Task 均绑定当前 Session。
+- Local/Dynamic 通过 Target `direct-tcpip` 实现 Target-side DNS；Dynamic 只
+  接受无认证 SOCKS5 `CONNECT`。Remote 使用显式 Registration Match、
+  `forwarded-tcpip` Accept/Reject 和本地 Destination Connect。
+- v1 强制 Loopback-only Bind、16 Forward/64 Connection、Port 0、Timeout、
+  Backpressure、Cancellation 和幂等 Stop；Disconnect、Tab Close、Channel
+  Loss、Vault Lock 与 App Exit 会清理全部 Forward。
+- Tauri/React 只处理 Forward Metadata 和 Start/Stop。Browser Preview 不打开
+  Listener；真实 Payload、SOCKS Destination、Socket 和 SSH Channel 不进入
+  WebView、Tauri Event、日志或 Evidence。
+- OpenSSH Direct/Jump Smoke、Browser、X11、Wayland、Windows、Linux Container、
+  Android ARM64 和同 Commit CI 全部通过。Windows 真实 EXE 证明三类 Forward、
+  Dynamic Stop、Session Disconnect、Interactive Tab Close 和 Vault Lock
+  Cleanup。
+- 实现没有新增 Schema 或持久化 Forward Profile；应用重启和 Session 断开后仍需
+  用户显式重建 Forward。Wildcard/LAN/Public Bind、SOCKS Authentication 和
+  Background Auto-reconnect 继续留在后续独立设计。

@@ -20,8 +20,8 @@ React/xterm.js UI
 仓库已完成 **Phase 0 技术验证**、**Phase 1 Group 持久化/三态继承**、
 **System SSH Agent 认证**、**Native Encrypted Private Key Passphrase** 和
 **Known Host Repository/Durable TOFU**、**Keyboard-interactive and OTP**、
-**Multi Tab Terminal and Session Lifecycle**。
-当前活动计划是 **SSH Port Forwarding**。
+**Multi Tab Terminal and Session Lifecycle** 和 **SSH Port Forwarding**。
+当前活动计划是 **Private Key Generation and Encrypted Export**。
 已经存在可构建的 React 前端、Rust Workspace、russh SSH/Jump Host、SQLCipher/
 PIN Vault、Tauri IPC、Host/Credential/Route Repository、Windows WebView2、
 OpenSSH Fixture、Playwright E2E、agent-browser 与原生 X11/Wayland 检查。
@@ -271,6 +271,10 @@ Port Forwarding 变更还必须通过真实原生 UI 启动 Local、Dynamic SOCK
 Remote Loopback Forward，由 WebView 外 TCP Client 验证 Payload，确认
 Disconnect、Tab Close 和 Vault Lock 关闭 Listener/Registration，并扫描 Payload
 Marker 不进入 Vault、App Log 或 Evidence。
+Private Key Generation/Export 变更还必须通过真实原生 UI 生成 Ed25519/RSA
+Key、显示 Public Key/Fingerprint、执行 Native PIN Step-up、Native Export
+Passphrase 与 Save Picker，并用导出的加密 Key 完成真实 OpenSSH；Private Key、
+PIN、Passphrase 和完整 Path 不得进入 WebView、Vault 明文或 Evidence。
 
 `pnpm qa:native:windows` 只在 Windows 执行。它必须启动实际构建的 EXE、确认
 标题为 `AnySSH` 的非零窗口句柄，并通过
@@ -292,6 +296,9 @@ Keyboard-interactive Challenge，关闭第二个 Tab 后再次通过第一个 Se
 Port Forwarding 变更还必须在真实 EXE/Agent Session 上验证 Local、Dynamic 和
 Remote Loopback 数据路径，关闭拥有 Forward 的 Tab、Disconnect 或 Lock Vault
 后端口必须不可达，Payload Marker 不得进入 Vault 或文本 Evidence。
+Private Key Generation/Export 变更还必须在真实 EXE/WebView2 中执行 Windows
+Credential UI PIN/Passphrase、Native Save Dialog、加密 Export 和 OpenSSH
+Marker；QA Driver 的 Path/PIN/Passphrase 只能在 AnySSH 启动后提供给外部 Driver。
 
 `pnpm qa:native:wayland` 必须在 AnySSH 进程没有 `DISPLAY` 的条件下：
 
@@ -452,6 +459,19 @@ Clear
 - 每 Session 最多 16 个 Forward、每 Forward 最多 64 个 Connection，所有
   Accept Queue、Handshake、Connect 和 Copy 必须有界并可取消。
 
+### 11. Private Key Generation/Export 留在 Rust/原生边界
+
+- v1 生成 Ed25519（默认）或 RSA 4096，不调用系统 `ssh-keygen`。
+- 生成的 Key 作为现有 `private_key` Credential 保存，不新增 Schema。
+- WebView 只可获得 Public Key、Algorithm 和 SHA-256 Fingerprint；Private Key、
+  Stored/Export Passphrase、PIN 和完整 Path 不得进入普通 IPC/React/Log。
+- Export 只接受 Credential ID，必须经过原生 PIN Step-up、原生新 Passphrase
+  Confirmation 和 Rust-owned Save Picker。
+- v1 只导出加密 OpenSSH Private Key，只创建新文件，不覆盖已有文件；Unix
+  权限为 `0600`，Windows 使用当前用户受限 ACL。
+- Browser QA 只模拟 Metadata；Android/iOS 在专用安全 Prompt 和 Document
+  Provider/Share Sheet 完成前明确返回 Unsupported。
+
 ## 文档规则
 
 ### ADR
@@ -546,11 +566,11 @@ Clear
 
 当前唯一活动计划是：
 
-- [`0008-ssh-port-forwarding.md`](docs/execplans/active/0008-ssh-port-forwarding.md)
+- [`0009-private-key-generation-and-encrypted-export.md`](docs/execplans/active/0009-private-key-generation-and-encrypted-export.md)
 
-除非用户明确改变优先级，应先完成 Rust-owned Session-scoped Local/Remote/
-Dynamic Forward、Loopback Policy、SOCKS5、Cleanup 和 Linux/Windows Native
-Evidence；不要直接跳到 WebDAV、SFTP、持久化 Forward Profile 或高级脚本系统。
+除非用户明确改变优先级，应先完成 Rust-owned Ed25519/RSA Generation、Public
+Projection、Native PIN Step-up 和 encrypted-only Export；不要直接跳到
+WebDAV、SFTP、Theme/Font/Snippet 或高级脚本系统。
 
 ## 关键文件
 
@@ -583,6 +603,7 @@ Evidence；不要直接跳到 WebDAV、SFTP、持久化 Forward Profile 或高�
 | Keyboard-interactive Design | `docs/design/keyboard-interactive-authentication-v1.md` |
 | Multi Tab Session Design | `docs/design/multi-tab-session-lifecycle-v1.md` |
 | SSH Port Forwarding Design | `docs/design/ssh-port-forwarding-v1.md` |
+| Private Key Generation/Export Design | `docs/design/private-key-generation-and-encrypted-export-v1.md` |
 | OpenSSH Known Hosts Reference | `docs/reference/openssh-known-hosts-baseline-2026.md` |
 | Threat Model | `docs/design/threat-model-v1.md` |
 | SSH Core | `crates/anyssh-ssh/src/lib.rs` |
@@ -599,8 +620,8 @@ Evidence；不要直接跳到 WebDAV、SFTP、持久化 Forward Profile 或高�
 | 总体技术设计 | `docs/design/technical-architecture-2026.md` |
 | ADR 索引 | `docs/adr/README.md` |
 | ExecPlan 规范 | `docs/execplans/README.md` |
-| 当前活动计划 | `docs/execplans/active/0008-ssh-port-forwarding.md` |
-| 最新完成计划 | `docs/execplans/completed/0007-multi-tab-terminal-and-session-lifecycle.md` |
+| 当前活动计划 | `docs/execplans/active/0009-private-key-generation-and-encrypted-export.md` |
+| 最新完成计划 | `docs/execplans/completed/0008-ssh-port-forwarding.md` |
 | Phase 0 结果 | `docs/execplans/completed/0001-phase-0-technical-validation.md` |
 | Group 结果 | `docs/execplans/completed/0002-group-persistence-and-inheritance.md` |
 | System Agent 结果 | `docs/execplans/completed/0003-system-ssh-agent-authentication.md` |
@@ -608,6 +629,7 @@ Evidence；不要直接跳到 WebDAV、SFTP、持久化 Forward Profile 或高�
 | Known Host 结果 | `docs/execplans/completed/0005-known-host-repository-and-durable-tofu.md` |
 | Keyboard-interactive 结果 | `docs/execplans/completed/0006-keyboard-interactive-and-otp.md` |
 | Multi Tab 结果 | `docs/execplans/completed/0007-multi-tab-terminal-and-session-lifecycle.md` |
+| Port Forwarding 结果 | `docs/execplans/completed/0008-ssh-port-forwarding.md` |
 | 2026 技术基线 | `docs/reference/technology-baseline-2026.md` |
 | 术语表 | `docs/reference/glossary.md` |
 

@@ -1,6 +1,6 @@
 # ADR-0018：SSH Port Forwarding 由 Rust 拥有并绑定 Session
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-07-28
 - 决策人：项目维护者
 
@@ -93,7 +93,7 @@ Local、Remote 和 Dynamic Forwarding 会处理任意 TCP Byte Stream，并可�
 ## 相关文档
 
 - Design：[SSH Port Forwarding v1](../design/ssh-port-forwarding-v1.md)
-- ExecPlan：[SSH Port Forwarding](../execplans/active/0008-ssh-port-forwarding.md)
+- ExecPlan：[SSH Port Forwarding](../execplans/completed/0008-ssh-port-forwarding.md)
 - ADR：[ADR-0002](0002-russh-as-default-ssh-engine.md)
 - ADR：[ADR-0006](0006-secrets-stay-out-of-webview.md)
 - ADR：[ADR-0010](0010-saved-host-plans-resolve-in-rust.md)

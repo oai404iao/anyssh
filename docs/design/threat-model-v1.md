@@ -112,7 +112,8 @@ System SSH Agent Socket / Named Pipe
 | T-19 | 被攻陷的 WebView 删除 Known Host 后自动接受 MITM Key | Accepted ADR-0015：Forget 只提交 ID，由 ApplicationCore 解析并通过 WebView 外 Linux/Windows 原生确认后删除；Changed-Key 无接受入口 | Android/iOS 原生确认 Adapter 尚未实现；OS/Toolkit Prompt 仍是平台信任边界 |
 | T-20 | 恶意 Server Prompt 或延迟 OTP Response 泄露 Saved Secret/应用到错误 Hop | Accepted ADR-0016：不自动填充 Saved Secret；Request-scoped 局部表单、Typed IPC、`Zeroizing<String>`、Request/Hop/Round 绑定、Count/Size/Timeout 上限和普通失败不降级；OpenSSH PAM/X11/Wayland/Windows Evidence | 当前 Renderer 被攻陷时仍可能读取本次临时 Response |
 | T-21 | 多 Tab 把 Output/Input/Host Key/OTP 路由到错误 Session，或关闭 UI 后留下孤儿连接 | Accepted ADR-0017：Tab ID/Generation 与 Rust Session ID 分离；每 Tab Event/Data Channel、Mounted xterm/Ack/Pending Request；Late Return Disconnect；Close、Channel Loss、Vault Lock 和 App Exit Fail Closed | Browser、X11、Wayland、Windows 已覆盖 Close-during-connect、同时 Challenge、非活动 4 MiB 输出、单 Tab Close 和双 Session Vault Lock |
-| T-22 | Forward Listener 无意暴露到 LAN/Public、Payload 经 WebView 泄漏、恶意 SOCKS Request 或 Tab 关闭后残留 Tunnel | Proposed ADR-0018 已实现：Forward Rust-only、绑定 Live Session、v1 Loopback-only、SOCKS5 CONNECT-only、16 Forward/64 Connection、有界 Queue/Timeout/Cancellation、显式 Remote Channel Reject；OpenSSH、Browser、X11、Wayland 已覆盖 Direct/Jump、4 MiB/Half-close、Stop/Disconnect/Tab Close/Vault Lock 和 Payload Scan | 等待 Windows Native、Container 与同 Commit CI 后决定是否接受 ADR-0018；Renderer 仍可修改 Forward Metadata，但不能接触 Payload |
+| T-22 | Forward Listener 无意暴露到 LAN/Public、Payload 经 WebView 泄漏、恶意 SOCKS Request 或 Tab 关闭后残留 Tunnel | Accepted ADR-0018：Forward Rust-only、绑定 Live Session、v1 Loopback-only、SOCKS5 CONNECT-only、16 Forward/64 Connection、有界 Queue/Timeout/Cancellation、显式 Remote Channel Reject；OpenSSH、Browser、X11、Wayland、Windows 和同 Commit CI 已覆盖 Direct/Jump、4 MiB/Half-close、Stop/Disconnect/Tab Close/Vault Lock 和 Payload Scan | Renderer 仍可修改 Forward Metadata，但不能接触 Payload；Wildcard/LAN/Public Bind 与持久化 Profile 必须另行设计 |
+| T-23 | Key Generation/Reveal/Export 把 Private Key、PIN、Passphrase 或 Path 暴露给 WebView、Shell、日志或不安全文件 | Proposed ADR-0019：计划使用 Rust CSPRNG、Public-only Projection、Native PIN Step-up、Native Passphrase Confirmation、Rust-owned Save Picker 和 encrypted-only create-new Export | 尚未实现；Windows ACL/Reparse Point、Prompt 取消、部分文件清理和移动端 Document Provider 需要平台 Evidence |
 
 ## 6. 平台结论
 
@@ -126,11 +127,12 @@ System SSH Agent Socket / Named Pipe
   Challenge Tab 的并发路由、Local/Dynamic/Remote Forward 和单 Tab
   Close/Forward Cleanup 也已验证。
 - Windows：真实 EXE/WebView2、非零窗口句柄、Vault/Repository、Durable TOFU、
-  原生 Forget、重启恢复和 Changed-Key 硬阻断已验证。Run `30360000884` 还覆盖
+  原生 Forget、重启恢复和 Changed-Key 硬阻断已验证。Run `30360000884` 覆盖
   Native Picker、Credential UI、加密 Key SSH、System Agent Named Pipe、
   controlled russh Keyboard-interactive、standalone OpenSSH Host Key Rotation、
-  远端 Marker 和明文扫描；Run `30368134792` 继续验证 Agent Session 与第二个
-  Keyboard-interactive Tab 并发、单 Tab Close 和第一 Session 后续命令。
+  远端 Marker 和明文扫描；Run `30368134792` 验证 Multi Tab；Run
+  `30416305300` 继续验证真实 Local/Dynamic/Remote Forward、Disconnect、
+  Interactive Tab Close 和 Vault Lock Cleanup。
 - Android：ARM64 Debug APK、Rust Core 和 bundled SQLCipher 构建已验证；Runtime
   与 Content URI 尚未验证。
 - iOS：因无 macOS/Xcode 环境而明确延期。

@@ -1,11 +1,10 @@
 # SSH Port Forwarding v1
 
-> 状态：实现中；Rust Core、Tauri/React、OpenSSH、Browser、X11 与 Wayland
-> 已验证，等待 Windows/Container/同 Commit CI
+> 状态：已实现；ADR-0018 已接受
 > 日期：2026-07-29
 
 本文定义 Session-scoped Local、Remote 和 Dynamic TCP Forwarding。长期决策见
-Proposed ADR-0018。
+Accepted ADR-0018。
 
 ## 目标
 
@@ -207,4 +206,4 @@ Metadata 和 Lifecycle，不打开 Listener。
 - [Multi Tab Session Lifecycle v1](multi-tab-session-lifecycle-v1.md)
 - [Technical Architecture 2026](technical-architecture-2026.md)
 - [Threat Model v1](threat-model-v1.md)
-- [ExecPlan 0008](../execplans/active/0008-ssh-port-forwarding.md)
+- [ExecPlan 0008](../execplans/completed/0008-ssh-port-forwarding.md)

@@ -1,6 +1,6 @@
 # 项目状态
 
-> 更新日期：2026-07-28
+> 更新日期：2026-07-29
 
 ## 当前阶段
 
@@ -160,16 +160,23 @@
   Linux/Android/Windows Build Hash、Error Log、Vault Header 和 Secret Scan
   已人工检查。
 - ADR-0017 已接受，Multi Tab Terminal and Session Lifecycle ExecPlan 已完成。
-- Proposed ADR-0018、SSH Port Forwarding Design 和 ExecPlan 0008 已进入最终
-  验证。Rust Session Runtime、Local/Remote/Dynamic、SOCKS5、Metadata-only
-  Tauri/React UI、Browser Preview 和真实 OpenSSH Direct/Jump Protocol 已实现；
-  X11/Wayland Native 已通过真实三类 Forward、Tab Close/Disconnect/Vault Lock
-  Cleanup 和 Payload Scan。Windows Native、Container 与同 Commit CI 待核验。
+- Rust Session Runtime 已实现 Local/Remote/Dynamic、SOCKS5、Metadata-only
+  Tauri/React UI 和 Browser Preview；真实 OpenSSH 已覆盖 Direct/Jump、
+  Target-side DNS、Remote Registration、4 MiB/Half-close、16 Forward/
+  64 Connection 和 Cleanup。
+- Head `6fcb1a68d5d791d164f3ed43209aa3a9613b5acf` 的 GitHub Actions Run
+  `30416305300` 全部九个 Job 通过；Browser、X11、Wayland 和 Windows 真实
+  Local/Dynamic/Remote、Tab Close/Disconnect/Vault Lock Cleanup、Payload Scan
+  与 Linux/Android/Windows Build Hash 已人工检查。
+- ADR-0018 已接受，SSH Port Forwarding ExecPlan 已完成。
+- Proposed ADR-0019、Private Key Generation and Encrypted Export Design 与
+  ExecPlan 0009 已创建；当前将实现 Ed25519/RSA 4096 Generation、Public Key
+  Projection、Native PIN Step-up 和 encrypted-only OpenSSH Export。
 - CI 工作流。
 
 当前仓库尚未完成：
 
-- SSH Port Forwarding 最终 Windows/CI 验证，以及后续 Key 管理。
+- Private Key Generation/Public Reveal/Encrypted Export。
 - OpenSSH `known_hosts` 导入/导出。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
 - Android Runtime、Content URI、软键盘与生命周期验证。
@@ -192,7 +199,7 @@
 
 ## 当前活动计划
 
-- [`Phase 1：SSH Port Forwarding`](../execplans/active/0008-ssh-port-forwarding.md)
+- [`Phase 1：Private Key Generation and Encrypted Export`](../execplans/active/0009-private-key-generation-and-encrypted-export.md)
 
 ## 已完成计划
 
@@ -203,3 +210,4 @@
 - [`Phase 1：Known Host Repository and Durable TOFU`](../execplans/completed/0005-known-host-repository-and-durable-tofu.md)
 - [`Phase 1：Keyboard-interactive and OTP`](../execplans/completed/0006-keyboard-interactive-and-otp.md)
 - [`Phase 1：Multi Tab Terminal and Session Lifecycle`](../execplans/completed/0007-multi-tab-terminal-and-session-lifecycle.md)
+- [`Phase 1：SSH Port Forwarding`](../execplans/completed/0008-ssh-port-forwarding.md)
