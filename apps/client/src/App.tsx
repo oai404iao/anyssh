@@ -273,6 +273,7 @@ function App() {
   const [snippets, setSnippets] = useState<SnippetSummary[]>([]);
   const [repositoryLoading, setRepositoryLoading] = useState(false);
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
+  const repositoryRefreshIdRef = useRef(0);
 
   const replaceSessionTabs = useCallback(
     (update: (current: SessionTab[]) => SessionTab[]) => {
@@ -354,6 +355,7 @@ function App() {
   );
 
   const refreshRepository = useCallback(async () => {
+    const refreshId = ++repositoryRefreshIdRef.current;
     setRepositoryLoading(true);
     setRepositoryError(null);
     try {
@@ -380,6 +382,7 @@ function App() {
         listSystemFonts(),
         listSnippets(),
       ]);
+      if (refreshId !== repositoryRefreshIdRef.current) return;
       setCredentials(nextCredentials);
       setGroups(nextGroups);
       setHosts(nextHosts);
@@ -403,9 +406,12 @@ function App() {
         ),
       );
     } catch (loadError) {
+      if (refreshId !== repositoryRefreshIdRef.current) return;
       setRepositoryError(String(loadError));
     } finally {
-      setRepositoryLoading(false);
+      if (refreshId === repositoryRefreshIdRef.current) {
+        setRepositoryLoading(false);
+      }
     }
   }, [replaceSessionTabs]);
 
@@ -1059,6 +1065,7 @@ function App() {
   }
 
   async function handleVaultLock() {
+    repositoryRefreshIdRef.current += 1;
     const freshTab = createSessionTab();
     replaceSessionTabs(() => [freshTab]);
     setActiveTabId(freshTab.id);
