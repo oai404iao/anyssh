@@ -1,11 +1,12 @@
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 use std::{
     fmt,
     fs::{File, OpenOptions},
     future::Future,
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use anyssh_domain::{SshEndpoint, SshEndpointIdentity, TerminalSize};
@@ -20,7 +21,9 @@ use anyssh_storage::{
     CredentialSecret, DatabaseActorError, DatabaseActorHandle, ResolvedCredential,
     ResolvedHostConnection, ResolvedKnownHostPolicy,
 };
+use ssh_key::{Algorithm as SshKeyAlgorithm, HashAlg, LineEnding, PrivateKey};
 use thiserror::Error;
+use tokio::sync::Semaphore;
 use zeroize::Zeroizing;
 
 const _: () = assert!(anyssh_storage::MAX_JUMP_ROUTE_STEPS == anyssh_ssh::MAX_JUMP_HOSTS);
@@ -29,8 +32,200 @@ const _: () = assert!(
     anyssh_storage::MAX_KNOWN_HOST_PUBLIC_KEY_BYTES == anyssh_ssh::MAX_HOST_PUBLIC_KEY_BYTES
 );
 pub const PRIVATE_KEY_PASSPHRASE_MAX_ATTEMPTS: u8 = 3;
+pub const PRIVATE_KEY_EXPORT_MAX_ATTEMPTS: u8 = 3;
+const PRIVATE_KEY_OPERATION_CONCURRENCY: usize = 1;
 const MAX_PRIVATE_KEY_PROMPT_LABEL_CHARS: usize = 128;
 const DEFAULT_PRIVATE_KEY_PROMPT_LABEL: &str = "Imported private key";
+const MAX_GENERATED_PRIVATE_KEY_COMMENT_CHARS: usize = 128;
+const MAX_OPENSSH_PUBLIC_KEY_BYTES: usize = 16 * 1024;
+const MAX_PRIVATE_KEY_EXPORT_PASSPHRASE_BYTES: usize = 1024;
+const MAX_PRIVATE_KEY_EXPORT_FILE_NAME_CHARS: usize = 128;
+const DEFAULT_PRIVATE_KEY_EXPORT_FILE_NAME: &str = "anyssh-private-key";
+const PRIVATE_KEY_EXPORT_OPERATION_LABEL: &str = "Export SSH private key";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PrivateKeyGenerationAlgorithm {
+    Ed25519,
+    Rsa4096,
+}
+
+impl PrivateKeyGenerationAlgorithm {
+    const fn ssh_algorithm(self) -> SshKeyAlgorithm {
+        match self {
+            Self::Ed25519 => SshKeyAlgorithm::Ed25519,
+            Self::Rsa4096 => SshKeyAlgorithm::Rsa { hash: None },
+        }
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub struct PrivateKeyPublicSummary {
+    credential_id: String,
+    algorithm: String,
+    fingerprint_sha256: String,
+    openssh_public_key: String,
+}
+
+impl PrivateKeyPublicSummary {
+    pub fn credential_id(&self) -> &str {
+        &self.credential_id
+    }
+
+    pub fn algorithm(&self) -> &str {
+        &self.algorithm
+    }
+
+    pub fn fingerprint_sha256(&self) -> &str {
+        &self.fingerprint_sha256
+    }
+
+    pub fn openssh_public_key(&self) -> &str {
+        &self.openssh_public_key
+    }
+}
+
+impl fmt::Debug for PrivateKeyPublicSummary {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PrivateKeyPublicSummary")
+            .field("credential_id", &self.credential_id)
+            .field("algorithm", &self.algorithm)
+            .field("fingerprint_sha256", &self.fingerprint_sha256)
+            .field("openssh_public_key", &"<public>")
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VaultStepUpContext {
+    operation_label: String,
+    attempt: u8,
+    max_attempts: u8,
+    previous_pin_incorrect: bool,
+}
+
+impl VaultStepUpContext {
+    pub fn operation_label(&self) -> &str {
+        &self.operation_label
+    }
+
+    pub const fn attempt(&self) -> u8 {
+        self.attempt
+    }
+
+    pub const fn max_attempts(&self) -> u8 {
+        self.max_attempts
+    }
+
+    pub const fn previous_pin_incorrect(&self) -> bool {
+        self.previous_pin_incorrect
+    }
+}
+
+pub trait VaultStepUpPrompt: Send + Sync {
+    fn request(
+        &self,
+        context: VaultStepUpContext,
+    ) -> impl Future<Output = Result<Option<Zeroizing<String>>, VaultStepUpPromptError>> + Send;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PrivateKeyExportPassphraseContext {
+    attempt: u8,
+    max_attempts: u8,
+    previous_confirmation_mismatch: bool,
+}
+
+impl PrivateKeyExportPassphraseContext {
+    pub const fn attempt(&self) -> u8 {
+        self.attempt
+    }
+
+    pub const fn max_attempts(&self) -> u8 {
+        self.max_attempts
+    }
+
+    pub const fn previous_confirmation_mismatch(&self) -> bool {
+        self.previous_confirmation_mismatch
+    }
+}
+
+pub struct PrivateKeyExportPassphraseCandidate {
+    passphrase: Zeroizing<String>,
+    confirmation: Zeroizing<String>,
+}
+
+impl PrivateKeyExportPassphraseCandidate {
+    pub const fn new(passphrase: Zeroizing<String>, confirmation: Zeroizing<String>) -> Self {
+        Self {
+            passphrase,
+            confirmation,
+        }
+    }
+
+    fn into_parts(self) -> (Zeroizing<String>, Zeroizing<String>) {
+        (self.passphrase, self.confirmation)
+    }
+}
+
+impl fmt::Debug for PrivateKeyExportPassphraseCandidate {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PrivateKeyExportPassphraseCandidate")
+            .field("passphrase", &"<redacted>")
+            .field("confirmation", &"<redacted>")
+            .finish()
+    }
+}
+
+pub trait PrivateKeyExportPassphrasePrompt: Send + Sync {
+    fn request(
+        &self,
+        context: PrivateKeyExportPassphraseContext,
+    ) -> impl Future<
+        Output = Result<
+            Option<PrivateKeyExportPassphraseCandidate>,
+            PrivateKeyExportPassphrasePromptError,
+        >,
+    > + Send;
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub struct PrivateKeyExportSummary {
+    file_name: String,
+    algorithm: String,
+    fingerprint_sha256: String,
+}
+
+impl PrivateKeyExportSummary {
+    pub fn file_name(&self) -> &str {
+        &self.file_name
+    }
+
+    pub fn algorithm(&self) -> &str {
+        &self.algorithm
+    }
+
+    pub fn fingerprint_sha256(&self) -> &str {
+        &self.fingerprint_sha256
+    }
+
+    pub const fn encrypted(&self) -> bool {
+        true
+    }
+}
+
+impl fmt::Debug for PrivateKeyExportSummary {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PrivateKeyExportSummary")
+            .field("file_name", &self.file_name)
+            .field("algorithm", &self.algorithm)
+            .field("fingerprint_sha256", &self.fingerprint_sha256)
+            .field("encrypted", &true)
+            .finish()
+    }
+}
 
 pub use anyssh_storage::{
     CredentialKind, CredentialSummary, DatabaseActorConfig, DatabaseActorStartError, GroupSummary,
@@ -102,6 +297,7 @@ pub trait KnownHostForgetPrompt: Send + Sync {
 #[derive(Clone)]
 pub struct ApplicationCore {
     database: DatabaseActorHandle,
+    private_key_operations: Arc<Semaphore>,
 }
 
 impl fmt::Debug for ApplicationCore {
@@ -109,6 +305,7 @@ impl fmt::Debug for ApplicationCore {
         formatter
             .debug_struct("ApplicationCore")
             .field("database", &self.database)
+            .field("private_key_operations", &"<bounded>")
             .finish_non_exhaustive()
     }
 }
@@ -121,8 +318,11 @@ impl ApplicationCore {
         DatabaseActorHandle::spawn(vault_root, config).map(Self::new)
     }
 
-    pub const fn new(database: DatabaseActorHandle) -> Self {
-        Self { database }
+    pub fn new(database: DatabaseActorHandle) -> Self {
+        Self {
+            database,
+            private_key_operations: Arc::new(Semaphore::new(PRIVATE_KEY_OPERATION_CONCURRENCY)),
+        }
     }
 
     pub async fn vault_status(&self) -> Result<VaultStatus, ApplicationError> {
@@ -201,6 +401,163 @@ impl ApplicationCore {
             )
             .await
             .map_err(ApplicationError::from)
+    }
+
+    pub async fn generate_private_key_credential(
+        &self,
+        label: String,
+        username: String,
+        algorithm: PrivateKeyGenerationAlgorithm,
+    ) -> Result<CredentialSummary, ApplicationError> {
+        let operation_permit = self
+            .private_key_operations
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| PrivateKeyManagementError::OperationBusy)?;
+        if self
+            .database
+            .status()
+            .await
+            .map_err(ApplicationError::from)?
+            .state()
+            != VaultState::Unlocked
+        {
+            return Err(DatabaseActorError::VaultLocked.into());
+        }
+        let comment = sanitize_generated_private_key_comment(&label);
+        let (private_key, _operation_permit) = tokio::task::spawn_blocking(move || {
+            let mut private_key = PrivateKey::random(&mut rand::rng(), algorithm.ssh_algorithm())
+                .map_err(|_| PrivateKeyManagementError::GenerationFailed)?;
+            private_key.set_comment(comment);
+            let private_key = private_key
+                .to_openssh(LineEnding::LF)
+                .map_err(|_| PrivateKeyManagementError::GenerationFailed)?;
+            Ok::<_, PrivateKeyManagementError>((private_key, operation_permit))
+        })
+        .await
+        .map_err(|_| PrivateKeyManagementError::TaskFailed)??;
+
+        self.store_private_key_credential(label, username, private_key, None)
+            .await
+    }
+
+    pub async fn private_key_public_summary(
+        &self,
+        credential_id: String,
+    ) -> Result<PrivateKeyPublicSummary, ApplicationError> {
+        let operation_permit = self
+            .private_key_operations
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| PrivateKeyManagementError::OperationBusy)?;
+        let resolved = self
+            .database
+            .resolve_credential(credential_id.clone())
+            .await
+            .map_err(ApplicationError::from)?;
+        let (_, secret) = resolved.into_parts();
+        let CredentialSecret::PrivateKey {
+            private_key,
+            passphrase,
+        } = secret
+        else {
+            return Err(PrivateKeyManagementError::CredentialKindMismatch.into());
+        };
+
+        tokio::task::spawn_blocking(move || {
+            let _operation_permit = operation_permit;
+            private_key_public_summary_from_text(credential_id, private_key, passphrase)
+        })
+        .await
+        .map_err(|_| PrivateKeyManagementError::TaskFailed)?
+        .map_err(ApplicationError::from)
+    }
+
+    pub async fn export_private_key_credential_to_path_with_prompts<S, P>(
+        &self,
+        credential_id: String,
+        path: PathBuf,
+        step_up_prompt: &S,
+        passphrase_prompt: &P,
+    ) -> Result<Option<PrivateKeyExportSummary>, ApplicationError>
+    where
+        S: VaultStepUpPrompt,
+        P: PrivateKeyExportPassphrasePrompt,
+    {
+        let operation_permit = self
+            .private_key_operations
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| PrivateKeyManagementError::OperationBusy)?;
+        let mut step_up_approved = false;
+        for attempt in 1..=PRIVATE_KEY_EXPORT_MAX_ATTEMPTS {
+            let context = VaultStepUpContext {
+                operation_label: PRIVATE_KEY_EXPORT_OPERATION_LABEL.to_owned(),
+                attempt,
+                max_attempts: PRIVATE_KEY_EXPORT_MAX_ATTEMPTS,
+                previous_pin_incorrect: attempt > 1,
+            };
+            let Some(pin) = step_up_prompt.request(context).await? else {
+                return Ok(None);
+            };
+            if self
+                .database
+                .verify_pin(pin)
+                .await
+                .map_err(ApplicationError::from)?
+            {
+                step_up_approved = true;
+                break;
+            }
+        }
+        if !step_up_approved {
+            return Err(PrivateKeyManagementError::StepUpRejected.into());
+        }
+
+        let mut export_passphrase = None;
+        for attempt in 1..=PRIVATE_KEY_EXPORT_MAX_ATTEMPTS {
+            let context = PrivateKeyExportPassphraseContext {
+                attempt,
+                max_attempts: PRIVATE_KEY_EXPORT_MAX_ATTEMPTS,
+                previous_confirmation_mismatch: attempt > 1,
+            };
+            let Some(candidate) = passphrase_prompt.request(context).await? else {
+                return Ok(None);
+            };
+            let (passphrase, confirmation) = candidate.into_parts();
+            if valid_private_key_export_passphrase(passphrase.as_str())
+                && passphrase.as_str() == confirmation.as_str()
+            {
+                export_passphrase = Some(passphrase);
+                break;
+            }
+        }
+        let Some(export_passphrase) = export_passphrase else {
+            return Err(PrivateKeyManagementError::PassphraseRejected.into());
+        };
+
+        let resolved = self
+            .database
+            .resolve_credential(credential_id)
+            .await
+            .map_err(ApplicationError::from)?;
+        let (_, secret) = resolved.into_parts();
+        let CredentialSecret::PrivateKey {
+            private_key,
+            passphrase,
+        } = secret
+        else {
+            return Err(PrivateKeyManagementError::CredentialKindMismatch.into());
+        };
+
+        tokio::task::spawn_blocking(move || {
+            let _operation_permit = operation_permit;
+            export_private_key_to_new_file(path, private_key, passphrase, export_passphrase)
+        })
+        .await
+        .map_err(|_| PrivateKeyManagementError::TaskFailed)?
+        .map(Some)
+        .map_err(ApplicationError::from)
     }
 
     pub async fn import_private_key_credential_from_path(
@@ -780,6 +1137,12 @@ pub enum ApplicationError {
     #[error(transparent)]
     PrivateKeyPrompt(#[from] PrivateKeyPromptError),
     #[error(transparent)]
+    PrivateKeyManagement(#[from] PrivateKeyManagementError),
+    #[error(transparent)]
+    VaultStepUpPrompt(#[from] VaultStepUpPromptError),
+    #[error(transparent)]
+    PrivateKeyExportPassphrasePrompt(#[from] PrivateKeyExportPassphrasePromptError),
+    #[error(transparent)]
     KnownHostForgetPrompt(#[from] KnownHostForgetPromptError),
     #[error(transparent)]
     SystemAgent(#[from] SystemAgentError),
@@ -812,6 +1175,44 @@ pub enum PrivateKeyImportError {
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum PrivateKeyPromptError {
     #[error("private key passphrase prompt is unavailable")]
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum PrivateKeyManagementError {
+    #[error("another private key operation is already in progress")]
+    OperationBusy,
+    #[error("credential is not a private key")]
+    CredentialKindMismatch,
+    #[error("stored private key is invalid")]
+    InvalidKey,
+    #[error("private key generation failed")]
+    GenerationFailed,
+    #[error("private key operation task failed")]
+    TaskFailed,
+    #[error("OpenSSH public key exceeds the supported size")]
+    PublicKeyTooLarge,
+    #[error("Vault step-up PIN was not accepted")]
+    StepUpRejected,
+    #[error("private key export passphrase was not accepted")]
+    PassphraseRejected,
+    #[error("private key export destination already exists")]
+    DestinationExists,
+    #[error("private key export destination is not a regular file")]
+    UnsupportedDestination,
+    #[error("private key export failed")]
+    ExportFailed,
+}
+
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum VaultStepUpPromptError {
+    #[error("Vault step-up prompt is unavailable")]
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum PrivateKeyExportPassphrasePromptError {
+    #[error("private key export passphrase prompt is unavailable")]
     Unavailable,
 }
 
@@ -884,6 +1285,439 @@ fn sanitize_private_key_prompt_label(label: &str) -> String {
         DEFAULT_PRIVATE_KEY_PROMPT_LABEL.to_owned()
     } else {
         label.to_owned()
+    }
+}
+
+fn sanitize_generated_private_key_comment(label: &str) -> String {
+    label
+        .trim()
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(MAX_GENERATED_PRIVATE_KEY_COMMENT_CHARS)
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
+fn private_key_public_summary_from_text(
+    credential_id: String,
+    private_key: Zeroizing<String>,
+    passphrase: Option<Zeroizing<String>>,
+) -> Result<PrivateKeyPublicSummary, PrivateKeyManagementError> {
+    let private_key = decode_stored_private_key(private_key, passphrase)?;
+    let public_key = private_key.public_key();
+    let openssh_public_key = public_key
+        .to_openssh()
+        .map_err(|_| PrivateKeyManagementError::InvalidKey)?;
+    if openssh_public_key.len() > MAX_OPENSSH_PUBLIC_KEY_BYTES {
+        return Err(PrivateKeyManagementError::PublicKeyTooLarge);
+    }
+    if openssh_public_key.chars().any(char::is_control) {
+        return Err(PrivateKeyManagementError::InvalidKey);
+    }
+
+    Ok(PrivateKeyPublicSummary {
+        credential_id,
+        algorithm: public_key.algorithm().to_string(),
+        fingerprint_sha256: public_key.fingerprint(HashAlg::Sha256).to_string(),
+        openssh_public_key,
+    })
+}
+
+fn decode_stored_private_key(
+    private_key: Zeroizing<String>,
+    passphrase: Option<Zeroizing<String>>,
+) -> Result<PrivateKey, PrivateKeyManagementError> {
+    let private_key = PrivateKey::from_openssh(private_key.as_bytes())
+        .map_err(|_| PrivateKeyManagementError::InvalidKey)?;
+    if private_key.is_encrypted() {
+        let passphrase = passphrase
+            .as_ref()
+            .ok_or(PrivateKeyManagementError::InvalidKey)?;
+        private_key
+            .decrypt(passphrase.as_bytes())
+            .map_err(|_| PrivateKeyManagementError::InvalidKey)
+    } else {
+        Ok(private_key)
+    }
+}
+
+fn valid_private_key_export_passphrase(passphrase: &str) -> bool {
+    !passphrase.is_empty() && passphrase.len() <= MAX_PRIVATE_KEY_EXPORT_PASSPHRASE_BYTES
+}
+
+fn export_private_key_to_new_file(
+    path: PathBuf,
+    private_key: Zeroizing<String>,
+    stored_passphrase: Option<Zeroizing<String>>,
+    export_passphrase: Zeroizing<String>,
+) -> Result<PrivateKeyExportSummary, PrivateKeyManagementError> {
+    let private_key = decode_stored_private_key(private_key, stored_passphrase)?;
+    let public_key = private_key.public_key();
+    let algorithm = public_key.algorithm().to_string();
+    let fingerprint_sha256 = public_key.fingerprint(HashAlg::Sha256).to_string();
+    let encrypted = private_key
+        .encrypt(&mut rand::rng(), export_passphrase.as_bytes())
+        .map_err(|_| PrivateKeyManagementError::ExportFailed)?;
+    let serialized = encrypted
+        .to_openssh(LineEnding::LF)
+        .map_err(|_| PrivateKeyManagementError::ExportFailed)?;
+    if serialized.is_empty() || serialized.len() > MAX_PRIVATE_KEY_BYTES {
+        return Err(PrivateKeyManagementError::ExportFailed);
+    }
+
+    write_private_key_export_new(&path, serialized.as_bytes())?;
+    Ok(PrivateKeyExportSummary {
+        file_name: sanitized_export_file_name(&path),
+        algorithm,
+        fingerprint_sha256,
+    })
+}
+
+fn write_private_key_export_new(
+    path: &Path,
+    serialized: &[u8],
+) -> Result<(), PrivateKeyManagementError> {
+    write_private_key_export_new_with(path, |file| {
+        file.write_all(serialized)
+            .map_err(|_| PrivateKeyManagementError::ExportFailed)?;
+        file.sync_all()
+            .map_err(|_| PrivateKeyManagementError::ExportFailed)
+    })
+}
+
+fn write_private_key_export_new_with(
+    path: &Path,
+    write: impl FnOnce(&mut File) -> Result<(), PrivateKeyManagementError>,
+) -> Result<(), PrivateKeyManagementError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => return Err(PrivateKeyManagementError::DestinationExists),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err(PrivateKeyManagementError::ExportFailed),
+    }
+
+    let mut file = open_private_key_export_file(path)?;
+    let result = (|| {
+        if !file
+            .metadata()
+            .map_err(|_| PrivateKeyManagementError::ExportFailed)?
+            .is_file()
+        {
+            return Err(PrivateKeyManagementError::UnsupportedDestination);
+        }
+        write(&mut file)
+    })();
+    drop(file);
+    if result.is_err() {
+        let _ = std::fs::remove_file(path);
+    }
+    result
+}
+
+#[cfg(unix)]
+fn open_private_key_export_file(path: &Path) -> Result<File, PrivateKeyManagementError> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .map_err(map_private_key_export_open_error)
+}
+
+#[cfg(windows)]
+fn open_private_key_export_file(path: &Path) -> Result<File, PrivateKeyManagementError> {
+    windows_private_key_export::open(path)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_private_key_export_file(path: &Path) -> Result<File, PrivateKeyManagementError> {
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(map_private_key_export_open_error)
+}
+
+#[cfg(not(windows))]
+fn map_private_key_export_open_error(error: std::io::Error) -> PrivateKeyManagementError {
+    if error.kind() == std::io::ErrorKind::AlreadyExists {
+        PrivateKeyManagementError::DestinationExists
+    } else {
+        PrivateKeyManagementError::ExportFailed
+    }
+}
+
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod windows_private_key_export {
+    use std::{
+        ffi::OsStr,
+        fs::File,
+        mem::size_of,
+        os::windows::{ffi::OsStrExt, fs::MetadataExt, io::FromRawHandle},
+        path::Path,
+    };
+
+    use windows::{
+        Win32::{
+            Foundation::{
+                CloseHandle, ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS, FALSE, GENERIC_WRITE, HANDLE,
+                HLOCAL, LocalFree,
+            },
+            Security::{
+                Authorization::{
+                    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
+                    SDDL_REVISION_1,
+                },
+                GetTokenInformation, IsValidSid, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
+                TOKEN_QUERY, TOKEN_USER, TokenUser,
+            },
+            Storage::FileSystem::{
+                CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
+                FILE_ATTRIBUTE_TAG_INFO, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_MODE,
+                FileAttributeTagInfo, GetFileInformationByHandleEx,
+            },
+            System::Threading::{GetCurrentProcess, OpenProcessToken},
+        },
+        core::{PCWSTR, PWSTR},
+    };
+
+    use super::PrivateKeyManagementError;
+
+    struct LocalSecurityDescriptor(PSECURITY_DESCRIPTOR);
+
+    impl Drop for LocalSecurityDescriptor {
+        fn drop(&mut self) {
+            if !self.0.0.is_null() {
+                // SAFETY: ConvertStringSecurityDescriptorToSecurityDescriptorW
+                // allocated this descriptor with LocalAlloc and ownership has
+                // not been transferred.
+                unsafe {
+                    let _ = LocalFree(Some(HLOCAL(self.0.0)));
+                }
+            }
+        }
+    }
+
+    struct LocalWideString(PWSTR);
+
+    impl Drop for LocalWideString {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                // SAFETY: ConvertSidToStringSidW allocated this string with
+                // LocalAlloc and ownership has not been transferred.
+                unsafe {
+                    let _ = LocalFree(Some(HLOCAL(self.0.0.cast())));
+                }
+            }
+        }
+    }
+
+    struct OwnedHandle(HANDLE);
+
+    impl Drop for OwnedHandle {
+        fn drop(&mut self) {
+            if !self.0.is_invalid() {
+                // SAFETY: this wrapper owns the token handle returned by
+                // OpenProcessToken and closes it exactly once.
+                unsafe {
+                    let _ = CloseHandle(self.0);
+                }
+            }
+        }
+    }
+
+    pub(super) fn open(path: &Path) -> Result<File, PrivateKeyManagementError> {
+        if !path.is_absolute()
+            || path
+                .file_name()
+                .is_none_or(|name| name.to_string_lossy().contains(':'))
+        {
+            return Err(PrivateKeyManagementError::UnsupportedDestination);
+        }
+        reject_reparse_point_ancestors(path)?;
+
+        let current_user_sid = current_user_sid_string()?;
+        let owner_only_dacl = format!("O:{current_user_sid}D:P(A;;FA;;;{current_user_sid})");
+        let security_descriptor_text = wide_null_terminated(&owner_only_dacl);
+        let mut security_descriptor = PSECURITY_DESCRIPTOR::default();
+        // SAFETY: the SDDL input is NUL-terminated and the output pointer is
+        // valid for the duration of the call.
+        unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                PCWSTR(security_descriptor_text.as_ptr()),
+                SDDL_REVISION_1,
+                &mut security_descriptor,
+                None,
+            )
+        }
+        .map_err(|_| PrivateKeyManagementError::ExportFailed)?;
+        if security_descriptor.0.is_null() {
+            return Err(PrivateKeyManagementError::ExportFailed);
+        }
+        let security_descriptor = LocalSecurityDescriptor(security_descriptor);
+        let security_attributes = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: security_descriptor.0.0,
+            bInheritHandle: FALSE,
+        };
+        let wide_path = wide_path(path);
+
+        // SAFETY: the path and security descriptor remain live and
+        // NUL-terminated for the synchronous call. CREATE_NEW prevents
+        // overwrite, FILE_FLAG_OPEN_REPARSE_POINT prevents following a final
+        // reparse point, and the protected DACL grants full access only to the
+        // current process-token user SID, which is also set as the file owner.
+        let handle = unsafe {
+            CreateFileW(
+                PCWSTR(wide_path.as_ptr()),
+                GENERIC_WRITE.0,
+                FILE_SHARE_MODE(0),
+                Some(&security_attributes as *const SECURITY_ATTRIBUTES),
+                CREATE_NEW,
+                FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+                None,
+            )
+        }
+        .map_err(|error| {
+            if error.code() == ERROR_FILE_EXISTS.to_hresult()
+                || error.code() == ERROR_ALREADY_EXISTS.to_hresult()
+            {
+                PrivateKeyManagementError::DestinationExists
+            } else {
+                PrivateKeyManagementError::ExportFailed
+            }
+        })?;
+
+        // SAFETY: CreateFileW returned a unique owned handle and ownership is
+        // transferred exactly once to File.
+        let file = unsafe { File::from_raw_handle(handle.0) };
+        let mut attributes = FILE_ATTRIBUTE_TAG_INFO::default();
+        // SAFETY: attributes points to a correctly sized writable structure,
+        // and File keeps the handle valid for the duration of the call.
+        let inspection = unsafe {
+            GetFileInformationByHandleEx(
+                handle,
+                FileAttributeTagInfo,
+                (&mut attributes as *mut FILE_ATTRIBUTE_TAG_INFO).cast(),
+                size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
+            )
+        };
+        if inspection.is_err() {
+            drop(file);
+            let _ = std::fs::remove_file(path);
+            return Err(PrivateKeyManagementError::ExportFailed);
+        }
+        if attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+            drop(file);
+            let _ = std::fs::remove_file(path);
+            return Err(PrivateKeyManagementError::UnsupportedDestination);
+        }
+        Ok(file)
+    }
+
+    fn current_user_sid_string() -> Result<String, PrivateKeyManagementError> {
+        let mut token = HANDLE::default();
+        // SAFETY: GetCurrentProcess returns a process pseudo-handle and token
+        // points to writable storage for the returned owned token handle.
+        unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }
+            .map_err(|_| PrivateKeyManagementError::ExportFailed)?;
+        let token = OwnedHandle(token);
+
+        let mut required_length = 0;
+        // SAFETY: the first call intentionally supplies no buffer so Windows
+        // reports the required TOKEN_USER size.
+        let _ = unsafe { GetTokenInformation(token.0, TokenUser, None, 0, &mut required_length) };
+        if required_length < size_of::<TOKEN_USER>() as u32 {
+            return Err(PrivateKeyManagementError::ExportFailed);
+        }
+
+        let token_information_words = (required_length as usize).div_ceil(size_of::<usize>());
+        let mut token_information = vec![0_usize; token_information_words];
+        let token_information_bytes = (token_information.len() * size_of::<usize>()) as u32;
+        // SAFETY: token_information is writable and at least the size Windows
+        // requested for TOKEN_USER, with alignment suitable for TOKEN_USER.
+        unsafe {
+            GetTokenInformation(
+                token.0,
+                TokenUser,
+                Some(token_information.as_mut_ptr().cast()),
+                token_information_bytes,
+                &mut required_length,
+            )
+        }
+        .map_err(|_| PrivateKeyManagementError::ExportFailed)?;
+        // SAFETY: GetTokenInformation initialized the buffer as TOKEN_USER.
+        let token_user = unsafe { &*(token_information.as_ptr().cast::<TOKEN_USER>()) };
+        // SAFETY: the SID pointer belongs to the live TOKEN_USER buffer.
+        if !unsafe { IsValidSid(token_user.User.Sid) }.as_bool() {
+            return Err(PrivateKeyManagementError::ExportFailed);
+        }
+
+        let mut string_sid = PWSTR::null();
+        // SAFETY: the SID is valid and string_sid points to writable output
+        // storage. Windows allocates the returned NUL-terminated string.
+        unsafe { ConvertSidToStringSidW(token_user.User.Sid, &mut string_sid) }
+            .map_err(|_| PrivateKeyManagementError::ExportFailed)?;
+        if string_sid.is_null() {
+            return Err(PrivateKeyManagementError::ExportFailed);
+        }
+        let string_sid = LocalWideString(string_sid);
+        // SAFETY: ConvertSidToStringSidW returned a live NUL-terminated UTF-16
+        // string owned by string_sid.
+        unsafe { string_sid.0.to_string() }.map_err(|_| PrivateKeyManagementError::ExportFailed)
+    }
+
+    fn reject_reparse_point_ancestors(path: &Path) -> Result<(), PrivateKeyManagementError> {
+        let Some(parent) = path.parent() else {
+            return Err(PrivateKeyManagementError::UnsupportedDestination);
+        };
+        for ancestor in parent.ancestors() {
+            if ancestor.as_os_str().is_empty() {
+                continue;
+            }
+            let metadata = std::fs::symlink_metadata(ancestor)
+                .map_err(|_| PrivateKeyManagementError::ExportFailed)?;
+            if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+                return Err(PrivateKeyManagementError::UnsupportedDestination);
+            }
+        }
+        Ok(())
+    }
+
+    fn wide_null_terminated(value: &str) -> Vec<u16> {
+        OsStr::new(value)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    }
+
+    fn wide_path(path: &Path) -> Vec<u16> {
+        path.as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    }
+}
+
+fn sanitized_export_file_name(path: &Path) -> String {
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_default();
+    let file_name: String = file_name
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(MAX_PRIVATE_KEY_EXPORT_FILE_NAME_CHARS)
+        .collect();
+    let file_name = file_name.trim();
+    if file_name.is_empty() {
+        DEFAULT_PRIVATE_KEY_EXPORT_FILE_NAME.to_owned()
+    } else {
+        file_name.to_owned()
     }
 }
 
@@ -1011,6 +1845,116 @@ mod tests {
 
         fn contexts(&self) -> Vec<PrivateKeyPromptContext> {
             self.contexts.lock().expect("prompt contexts").clone()
+        }
+    }
+
+    enum TestStepUpReply {
+        Pin(&'static str),
+        Cancel,
+        Unavailable,
+    }
+
+    struct TestStepUpPrompt {
+        replies: StdMutex<VecDeque<TestStepUpReply>>,
+        contexts: StdMutex<Vec<VaultStepUpContext>>,
+    }
+
+    impl TestStepUpPrompt {
+        fn new(replies: impl IntoIterator<Item = TestStepUpReply>) -> Self {
+            Self {
+                replies: StdMutex::new(replies.into_iter().collect()),
+                contexts: StdMutex::new(Vec::new()),
+            }
+        }
+
+        fn contexts(&self) -> Vec<VaultStepUpContext> {
+            self.contexts.lock().expect("step-up contexts").clone()
+        }
+    }
+
+    impl VaultStepUpPrompt for TestStepUpPrompt {
+        fn request(
+            &self,
+            context: VaultStepUpContext,
+        ) -> impl Future<Output = Result<Option<Zeroizing<String>>, VaultStepUpPromptError>> + Send
+        {
+            self.contexts
+                .lock()
+                .expect("step-up contexts")
+                .push(context);
+            let reply = self
+                .replies
+                .lock()
+                .expect("step-up replies")
+                .pop_front()
+                .unwrap_or(TestStepUpReply::Cancel);
+            std::future::ready(match reply {
+                TestStepUpReply::Pin(pin) => Ok(Some(Zeroizing::new(pin.to_owned()))),
+                TestStepUpReply::Cancel => Ok(None),
+                TestStepUpReply::Unavailable => Err(VaultStepUpPromptError::Unavailable),
+            })
+        }
+    }
+
+    enum TestExportPassphraseReply {
+        Pair(&'static str, &'static str),
+        Cancel,
+        Unavailable,
+    }
+
+    struct TestExportPassphrasePrompt {
+        replies: StdMutex<VecDeque<TestExportPassphraseReply>>,
+        contexts: StdMutex<Vec<PrivateKeyExportPassphraseContext>>,
+    }
+
+    impl TestExportPassphrasePrompt {
+        fn new(replies: impl IntoIterator<Item = TestExportPassphraseReply>) -> Self {
+            Self {
+                replies: StdMutex::new(replies.into_iter().collect()),
+                contexts: StdMutex::new(Vec::new()),
+            }
+        }
+
+        fn contexts(&self) -> Vec<PrivateKeyExportPassphraseContext> {
+            self.contexts
+                .lock()
+                .expect("export passphrase contexts")
+                .clone()
+        }
+    }
+
+    impl PrivateKeyExportPassphrasePrompt for TestExportPassphrasePrompt {
+        fn request(
+            &self,
+            context: PrivateKeyExportPassphraseContext,
+        ) -> impl Future<
+            Output = Result<
+                Option<PrivateKeyExportPassphraseCandidate>,
+                PrivateKeyExportPassphrasePromptError,
+            >,
+        > + Send {
+            self.contexts
+                .lock()
+                .expect("export passphrase contexts")
+                .push(context);
+            let reply = self
+                .replies
+                .lock()
+                .expect("export passphrase replies")
+                .pop_front()
+                .unwrap_or(TestExportPassphraseReply::Cancel);
+            std::future::ready(match reply {
+                TestExportPassphraseReply::Pair(passphrase, confirmation) => {
+                    Ok(Some(PrivateKeyExportPassphraseCandidate::new(
+                        Zeroizing::new(passphrase.to_owned()),
+                        Zeroizing::new(confirmation.to_owned()),
+                    )))
+                }
+                TestExportPassphraseReply::Cancel => Ok(None),
+                TestExportPassphraseReply::Unavailable => {
+                    Err(PrivateKeyExportPassphrasePromptError::Unavailable)
+                }
+            })
         }
     }
 
@@ -1168,6 +2112,594 @@ mod tests {
             passphrase.as_deref().map(String::as_str),
             Some("private-key-passphrase")
         );
+    }
+
+    #[tokio::test]
+    async fn generated_private_keys_are_stored_and_project_public_metadata_only() {
+        let (core, _directory) = test_core();
+        core.create_vault(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+
+        for (algorithm, expected_algorithm) in [
+            (PrivateKeyGenerationAlgorithm::Ed25519, "ssh-ed25519"),
+            (PrivateKeyGenerationAlgorithm::Rsa4096, "ssh-rsa"),
+        ] {
+            let summary = core
+                .generate_private_key_credential(
+                    format!("Generated {expected_algorithm}"),
+                    "generated-user".to_owned(),
+                    algorithm,
+                )
+                .await
+                .expect("generate private key");
+            assert_eq!(summary.kind(), CredentialKind::PrivateKey);
+
+            let public = core
+                .private_key_public_summary(summary.id().to_owned())
+                .await
+                .expect("public key summary");
+            assert_eq!(public.credential_id(), summary.id());
+            assert_eq!(public.algorithm(), expected_algorithm);
+            assert!(public.fingerprint_sha256().starts_with("SHA256:"));
+            assert!(public.openssh_public_key().starts_with(expected_algorithm));
+            assert!(!public.openssh_public_key().contains('\n'));
+            assert!(public.openssh_public_key().len() <= MAX_OPENSSH_PUBLIC_KEY_BYTES);
+
+            let debug = format!("{public:?}");
+            assert!(debug.contains("<public>"));
+            assert!(!debug.contains(public.openssh_public_key()));
+
+            let resolved = core
+                .resolve_connection(
+                    SshEndpoint::new("example.com", 22).expect("endpoint"),
+                    AuthenticationSource::Credential {
+                        credential_id: summary.id().to_owned(),
+                    },
+                )
+                .await
+                .expect("resolve generated key");
+            let SessionAuthentication::PrivateKey {
+                private_key,
+                passphrase,
+            } = resolved.authentication
+            else {
+                panic!("expected generated private key");
+            };
+            assert!(passphrase.is_none());
+            validate_private_key_text(private_key.as_str(), None)
+                .expect("generated OpenSSH private key");
+            if algorithm == PrivateKeyGenerationAlgorithm::Rsa4096 {
+                let parsed = PrivateKey::from_openssh(private_key.as_bytes())
+                    .expect("parse generated RSA private key");
+                assert_eq!(
+                    parsed
+                        .public_key()
+                        .key_data()
+                        .rsa()
+                        .expect("generated RSA public key")
+                        .key_size(),
+                    4096
+                );
+            }
+        }
+
+        let credential_count = core
+            .list_credentials()
+            .await
+            .expect("list generated Credentials")
+            .len();
+        let invalid = core
+            .generate_private_key_credential(
+                String::new(),
+                "generated-user".to_owned(),
+                PrivateKeyGenerationAlgorithm::Ed25519,
+            )
+            .await
+            .expect_err("invalid generated-key metadata must not create a Credential");
+        assert!(matches!(invalid, ApplicationError::Database(_)));
+        assert_eq!(
+            core.list_credentials()
+                .await
+                .expect("list after failed generation")
+                .len(),
+            credential_count
+        );
+    }
+
+    #[tokio::test]
+    async fn private_key_operations_fail_closed_when_the_bounded_slot_is_busy() {
+        let (core, _directory) = test_core();
+        core.create_vault(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+        let permit = core
+            .private_key_operations
+            .clone()
+            .try_acquire_owned()
+            .expect("reserve private-key operation slot");
+
+        let error = core
+            .generate_private_key_credential(
+                "Busy fixture".to_owned(),
+                "busy-user".to_owned(),
+                PrivateKeyGenerationAlgorithm::Ed25519,
+            )
+            .await
+            .expect_err("concurrent private-key operation must fail closed");
+        assert!(matches!(
+            error,
+            ApplicationError::PrivateKeyManagement(PrivateKeyManagementError::OperationBusy)
+        ));
+        assert!(
+            core.list_credentials()
+                .await
+                .expect("list credentials")
+                .is_empty()
+        );
+        drop(permit);
+    }
+
+    #[tokio::test]
+    async fn encrypted_imported_key_projects_the_same_public_key_without_exposing_passphrase() {
+        let (core, _directory) = test_core();
+        core.create_vault(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+        let key = fixture_private_key();
+        let expected_public = key.public_key().to_openssh().expect("public key");
+        let encrypted = key
+            .encrypt(&mut rand::rng(), "projection-passphrase")
+            .expect("encrypt fixture")
+            .to_openssh(LineEnding::LF)
+            .expect("serialize fixture");
+        let summary = core
+            .store_private_key_credential(
+                "Encrypted projection".to_owned(),
+                "projection-user".to_owned(),
+                encrypted,
+                Some(Zeroizing::new("projection-passphrase".to_owned())),
+            )
+            .await
+            .expect("store encrypted key");
+
+        let public = core
+            .private_key_public_summary(summary.id().to_owned())
+            .await
+            .expect("project encrypted key");
+        assert_eq!(public.openssh_public_key(), expected_public);
+        let debug = format!("{public:?}");
+        assert!(!debug.contains("projection-passphrase"));
+        assert!(!debug.contains(expected_public.as_str()));
+    }
+
+    #[tokio::test]
+    async fn private_key_public_projection_rejects_wrong_kinds_invalid_keys_and_lock() {
+        let (core, _directory) = test_core();
+        core.create_vault(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+        let password = core
+            .create_password_credential(
+                "Password".to_owned(),
+                "password-user".to_owned(),
+                Zeroizing::new("secret".to_owned()),
+            )
+            .await
+            .expect("password credential");
+        let wrong_kind = core
+            .private_key_public_summary(password.id().to_owned())
+            .await
+            .expect_err("password cannot project a public key");
+        assert!(matches!(
+            wrong_kind,
+            ApplicationError::PrivateKeyManagement(
+                PrivateKeyManagementError::CredentialKindMismatch
+            )
+        ));
+
+        let invalid = core
+            .store_private_key_credential(
+                "Invalid key".to_owned(),
+                "invalid-user".to_owned(),
+                Zeroizing::new("not-an-openssh-key".to_owned()),
+                None,
+            )
+            .await
+            .expect("trusted storage accepts opaque fixture");
+        let invalid_error = core
+            .private_key_public_summary(invalid.id().to_owned())
+            .await
+            .expect_err("invalid stored key must fail");
+        assert!(matches!(
+            invalid_error,
+            ApplicationError::PrivateKeyManagement(PrivateKeyManagementError::InvalidKey)
+        ));
+
+        let generated = core
+            .generate_private_key_credential(
+                "Lock fixture".to_owned(),
+                "lock-user".to_owned(),
+                PrivateKeyGenerationAlgorithm::Ed25519,
+            )
+            .await
+            .expect("generated key");
+        core.lock_vault().await.expect("lock vault");
+        let locked = core
+            .private_key_public_summary(generated.id().to_owned())
+            .await
+            .expect_err("locked Vault must reject projection");
+        assert!(matches!(
+            locked,
+            ApplicationError::Database(DatabaseActorError::VaultLocked)
+        ));
+        let locked_generation = core
+            .generate_private_key_credential(
+                "Locked generation".to_owned(),
+                "locked-user".to_owned(),
+                PrivateKeyGenerationAlgorithm::Ed25519,
+            )
+            .await
+            .expect_err("locked Vault must reject generation before CSPRNG work");
+        assert!(matches!(
+            locked_generation,
+            ApplicationError::Database(DatabaseActorError::VaultLocked)
+        ));
+    }
+
+    #[tokio::test]
+    async fn encrypted_private_key_export_requires_step_up_and_new_matching_passphrase() {
+        let (core, directory) = test_core();
+        core.create_vault(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+        let generated = core
+            .generate_private_key_credential(
+                "Export fixture".to_owned(),
+                "export-user".to_owned(),
+                PrivateKeyGenerationAlgorithm::Ed25519,
+            )
+            .await
+            .expect("generated key");
+        let expected_public = core
+            .private_key_public_summary(generated.id().to_owned())
+            .await
+            .expect("public summary");
+        let step_up = TestStepUpPrompt::new([
+            TestStepUpReply::Pin("654321"),
+            TestStepUpReply::Pin("123456"),
+        ]);
+        let passphrase = TestExportPassphrasePrompt::new([
+            TestExportPassphraseReply::Pair("first-export-passphrase", "mismatch"),
+            TestExportPassphraseReply::Pair(
+                "accepted-export-passphrase",
+                "accepted-export-passphrase",
+            ),
+        ]);
+        let path = directory.path().join("generated-export.key");
+
+        let exported = core
+            .export_private_key_credential_to_path_with_prompts(
+                generated.id().to_owned(),
+                path.clone(),
+                &step_up,
+                &passphrase,
+            )
+            .await
+            .expect("export operation")
+            .expect("export summary");
+        assert_eq!(exported.file_name(), "generated-export.key");
+        assert_eq!(exported.algorithm(), expected_public.algorithm());
+        assert_eq!(
+            exported.fingerprint_sha256(),
+            expected_public.fingerprint_sha256()
+        );
+        assert!(exported.encrypted());
+
+        let step_up_contexts = step_up.contexts();
+        assert_eq!(step_up_contexts.len(), 2);
+        assert!(!step_up_contexts[0].previous_pin_incorrect());
+        assert!(step_up_contexts[1].previous_pin_incorrect());
+        assert_eq!(
+            step_up_contexts[0].operation_label(),
+            PRIVATE_KEY_EXPORT_OPERATION_LABEL
+        );
+        let passphrase_contexts = passphrase.contexts();
+        assert_eq!(passphrase_contexts.len(), 2);
+        assert!(!passphrase_contexts[0].previous_confirmation_mismatch());
+        assert!(passphrase_contexts[1].previous_confirmation_mismatch());
+
+        let serialized = std::fs::read_to_string(&path).expect("read exported key");
+        let encrypted =
+            PrivateKey::from_openssh(serialized.as_bytes()).expect("parse exported key");
+        assert!(encrypted.is_encrypted());
+        assert!(encrypted.decrypt("first-export-passphrase").is_err());
+        let decrypted = encrypted
+            .decrypt("accepted-export-passphrase")
+            .expect("new export passphrase");
+        assert_eq!(
+            decrypted
+                .public_key()
+                .to_openssh()
+                .expect("export public key"),
+            expected_public.openssh_public_key()
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            assert_eq!(
+                std::fs::metadata(&path)
+                    .expect("export metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn private_key_export_cancellation_and_attempt_limits_leave_no_file() {
+        let (core, directory) = test_core();
+        core.create_vault(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+        let generated = core
+            .generate_private_key_credential(
+                "Cancellation fixture".to_owned(),
+                "cancel-user".to_owned(),
+                PrivateKeyGenerationAlgorithm::Ed25519,
+            )
+            .await
+            .expect("generated key");
+
+        let step_up_cancel = TestStepUpPrompt::new([TestStepUpReply::Cancel]);
+        let unused_passphrase = TestExportPassphrasePrompt::new([]);
+        let cancelled_step_up_path = directory.path().join("step-up-cancelled.key");
+        assert!(
+            core.export_private_key_credential_to_path_with_prompts(
+                generated.id().to_owned(),
+                cancelled_step_up_path.clone(),
+                &step_up_cancel,
+                &unused_passphrase,
+            )
+            .await
+            .expect("cancel step-up")
+            .is_none()
+        );
+        assert!(!cancelled_step_up_path.exists());
+        assert!(unused_passphrase.contexts().is_empty());
+
+        let approved = TestStepUpPrompt::new([TestStepUpReply::Pin("123456")]);
+        let passphrase_cancel =
+            TestExportPassphrasePrompt::new([TestExportPassphraseReply::Cancel]);
+        let cancelled_passphrase_path = directory.path().join("passphrase-cancelled.key");
+        assert!(
+            core.export_private_key_credential_to_path_with_prompts(
+                generated.id().to_owned(),
+                cancelled_passphrase_path.clone(),
+                &approved,
+                &passphrase_cancel,
+            )
+            .await
+            .expect("cancel passphrase")
+            .is_none()
+        );
+        assert!(!cancelled_passphrase_path.exists());
+
+        let rejected_step_up = TestStepUpPrompt::new([
+            TestStepUpReply::Pin("000000"),
+            TestStepUpReply::Pin("111111"),
+            TestStepUpReply::Pin("222222"),
+        ]);
+        let unused_passphrase = TestExportPassphrasePrompt::new([]);
+        let rejected_step_up_path = directory.path().join("step-up-rejected.key");
+        let rejected = core
+            .export_private_key_credential_to_path_with_prompts(
+                generated.id().to_owned(),
+                rejected_step_up_path.clone(),
+                &rejected_step_up,
+                &unused_passphrase,
+            )
+            .await
+            .expect_err("three wrong PINs must fail");
+        assert!(matches!(
+            rejected,
+            ApplicationError::PrivateKeyManagement(PrivateKeyManagementError::StepUpRejected)
+        ));
+        assert!(!rejected_step_up_path.exists());
+
+        let approved = TestStepUpPrompt::new([TestStepUpReply::Pin("123456")]);
+        let rejected_passphrase = TestExportPassphrasePrompt::new([
+            TestExportPassphraseReply::Pair("one", "mismatch"),
+            TestExportPassphraseReply::Pair("", ""),
+            TestExportPassphraseReply::Pair("three", "different"),
+        ]);
+        let rejected_passphrase_path = directory.path().join("passphrase-rejected.key");
+        let rejected = core
+            .export_private_key_credential_to_path_with_prompts(
+                generated.id().to_owned(),
+                rejected_passphrase_path.clone(),
+                &approved,
+                &rejected_passphrase,
+            )
+            .await
+            .expect_err("three invalid confirmations must fail");
+        assert!(matches!(
+            rejected,
+            ApplicationError::PrivateKeyManagement(PrivateKeyManagementError::PassphraseRejected)
+        ));
+        assert!(!rejected_passphrase_path.exists());
+
+        core.lock_vault().await.expect("lock Vault");
+        let locked_step_up = TestStepUpPrompt::new([TestStepUpReply::Pin("123456")]);
+        let unused_passphrase = TestExportPassphrasePrompt::new([]);
+        let locked_path = directory.path().join("locked-vault.key");
+        let locked = core
+            .export_private_key_credential_to_path_with_prompts(
+                generated.id().to_owned(),
+                locked_path.clone(),
+                &locked_step_up,
+                &unused_passphrase,
+            )
+            .await
+            .expect_err("locked Vault must reject export");
+        assert!(matches!(
+            locked,
+            ApplicationError::Database(DatabaseActorError::VaultLocked)
+        ));
+        assert!(!locked_path.exists());
+    }
+
+    #[tokio::test]
+    async fn private_key_export_rejects_existing_destinations_and_unavailable_prompts() {
+        let (core, directory) = test_core();
+        core.create_vault(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+        let generated = core
+            .generate_private_key_credential(
+                "Existing destination fixture".to_owned(),
+                "existing-user".to_owned(),
+                PrivateKeyGenerationAlgorithm::Ed25519,
+            )
+            .await
+            .expect("generated key");
+
+        let unavailable_step_up = TestStepUpPrompt::new([TestStepUpReply::Unavailable]);
+        let unused_passphrase = TestExportPassphrasePrompt::new([]);
+        let unavailable_path = directory.path().join("unavailable-step-up.key");
+        let unavailable = core
+            .export_private_key_credential_to_path_with_prompts(
+                generated.id().to_owned(),
+                unavailable_path.clone(),
+                &unavailable_step_up,
+                &unused_passphrase,
+            )
+            .await
+            .expect_err("unavailable step-up must fail closed");
+        assert!(matches!(
+            unavailable,
+            ApplicationError::VaultStepUpPrompt(VaultStepUpPromptError::Unavailable)
+        ));
+        assert!(!unavailable_path.exists());
+
+        let approved = TestStepUpPrompt::new([TestStepUpReply::Pin("123456")]);
+        let unavailable_passphrase =
+            TestExportPassphrasePrompt::new([TestExportPassphraseReply::Unavailable]);
+        let unavailable_path = directory.path().join("unavailable-passphrase.key");
+        let unavailable = core
+            .export_private_key_credential_to_path_with_prompts(
+                generated.id().to_owned(),
+                unavailable_path.clone(),
+                &approved,
+                &unavailable_passphrase,
+            )
+            .await
+            .expect_err("unavailable passphrase prompt must fail closed");
+        assert!(matches!(
+            unavailable,
+            ApplicationError::PrivateKeyExportPassphrasePrompt(
+                PrivateKeyExportPassphrasePromptError::Unavailable
+            )
+        ));
+        assert!(!unavailable_path.exists());
+
+        let existing_path = directory.path().join("existing.key");
+        std::fs::write(&existing_path, b"preserve-existing-content")
+            .expect("write existing fixture");
+        let approved = TestStepUpPrompt::new([TestStepUpReply::Pin("123456")]);
+        let passphrase = TestExportPassphrasePrompt::new([TestExportPassphraseReply::Pair(
+            "export-passphrase",
+            "export-passphrase",
+        )]);
+        let existing = core
+            .export_private_key_credential_to_path_with_prompts(
+                generated.id().to_owned(),
+                existing_path.clone(),
+                &approved,
+                &passphrase,
+            )
+            .await
+            .expect_err("existing destination must not be overwritten");
+        assert!(matches!(
+            existing,
+            ApplicationError::PrivateKeyManagement(PrivateKeyManagementError::DestinationExists)
+        ));
+        assert_eq!(
+            std::fs::read(&existing_path).expect("existing content"),
+            b"preserve-existing-content"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_key_export_does_not_follow_symlink_destinations() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempdir().expect("tempdir");
+        let target = directory.path().join("existing-target");
+        let link = directory.path().join("private-key-export");
+        std::fs::write(&target, b"preserve-target").expect("write symlink target");
+        symlink(&target, &link).expect("create export symlink");
+
+        let error = write_private_key_export_new(&link, b"private-key-fixture")
+            .expect_err("export symlink must fail closed");
+        assert_eq!(error, PrivateKeyManagementError::DestinationExists);
+        assert_eq!(
+            std::fs::read(&target).expect("read symlink target"),
+            b"preserve-target"
+        );
+    }
+
+    #[test]
+    fn private_key_export_removes_partial_files_after_write_failure() {
+        let directory = tempdir().expect("tempdir");
+        let destination = directory.path().join("private-key-export");
+
+        let error = write_private_key_export_new_with(&destination, |file| {
+            file.write_all(b"partial-private-key")
+                .map_err(|_| PrivateKeyManagementError::ExportFailed)?;
+            Err(PrivateKeyManagementError::ExportFailed)
+        })
+        .expect_err("failed export must remove its partial file");
+
+        assert_eq!(error, PrivateKeyManagementError::ExportFailed);
+        assert!(!destination.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_private_key_export_rejects_reparse_points_and_alternate_streams() {
+        let directory = tempdir().expect("tempdir");
+        let real_parent = directory.path().join("real-parent");
+        let junction_parent = directory.path().join("junction-parent");
+        std::fs::create_dir(&real_parent).expect("create real parent");
+        let status = std::process::Command::new("cmd.exe")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction_parent)
+            .arg(&real_parent)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("create Windows junction fixture");
+        assert!(status.success(), "Windows junction fixture failed");
+
+        let destination = junction_parent.join("private-key-export");
+        let error = write_private_key_export_new(&destination, b"private-key-fixture")
+            .expect_err("export through a reparse-point parent must fail closed");
+        assert_eq!(error, PrivateKeyManagementError::UnsupportedDestination);
+        assert!(!destination.exists());
+        assert!(!real_parent.join("private-key-export").exists());
+
+        std::fs::remove_dir(&junction_parent).expect("remove junction fixture");
+
+        let alternate_stream = real_parent.join("private-key-export:stream");
+        let error = write_private_key_export_new(&alternate_stream, b"private-key-fixture")
+            .expect_err("alternate data stream destinations must fail closed");
+        assert_eq!(error, PrivateKeyManagementError::UnsupportedDestination);
+        assert!(!real_parent.join("private-key-export").exists());
     }
 
     #[tokio::test]
@@ -1591,6 +3123,22 @@ mod tests {
                 .chars()
                 .count(),
             MAX_PRIVATE_KEY_PROMPT_LABEL_CHARS
+        );
+    }
+
+    #[test]
+    fn generated_private_key_comment_is_bounded_and_contains_no_control_characters() {
+        assert_eq!(
+            sanitize_generated_private_key_comment("  Generated\nfixture\t  "),
+            "Generatedfixture"
+        );
+        assert_eq!(sanitize_generated_private_key_comment("\n\t"), "");
+        assert_eq!(
+            sanitize_generated_private_key_comment(
+                &"x".repeat(MAX_GENERATED_PRIVATE_KEY_COMMENT_CHARS + 5)
+            )
+            .len(),
+            MAX_GENERATED_PRIVATE_KEY_COMMENT_CHARS
         );
     }
 

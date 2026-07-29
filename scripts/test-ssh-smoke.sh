@@ -482,6 +482,19 @@ ANYSSH_TEST_KEY_PASSPHRASE="$KEY_PASSPHRASE" \
 
 ANYSSH_TEST_JUMP_HOST=127.0.0.1 \
 ANYSSH_TEST_JUMP_PORT="$JUMP_PORT" \
+ANYSSH_TEST_TARGET_HOST="$TARGET_ALIAS" \
+ANYSSH_TEST_JUMP_CONTAINER="$JUMP_CONTAINER" \
+ANYSSH_TEST_TARGET_CONTAINER="$TARGET_CONTAINER" \
+  cargo test \
+    --package anyssh-app \
+    --test generated_private_key_smoke \
+    -- \
+    --ignored \
+    --nocapture \
+    --test-threads=1
+
+ANYSSH_TEST_JUMP_HOST=127.0.0.1 \
+ANYSSH_TEST_JUMP_PORT="$JUMP_PORT" \
 ANYSSH_TEST_JUMP_CONTAINER="$JUMP_CONTAINER" \
   cargo test \
     --package anyssh-ssh \
@@ -519,4 +532,4 @@ ANYSSH_TEST_JUMP_CONTAINER="$JUMP_CONTAINER" \
     --nocapture \
     --test-threads=1
 
-echo "OpenSSH password, Keyboard-interactive/OTP, Private Key, System Agent, Vault Credential ID, saved Host Route, host-key, backpressure, Jump Host, and Port Forwarding smoke tests passed."
+echo "OpenSSH password, Keyboard-interactive/OTP, imported/generated/exported Private Key, System Agent, Vault Credential ID, saved Host Route, host-key, backpressure, Jump Host, and Port Forwarding smoke tests passed."

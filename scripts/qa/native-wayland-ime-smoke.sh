@@ -483,12 +483,15 @@ fi
 
 "$DRIVER" click 1200 704
 "$DRIVER" ctrl-a
+sleep 0.2
 "$DRIVER" type "$LOCAL_FORWARD_PORT"
 "$DRIVER" click 1060 775
 "$DRIVER" ctrl-a
+sleep 0.2
 "$DRIVER" type "127.0.0.1"
 "$DRIVER" click 1200 775
 "$DRIVER" ctrl-a
+sleep 0.2
 "$DRIVER" type "$FORWARD_ECHO_PORT"
 "$DRIVER" tab
 "$DRIVER" enter
@@ -501,6 +504,7 @@ done
 "$DRIVER" tab
 "$DRIVER" tab
 "$DRIVER" ctrl-a
+sleep 0.2
 "$DRIVER" type "$DYNAMIC_FORWARD_PORT"
 "$DRIVER" tab
 "$DRIVER" enter
@@ -512,10 +516,12 @@ sleep 1
 "$DRIVER" tab
 "$DRIVER" tab
 "$DRIVER" ctrl-a
+sleep 0.2
 "$DRIVER" type "$REMOTE_FORWARD_PORT"
 "$DRIVER" tab
 "$DRIVER" tab
 "$DRIVER" ctrl-a
+sleep 0.2
 "$DRIVER" type "$REMOTE_DESTINATION_PORT"
 "$DRIVER" tab
 "$DRIVER" enter

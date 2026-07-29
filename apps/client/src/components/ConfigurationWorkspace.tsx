@@ -3,12 +3,18 @@ import {
   createKeyboardInteractiveCredential,
   createPasswordCredential,
   createSystemAgentCredential,
+  credentialOperationsUseNativeRuntime,
   deleteCredential,
+  exportPrivateKeyCredential,
+  generatePrivateKeyCredential,
+  getPrivateKeyPublicSummary,
   importPrivateKeyCredential,
   listSystemAgentIdentities,
   updateKeyboardInteractiveCredential,
   updatePasswordCredential,
   type CredentialSummary,
+  type PrivateKeyGenerationAlgorithm,
+  type PrivateKeyPublicSummary,
   type SystemAgentIdentitySummary,
 } from "../lib/credential-bridge";
 import {
@@ -861,6 +867,12 @@ type CredentialDraft =
       username: string;
     }
   | {
+      kind: "generatedPrivateKey";
+      label: string;
+      username: string;
+      algorithm: PrivateKeyGenerationAlgorithm;
+    }
+  | {
       kind: "systemAgent";
       label: string;
       username: string;
@@ -887,6 +899,12 @@ function CredentialManager({
     SystemAgentIdentitySummary[]
   >([]);
   const [agentLoading, setAgentLoading] = useState(false);
+  const [publicKey, setPublicKey] = useState<PrivateKeyPublicSummary | null>(
+    null,
+  );
+  const [publicKeyBusyId, setPublicKeyBusyId] = useState<string | null>(null);
+  const [publicKeyCopied, setPublicKeyCopied] = useState(false);
+  const [exportBusyId, setExportBusyId] = useState<string | null>(null);
 
   function closeEditor() {
     setDraft(null);
@@ -979,6 +997,12 @@ function CredentialManager({
           setNotice("Private Key selection was cancelled.");
           return;
         }
+      } else if (draft.kind === "generatedPrivateKey") {
+        await generatePrivateKeyCredential({
+          label: draft.label,
+          username: draft.username,
+          algorithm: draft.algorithm,
+        });
       } else if (draft.kind === "systemAgent") {
         await createSystemAgentCredential({
           label: draft.label,
@@ -1026,6 +1050,60 @@ function CredentialManager({
     }
   }
 
+  async function showPublicKey(credentialId: string) {
+    setPublicKeyBusyId(credentialId);
+    setPublicKeyCopied(false);
+    setError(null);
+    setNotice(null);
+    try {
+      setPublicKey(await getPrivateKeyPublicSummary(credentialId));
+    } catch (operationError) {
+      setError(String(operationError));
+    } finally {
+      setPublicKeyBusyId(null);
+    }
+  }
+
+  async function copyPublicKey() {
+    if (!publicKey) return;
+    try {
+      await navigator.clipboard.writeText(publicKey.opensshPublicKey);
+      setPublicKeyCopied(true);
+    } catch {
+      setPublicKeyCopied(false);
+      setError(
+        "Clipboard access was unavailable. Select the Public Key text and copy it manually.",
+      );
+    }
+  }
+
+  async function exportPrivateKey(credentialId: string) {
+    setError(null);
+    setNotice(null);
+    if (!credentialOperationsUseNativeRuntime()) {
+      setNotice(
+        "Encrypted Private Key export is available in the native AnySSH runtime. Browser QA writes no file.",
+      );
+      return;
+    }
+
+    setExportBusyId(credentialId);
+    try {
+      const exported = await exportPrivateKeyCredential(credentialId);
+      if (exported) {
+        setNotice(
+          `Encrypted ${exported.algorithm} Private Key exported to “${exported.fileName}”.`,
+        );
+      } else {
+        setNotice("Encrypted Private Key export was cancelled.");
+      }
+    } catch (operationError) {
+      setError(String(operationError));
+    } finally {
+      setExportBusyId(null);
+    }
+  }
+
   async function removeCredential(credentialId: string) {
     if (confirmDelete !== credentialId) {
       setConfirmDelete(credentialId);
@@ -1049,6 +1127,22 @@ function CredentialManager({
     <ManagerShell
       action={
         <div className="manager-actions">
+          <button
+            className="secondary-button compact-button"
+            onClick={() => {
+              setError(null);
+              setNotice(null);
+              setDraft({
+                kind: "generatedPrivateKey",
+                label: "",
+                username: "",
+                algorithm: "ed25519",
+              });
+            }}
+            type="button"
+          >
+            Generate key
+          </button>
           <button
             className="secondary-button compact-button"
             onClick={() => {
@@ -1144,6 +1238,36 @@ function CredentialManager({
                 </div>
               </div>
               <div className="resource-actions">
+                {credential.kind === "privateKey" && (
+                  <>
+                    <button
+                      disabled={
+                        busy ||
+                        publicKeyBusyId !== null ||
+                        exportBusyId !== null
+                      }
+                      onClick={() => void showPublicKey(credential.id)}
+                      type="button"
+                    >
+                      {publicKeyBusyId === credential.id
+                        ? "Reading public key…"
+                        : "Public key"}
+                    </button>
+                    <button
+                      disabled={
+                        busy ||
+                        publicKeyBusyId !== null ||
+                        exportBusyId !== null
+                      }
+                      onClick={() => void exportPrivateKey(credential.id)}
+                      type="button"
+                    >
+                      {exportBusyId === credential.id
+                        ? "Waiting for native prompts…"
+                        : "Export encrypted…"}
+                    </button>
+                  </>
+                )}
                 {credential.kind === "password" && (
                   <button
                     onClick={() => editPassword(credential)}
@@ -1180,19 +1304,22 @@ function CredentialManager({
 
       {draft && (
         <EditorDialog
+          closeDisabled={busy}
           onClose={closeEditor}
           title={
             draft.kind === "privateKey"
               ? "Import Private Key"
-              : draft.kind === "systemAgent"
-                ? "New System Agent Credential"
-                : draft.kind === "keyboardInteractive"
-                  ? draft.credentialId
-                    ? "Edit Interactive Credential"
-                    : "New Interactive Credential"
-                  : draft.credentialId
-                    ? "Replace Password"
-                    : "New Password Credential"
+              : draft.kind === "generatedPrivateKey"
+                ? "Generate Private Key"
+                : draft.kind === "systemAgent"
+                  ? "New System Agent Credential"
+                  : draft.kind === "keyboardInteractive"
+                    ? draft.credentialId
+                      ? "Edit Interactive Credential"
+                      : "New Interactive Credential"
+                    : draft.credentialId
+                      ? "Replace Password"
+                      : "New Password Credential"
           }
         >
           <form className="editor-form" onSubmit={saveCredential}>
@@ -1251,6 +1378,37 @@ function CredentialManager({
                   that also stays outside the WebView.
                 </p>
               </div>
+            ) : draft.kind === "generatedPrivateKey" ? (
+              <>
+                <label>
+                  Algorithm
+                  <select
+                    onChange={(event) =>
+                      setDraft((current) =>
+                        current?.kind === "generatedPrivateKey"
+                          ? {
+                              ...current,
+                              algorithm: event.target
+                                .value as PrivateKeyGenerationAlgorithm,
+                            }
+                          : current,
+                      )
+                    }
+                    value={draft.algorithm}
+                  >
+                    <option value="ed25519">Ed25519 (recommended)</option>
+                    <option value="rsa4096">RSA 4096</option>
+                  </select>
+                </label>
+                <div className="security-note">
+                  <strong>Rust-owned generation</strong>
+                  <p>
+                    AnySSH generates this Key with the Rust CSPRNG and stores it
+                    directly in the encrypted Vault. Private Key material never
+                    enters the WebView.
+                  </p>
+                </div>
+              </>
             ) : draft.kind === "systemAgent" ? (
               <>
                 <label>
@@ -1308,17 +1466,69 @@ function CredentialManager({
             {error && <ManagerError message={error} />}
             <EditorActions
               busy={busy}
+              busyLabel={
+                draft.kind === "generatedPrivateKey" ? "Generating…" : undefined
+              }
               submitLabel={
                 draft.kind === "privateKey"
                   ? "Choose private key"
-                  : draft.kind === "systemAgent"
-                    ? "Save Agent Credential"
-                    : draft.kind === "keyboardInteractive"
-                      ? "Save Interactive Credential"
-                      : "Save Credential"
+                  : draft.kind === "generatedPrivateKey"
+                    ? "Generate key"
+                    : draft.kind === "systemAgent"
+                      ? "Save Agent Credential"
+                      : draft.kind === "keyboardInteractive"
+                        ? "Save Interactive Credential"
+                        : "Save Credential"
               }
             />
           </form>
+        </EditorDialog>
+      )}
+
+      {publicKey && (
+        <EditorDialog
+          onClose={() => {
+            setPublicKey(null);
+            setPublicKeyCopied(false);
+          }}
+          title="Public Key"
+        >
+          <div className="public-key-details">
+            <div>
+              <span>Algorithm</span>
+              <code>{publicKey.algorithm}</code>
+            </div>
+            <div>
+              <span>SHA-256 fingerprint</span>
+              <code>{publicKey.fingerprintSha256}</code>
+            </div>
+            <label>
+              OpenSSH Public Key
+              <textarea
+                aria-label="OpenSSH Public Key"
+                readOnly
+                rows={5}
+                value={publicKey.opensshPublicKey}
+              />
+            </label>
+            <div className="editor-actions public-key-actions">
+              <button
+                className="connect-button"
+                onClick={() => void copyPublicKey()}
+                type="button"
+              >
+                {publicKeyCopied ? "Public key copied" : "Copy public key"}
+              </button>
+            </div>
+            <div className="security-note">
+              <strong>Public material only</strong>
+              <p>
+                This dialog contains the deployable Public Key. The Private Key
+                and its stored Passphrase remain inside Rust and the encrypted
+                Vault.
+              </p>
+            </div>
+          </div>
         </EditorDialog>
       )}
     </ManagerShell>
@@ -1826,10 +2036,16 @@ function ManagerEmpty({ children }: { children: React.ReactNode }) {
 interface EditorDialogProps {
   title: string;
   onClose(): void;
+  closeDisabled?: boolean;
   children: React.ReactNode;
 }
 
-function EditorDialog({ title, onClose, children }: EditorDialogProps) {
+function EditorDialog({
+  title,
+  onClose,
+  closeDisabled = false,
+  children,
+}: EditorDialogProps) {
   return (
     <div className="dialog-backdrop resource-dialog-backdrop">
       <section
@@ -1843,7 +2059,12 @@ function EditorDialog({ title, onClose, children }: EditorDialogProps) {
             <p className="eyebrow">Vault configuration</p>
             <h2 id="resource-dialog-title">{title}</h2>
           </div>
-          <button aria-label="Close editor" onClick={onClose} type="button">
+          <button
+            aria-label="Close editor"
+            disabled={closeDisabled}
+            onClick={onClose}
+            type="button"
+          >
             ×
           </button>
         </header>
@@ -1855,15 +2076,17 @@ function EditorDialog({ title, onClose, children }: EditorDialogProps) {
 
 function EditorActions({
   busy,
+  busyLabel = "Saving…",
   submitLabel,
 }: {
   busy: boolean;
+  busyLabel?: string;
   submitLabel: string;
 }) {
   return (
     <div className="editor-actions">
       <button className="connect-button" disabled={busy} type="submit">
-        {busy ? "Saving…" : submitLabel}
+        {busy ? busyLabel : submitLabel}
       </button>
     </div>
   );

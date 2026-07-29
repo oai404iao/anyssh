@@ -1,10 +1,11 @@
 # AnySSH Threat Model v1
 
 > 状态：Phase 1 Baseline
-> 日期：2026-07-28
+> 日期：2026-07-29
 > 范围：当前 Tauri/React Client、Rust Core、Vault、SQLCipher Repository、
 > Group Inheritance、russh Session、Native Encrypted Private Key Import 和
-> Endpoint-scoped Known Host Trust、QA/Build Evidence。
+> Endpoint-scoped Known Host Trust、Private Key Generation/Encrypted Export、
+> QA/Build Evidence。
 
 ## 1. 安全目标
 
@@ -55,6 +56,11 @@ Native Secure Passphrase Prompt
   -> Zeroizing<String>
     -> encrypted Key validation
       -> independent Key/Passphrase Record AEAD
+
+Native PIN + Export Passphrase + Save Picker
+  -> request-local Zeroizing<String> / Rust-only Path
+    -> generated/imported Private Key re-encryption
+      -> encrypted OpenSSH create-new file
 
 System SSH Agent Socket / Named Pipe
   -> Rust-only identity enumeration
@@ -113,26 +119,31 @@ System SSH Agent Socket / Named Pipe
 | T-20 | 恶意 Server Prompt 或延迟 OTP Response 泄露 Saved Secret/应用到错误 Hop | Accepted ADR-0016：不自动填充 Saved Secret；Request-scoped 局部表单、Typed IPC、`Zeroizing<String>`、Request/Hop/Round 绑定、Count/Size/Timeout 上限和普通失败不降级；OpenSSH PAM/X11/Wayland/Windows Evidence | 当前 Renderer 被攻陷时仍可能读取本次临时 Response |
 | T-21 | 多 Tab 把 Output/Input/Host Key/OTP 路由到错误 Session，或关闭 UI 后留下孤儿连接 | Accepted ADR-0017：Tab ID/Generation 与 Rust Session ID 分离；每 Tab Event/Data Channel、Mounted xterm/Ack/Pending Request；Late Return Disconnect；Close、Channel Loss、Vault Lock 和 App Exit Fail Closed | Browser、X11、Wayland、Windows 已覆盖 Close-during-connect、同时 Challenge、非活动 4 MiB 输出、单 Tab Close 和双 Session Vault Lock |
 | T-22 | Forward Listener 无意暴露到 LAN/Public、Payload 经 WebView 泄漏、恶意 SOCKS Request 或 Tab 关闭后残留 Tunnel | Accepted ADR-0018：Forward Rust-only、绑定 Live Session、v1 Loopback-only、SOCKS5 CONNECT-only、16 Forward/64 Connection、有界 Queue/Timeout/Cancellation、显式 Remote Channel Reject；OpenSSH、Browser、X11、Wayland、Windows 和同 Commit CI 已覆盖 Direct/Jump、4 MiB/Half-close、Stop/Disconnect/Tab Close/Vault Lock 和 Payload Scan | Renderer 仍可修改 Forward Metadata，但不能接触 Payload；Wildcard/LAN/Public Bind 与持久化 Profile 必须另行设计 |
-| T-23 | Key Generation/Reveal/Export 把 Private Key、PIN、Passphrase 或 Path 暴露给 WebView、Shell、日志或不安全文件 | Proposed ADR-0019：计划使用 Rust CSPRNG、Public-only Projection、Native PIN Step-up、Native Passphrase Confirmation、Rust-owned Save Picker 和 encrypted-only create-new Export | 尚未实现；Windows ACL/Reparse Point、Prompt 取消、部分文件清理和移动端 Document Provider 需要平台 Evidence |
+| T-23 | Key Generation/Reveal/Export 把 Private Key、PIN、Passphrase 或 Path 暴露给 WebView、Shell、日志或不安全文件，或用并发 RSA 请求耗尽 Blocking Pool | Proposed ADR-0019 已实现：Rust CSPRNG、单 Slot Private Key Operation、Public-only Projection、Native PIN Step-up、Native Passphrase Confirmation、Rust-owned Save Picker、encrypted-only create-new Export、Unix `0600`/`O_NOFOLLOW`、Windows protected current-user DACL、Reparse Ancestor/ADS 拒绝、三次上限、取消和部分文件清理；OpenSSH、Browser、X11、Wayland 本地 Evidence 已通过 | Windows 真实 Runner 与同 Commit CI 尚待验证；Android Document Provider、iOS Share Sheet 和移动端 Step-up 仍未实现 |
 
 ## 6. 平台结论
 
 - Linux X11：真实 Tauri/WebKitGTK、Vault、加密 Key GTK Prompt/错误重试、
-  Native Picker、`SSH_AUTH_SOCK` Identity UI、Durable TOFU、原生 Forget、
-  Host Key Rotation 硬阻断、OpenSSH PAM Keyboard-interactive、双 SSH Session、
-  非活动 Tab 4 MiB 输出、Local/Dynamic/Remote Forward、单 Tab Close 和双
-  Session Vault Lock/Forward Cleanup 已验证。
+  Native Picker、Rust Ed25519/RSA 4096 Generation、Public Projection、Native
+  PIN Step-up、Export Passphrase Confirmation、encrypted OpenSSH Export、
+  `SSH_AUTH_SOCK` Identity UI、Durable TOFU、原生 Forget、Host Key Rotation
+  硬阻断、OpenSSH PAM Keyboard-interactive、双 SSH Session、非活动 Tab
+  4 MiB 输出、Local/Dynamic/Remote Forward、单 Tab Close 和双 Session Vault
+  Lock/Forward Cleanup 已验证。
 - Linux Wayland：无 `DISPLAY`、Weston、IBus/libpinyin、xterm、SSH 和
   OpenSSH PAM Keyboard-interactive 已验证；一个 Connected Tab 与一个
   Challenge Tab 的并发路由、Local/Dynamic/Remote Forward 和单 Tab
-  Close/Forward Cleanup 也已验证。
+  Close/Forward Cleanup 也已验证。Key Management 变更后的同 Runtime 回归已
+  通过。
 - Windows：真实 EXE/WebView2、非零窗口句柄、Vault/Repository、Durable TOFU、
   原生 Forget、重启恢复和 Changed-Key 硬阻断已验证。Run `30360000884` 覆盖
   Native Picker、Credential UI、加密 Key SSH、System Agent Named Pipe、
   controlled russh Keyboard-interactive、standalone OpenSSH Host Key Rotation、
   远端 Marker 和明文扫描；Run `30368134792` 验证 Multi Tab；Run
   `30416305300` 继续验证真实 Local/Dynamic/Remote Forward、Disconnect、
-  Interactive Tab Close 和 Vault Lock Cleanup。
+  Interactive Tab Close 和 Vault Lock Cleanup。Private Key Generation/Export
+  的 Windows Credential UI、Save Dialog、owner-only ACL、Junction/ADS Guard、
+  Reimport 和 OpenSSH Marker 已实现，但本次变更尚待 Windows Runner 验证。
 - Android：ARM64 Debug APK、Rust Core 和 bundled SQLCipher 构建已验证；Runtime
   与 Content URI 尚未验证。
 - iOS：因无 macOS/Xcode 环境而明确延期。
@@ -163,6 +174,9 @@ pnpm check:container:android
   外部签名和 IPC 脱敏。
 - Private Key Import 文件类型、大小、编码、Symlink、加密状态、空/错误
   Passphrase、取消、三次上限和成功 SSH。
+- Private Key Generation 的 Ed25519/RSA 4096、Public Projection、Native PIN
+  Step-up、Encrypted Export、create-new、ACL/Reparse/ADS、Export/Reimport 和
+  Direct/Saved/Jump OpenSSH Authentication。
 - Endpoint-scoped Known Host Migration、First-writer-wins、persist failure、
   Host Key 变化、原生 Forget、两 Jump Route、取消、超时和 4 MiB 背压。
 - Schema v7 Interactive Credential、Partial-success、多 Round/Prompt、

@@ -26,6 +26,28 @@ export interface PrivateKeyCredentialImport {
   username: string;
 }
 
+export type PrivateKeyGenerationAlgorithm = "ed25519" | "rsa4096";
+
+export interface PrivateKeyCredentialGeneration {
+  label: string;
+  username: string;
+  algorithm: PrivateKeyGenerationAlgorithm;
+}
+
+export interface PrivateKeyPublicSummary {
+  credentialId: string;
+  algorithm: string;
+  fingerprintSha256: string;
+  opensshPublicKey: string;
+}
+
+export interface PrivateKeyExportSummary {
+  fileName: string;
+  algorithm: string;
+  fingerprintSha256: string;
+  encrypted: boolean;
+}
+
 export interface SystemAgentIdentitySummary {
   algorithm: string;
   fingerprintSha256: string;
@@ -83,6 +105,18 @@ const BROWSER_CREDENTIAL_FIXTURES: CredentialSummary[] = [
 
 let browserCredentials = cloneCredentials(BROWSER_CREDENTIAL_FIXTURES);
 let nextBrowserCredentialId = browserCredentials.length + 1;
+let browserPrivateKeyPublicSummaries = new Map<string, PrivateKeyPublicSummary>(
+  [
+    [
+      "browser-credential-database",
+      browserPrivateKeyPublicSummary(
+        "browser-credential-database",
+        "Database key",
+        "ssh-ed25519",
+      ),
+    ],
+  ],
+);
 
 export async function listCredentials(): Promise<CredentialSummary[]> {
   if (!isTauri()) return cloneCredentials(browserCredentials);
@@ -142,10 +176,55 @@ export async function importPrivateKeyCredential(
       kind: "privateKey" as const,
     };
     browserCredentials.push(summary);
+    browserPrivateKeyPublicSummaries.set(
+      summary.id,
+      browserPrivateKeyPublicSummary(summary.id, summary.label, "ssh-ed25519"),
+    );
     return { ...summary };
   }
   return invoke<CredentialSummary | null>("credential_import_private_key", {
     request: input,
+  });
+}
+
+export async function generatePrivateKeyCredential(
+  input: PrivateKeyCredentialGeneration,
+): Promise<CredentialSummary> {
+  if (!isTauri()) {
+    const summary = {
+      id: `browser-credential-${nextBrowserCredentialId++}`,
+      label: input.label,
+      username: input.username,
+      kind: "privateKey" as const,
+    };
+    browserCredentials.push(summary);
+    browserPrivateKeyPublicSummaries.set(
+      summary.id,
+      browserPrivateKeyPublicSummary(
+        summary.id,
+        summary.label,
+        input.algorithm === "rsa4096" ? "ssh-rsa" : "ssh-ed25519",
+      ),
+    );
+    return { ...summary };
+  }
+  return invoke<CredentialSummary>("credential_generate_private_key", {
+    request: input,
+  });
+}
+
+export async function getPrivateKeyPublicSummary(
+  credentialId: string,
+): Promise<PrivateKeyPublicSummary> {
+  if (!isTauri()) {
+    const summary = browserPrivateKeyPublicSummaries.get(credentialId);
+    if (!summary) {
+      throw new Error("Private Key Credential was not found");
+    }
+    return { ...summary };
+  }
+  return invoke<PrivateKeyPublicSummary>("credential_get_private_key_public", {
+    request: { credentialId },
   });
 }
 
@@ -159,6 +238,22 @@ export async function listSystemAgentIdentities(): Promise<
   }
   return invoke<SystemAgentIdentitySummary[]>(
     "credential_list_system_agent_identities",
+  );
+}
+
+export function credentialOperationsUseNativeRuntime(): boolean {
+  return isTauri();
+}
+
+export async function exportPrivateKeyCredential(
+  credentialId: string,
+): Promise<PrivateKeyExportSummary | null> {
+  if (!isTauri()) return null;
+  return invoke<PrivateKeyExportSummary | null>(
+    "credential_export_private_key",
+    {
+      request: { credentialId },
+    },
   );
 }
 
@@ -242,6 +337,7 @@ export async function deleteCredential(credentialId: string): Promise<boolean> {
     browserCredentials = browserCredentials.filter(
       (credential) => credential.id !== credentialId,
     );
+    browserPrivateKeyPublicSummaries.delete(credentialId);
     return browserCredentials.length !== previousLength;
   }
   return invoke<boolean>("credential_delete", { credentialId });
@@ -252,10 +348,37 @@ export function resetBrowserCredentialsForTests(seed = false) {
     ? cloneCredentials(BROWSER_CREDENTIAL_FIXTURES)
     : [];
   nextBrowserCredentialId = browserCredentials.length + 1;
+  browserPrivateKeyPublicSummaries = new Map();
+  if (seed) {
+    browserPrivateKeyPublicSummaries.set(
+      "browser-credential-database",
+      browserPrivateKeyPublicSummary(
+        "browser-credential-database",
+        "Database key",
+        "ssh-ed25519",
+      ),
+    );
+  }
 }
 
 function cloneCredentials(
   credentials: CredentialSummary[],
 ): CredentialSummary[] {
   return credentials.map((credential) => ({ ...credential }));
+}
+
+function browserPrivateKeyPublicSummary(
+  credentialId: string,
+  label: string,
+  algorithm: "ssh-ed25519" | "ssh-rsa",
+): PrivateKeyPublicSummary {
+  const encoded = window
+    .btoa(`${credentialId}:${algorithm}`)
+    .replace(/=+$/u, "");
+  return {
+    credentialId,
+    algorithm,
+    fingerprintSha256: `SHA256:${credentialId}`,
+    opensshPublicKey: `${algorithm} ${encoded} ${label}`,
+  };
 }

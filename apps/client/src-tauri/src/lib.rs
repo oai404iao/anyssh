@@ -1,5 +1,6 @@
 #![deny(unsafe_code)]
 
+mod native_key_export;
 mod native_known_host;
 mod native_passphrase;
 
@@ -17,8 +18,10 @@ use anyssh_app::{
     CredentialSummary as StorageCredentialSummary, DatabaseActorConfig,
     GroupSummary as StorageGroupSummary, HostSummary as StorageHostSummary,
     JumpRouteSummary as StorageJumpRouteSummary, KnownHostSummary as StorageKnownHostSummary,
-    Override as StorageOverride, SshHopRequest, SshSessionRequest, VaultState as StorageVaultState,
-    VaultStatus as StorageVaultStatus,
+    Override as StorageOverride, PrivateKeyExportSummary as AppPrivateKeyExportSummary,
+    PrivateKeyGenerationAlgorithm as AppPrivateKeyGenerationAlgorithm,
+    PrivateKeyPublicSummary as AppPrivateKeyPublicSummary, SshHopRequest, SshSessionRequest,
+    VaultState as StorageVaultState, VaultStatus as StorageVaultStatus,
 };
 use anyssh_domain::{SshEndpoint, TerminalSize};
 use anyssh_ssh::{
@@ -35,6 +38,7 @@ use tauri_plugin_dialog::{DialogExt, FilePath};
 use tokio::sync::RwLock;
 use zeroize::Zeroizing;
 
+use crate::native_key_export::{NativePrivateKeyExportPassphrasePrompt, NativeVaultStepUpPrompt};
 use crate::native_known_host::NativeKnownHostForgetPrompt;
 use crate::native_passphrase::NativePrivateKeyPassphrasePrompt;
 
@@ -149,6 +153,82 @@ struct UpdatePasswordCredentialRequest {
 struct ImportPrivateKeyCredentialRequest {
     label: String,
     username: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum PrivateKeyGenerationAlgorithm {
+    Ed25519,
+    Rsa4096,
+}
+
+impl From<PrivateKeyGenerationAlgorithm> for AppPrivateKeyGenerationAlgorithm {
+    fn from(value: PrivateKeyGenerationAlgorithm) -> Self {
+        match value {
+            PrivateKeyGenerationAlgorithm::Ed25519 => Self::Ed25519,
+            PrivateKeyGenerationAlgorithm::Rsa4096 => Self::Rsa4096,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GeneratePrivateKeyCredentialRequest {
+    label: String,
+    username: String,
+    algorithm: PrivateKeyGenerationAlgorithm,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GetPrivateKeyPublicSummaryRequest {
+    credential_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ExportPrivateKeyCredentialRequest {
+    credential_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PrivateKeyPublicSummary {
+    credential_id: String,
+    algorithm: String,
+    fingerprint_sha256: String,
+    openssh_public_key: String,
+}
+
+impl From<AppPrivateKeyPublicSummary> for PrivateKeyPublicSummary {
+    fn from(summary: AppPrivateKeyPublicSummary) -> Self {
+        Self {
+            credential_id: summary.credential_id().to_owned(),
+            algorithm: summary.algorithm().to_owned(),
+            fingerprint_sha256: summary.fingerprint_sha256().to_owned(),
+            openssh_public_key: summary.openssh_public_key().to_owned(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PrivateKeyExportSummary {
+    file_name: String,
+    algorithm: String,
+    fingerprint_sha256: String,
+    encrypted: bool,
+}
+
+impl From<AppPrivateKeyExportSummary> for PrivateKeyExportSummary {
+    fn from(summary: AppPrivateKeyExportSummary) -> Self {
+        Self {
+            file_name: summary.file_name().to_owned(),
+            algorithm: summary.algorithm().to_owned(),
+            fingerprint_sha256: summary.fingerprint_sha256().to_owned(),
+            encrypted: summary.encrypted(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -809,6 +889,64 @@ async fn credential_import_private_key(
 }
 
 #[tauri::command]
+async fn credential_generate_private_key(
+    request: GeneratePrivateKeyCredentialRequest,
+    core: State<'_, ApplicationCore>,
+) -> Result<CredentialSummary, String> {
+    core.generate_private_key_credential(request.label, request.username, request.algorithm.into())
+        .await
+        .map(CredentialSummary::from)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn credential_get_private_key_public(
+    request: GetPrivateKeyPublicSummaryRequest,
+    core: State<'_, ApplicationCore>,
+) -> Result<PrivateKeyPublicSummary, String> {
+    core.private_key_public_summary(request.credential_id)
+        .await
+        .map(PrivateKeyPublicSummary::from)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn credential_export_private_key(
+    request: ExportPrivateKeyCredentialRequest,
+    app: AppHandle,
+    core: State<'_, ApplicationCore>,
+) -> Result<Option<PrivateKeyExportSummary>, String> {
+    if !cfg!(any(target_os = "linux", windows)) {
+        return Err(
+            "encrypted Private Key export is not supported on this platform yet".to_owned(),
+        );
+    }
+
+    let selected = app
+        .dialog()
+        .file()
+        .set_title("Export encrypted SSH private key")
+        .set_file_name("anyssh-private-key")
+        .add_filter("OpenSSH private key", &["key"])
+        .blocking_save_file();
+    let Some(path) = selected_private_key_export_path(selected)? else {
+        return Ok(None);
+    };
+
+    let step_up = NativeVaultStepUpPrompt::new(app.clone());
+    let passphrase = NativePrivateKeyExportPassphrasePrompt::new(app);
+    core.export_private_key_credential_to_path_with_prompts(
+        request.credential_id,
+        path,
+        &step_up,
+        &passphrase,
+    )
+    .await
+    .map(|summary| summary.map(PrivateKeyExportSummary::from))
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn credential_list_system_agent_identities(
     core: State<'_, ApplicationCore>,
 ) -> Result<Vec<SystemAgentIdentitySummary>, String> {
@@ -872,6 +1010,18 @@ fn selected_private_key_path(
             selected
                 .into_path()
                 .map_err(|_| "selected private key cannot be read on this platform".to_owned())
+        })
+        .transpose()
+}
+
+fn selected_private_key_export_path(
+    selected: Option<FilePath>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    selected
+        .map(|selected| {
+            selected
+                .into_path()
+                .map_err(|_| "selected export destination is not supported".to_owned())
         })
         .transpose()
 }
@@ -1384,6 +1534,9 @@ pub fn run() {
             credential_create_password,
             credential_update_password,
             credential_import_private_key,
+            credential_generate_private_key,
+            credential_get_private_key_public,
+            credential_export_private_key,
             credential_list_system_agent_identities,
             credential_create_system_agent,
             credential_create_keyboard_interactive,
@@ -1751,9 +1904,131 @@ mod tests {
     }
 
     #[test]
+    fn private_key_generation_and_public_projection_ipc_are_metadata_only() {
+        let request: GeneratePrivateKeyCredentialRequest =
+            serde_json::from_value(serde_json::json!({
+                "label": "Generated key",
+                "username": "alice",
+                "algorithm": "ed25519"
+            }))
+            .expect("metadata-only generation request");
+        assert_eq!(request.label, "Generated key");
+        assert_eq!(request.username, "alice");
+        assert!(matches!(
+            request.algorithm,
+            PrivateKeyGenerationAlgorithm::Ed25519
+        ));
+
+        for forbidden in [
+            "privateKey",
+            "passphrase",
+            "pin",
+            "path",
+            "seed",
+            "payload",
+            "command",
+        ] {
+            let mut value = serde_json::json!({
+                "label": "Generated key",
+                "username": "alice",
+                "algorithm": "rsa4096"
+            });
+            value[forbidden] = serde_json::json!("must-not-enter-ipc");
+            assert!(
+                serde_json::from_value::<GeneratePrivateKeyCredentialRequest>(value).is_err(),
+                "{forbidden} must be rejected"
+            );
+        }
+
+        let projection_request: GetPrivateKeyPublicSummaryRequest =
+            serde_json::from_value(serde_json::json!({
+                "credentialId": "cred-generated"
+            }))
+            .expect("ID-only public projection request");
+        assert_eq!(projection_request.credential_id, "cred-generated");
+        for forbidden in [
+            "privateKey",
+            "passphrase",
+            "pin",
+            "path",
+            "seed",
+            "payload",
+            "command",
+        ] {
+            let mut value = serde_json::json!({
+                "credentialId": "cred-generated"
+            });
+            value[forbidden] = serde_json::json!("must-not-enter-ipc");
+            assert!(
+                serde_json::from_value::<GetPrivateKeyPublicSummaryRequest>(value).is_err(),
+                "{forbidden} must be rejected"
+            );
+        }
+
+        let projection = serde_json::to_value(PrivateKeyPublicSummary {
+            credential_id: "cred-generated".to_owned(),
+            algorithm: "ssh-ed25519".to_owned(),
+            fingerprint_sha256: "SHA256:public-fingerprint".to_owned(),
+            openssh_public_key: "ssh-ed25519 AAAAC3NzaPublic generated".to_owned(),
+        })
+        .expect("public projection response");
+        assert_eq!(projection["credentialId"], "cred-generated");
+        assert_eq!(projection["algorithm"], "ssh-ed25519");
+        assert_eq!(projection["fingerprintSha256"], "SHA256:public-fingerprint");
+        assert!(projection["opensshPublicKey"].as_str().is_some());
+        assert!(projection.get("privateKey").is_none());
+        assert!(projection.get("passphrase").is_none());
+        assert!(projection.get("pin").is_none());
+        assert!(projection.get("path").is_none());
+
+        let export_request: ExportPrivateKeyCredentialRequest =
+            serde_json::from_value(serde_json::json!({
+                "credentialId": "cred-generated"
+            }))
+            .expect("ID-only export request");
+        assert_eq!(export_request.credential_id, "cred-generated");
+        for forbidden in [
+            "privateKey",
+            "passphrase",
+            "pin",
+            "path",
+            "seed",
+            "payload",
+            "command",
+        ] {
+            let mut value = serde_json::json!({
+                "credentialId": "cred-generated"
+            });
+            value[forbidden] = serde_json::json!("must-not-enter-ipc");
+            assert!(
+                serde_json::from_value::<ExportPrivateKeyCredentialRequest>(value).is_err(),
+                "{forbidden} must be rejected"
+            );
+        }
+
+        let exported = serde_json::to_value(PrivateKeyExportSummary {
+            file_name: "anyssh-private-key".to_owned(),
+            algorithm: "ssh-ed25519".to_owned(),
+            fingerprint_sha256: "SHA256:public-fingerprint".to_owned(),
+            encrypted: true,
+        })
+        .expect("export metadata");
+        assert_eq!(exported["fileName"], "anyssh-private-key");
+        assert_eq!(exported["encrypted"], true);
+        assert!(exported.get("path").is_none());
+        assert!(exported.get("privateKey").is_none());
+        assert!(exported.get("passphrase").is_none());
+        assert!(exported.get("pin").is_none());
+    }
+
+    #[test]
     fn private_key_picker_cancellation_returns_no_path() {
         assert_eq!(
             selected_private_key_path(None).expect("cancelled selection"),
+            None
+        );
+        assert_eq!(
+            selected_private_key_export_path(None).expect("cancelled export selection"),
             None
         );
         assert_eq!(

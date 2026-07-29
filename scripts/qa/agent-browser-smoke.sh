@@ -286,6 +286,39 @@ agent-browser --session "$SESSION" find role button click \
 agent-browser --session "$SESSION" wait --text "Browser QA imported key"
 
 agent-browser --session "$SESSION" find role button click \
+  --name "Generate key"
+agent-browser --session "$SESSION" find label "Credential label" fill \
+  "Browser QA generated key"
+agent-browser --session "$SESSION" find label "Username" fill \
+  "browser-generated"
+agent-browser --session "$SESSION" select ".resource-dialog select" "rsa4096"
+agent-browser --session "$SESSION" click \
+  ".resource-dialog button.connect-button"
+agent-browser --session "$SESSION" wait --text "Browser QA generated key"
+agent-browser --session "$SESSION" click \
+  ".resource-list .resource-card:last-child .resource-actions button:first-child"
+agent-browser --session "$SESSION" wait --text "SHA-256 fingerprint"
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/06a-generated-public-key.png"
+agent-browser --session "$SESSION" set viewport 390 844
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/06a-generated-public-key-mobile.png"
+agent-browser --session "$SESSION" set viewport 1440 900
+agent-browser --session "$SESSION" snapshot -i \
+  >"$OUTPUT_DIR/06a-generated-public-key-snapshot.txt"
+if grep -F "BEGIN OPENSSH PRIVATE KEY" \
+  "$OUTPUT_DIR/06a-generated-public-key-snapshot.txt" >/dev/null; then
+  echo "Generated Private Key material entered the Browser snapshot." >&2
+  exit 1
+fi
+agent-browser --session "$SESSION" click \
+  ".resource-dialog > header > button"
+agent-browser --session "$SESSION" click \
+  ".resource-list .resource-card:last-child .resource-actions button:nth-child(2)"
+agent-browser --session "$SESSION" wait --text \
+  "Browser QA writes no file."
+
+agent-browser --session "$SESSION" find role button click \
   --name "New system agent"
 agent-browser --session "$SESSION" find label "Credential label" fill \
   "Browser QA system agent"
@@ -505,6 +538,9 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
   password after the editor closed.
 - Private Key import UI used a metadata-only browser simulation and exposed no
   file input, Path, Key text, or Passphrase field.
+- Private Key Generation simulated metadata only, exposed RSA Public Key and
+  SHA-256 Fingerprint, and kept Private Key/PIN/Passphrase/Path out of Browser
+  state. Encrypted Export explicitly wrote no Browser file.
 - System Agent creation selected a metadata-only SHA-256 Identity; no Agent
   Socket, Public Key Blob, Private Key, or signature entered Browser state.
 - Interactive Credential creation stored only Label/Username metadata and
@@ -541,6 +577,8 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
 - \`screenshots/05d-known-hosts-forgotten.png\`
 - \`screenshots/05e-tofu-after-forget.png\`
 - \`screenshots/06-credentials.png\`
+- \`screenshots/06a-generated-public-key.png\`
+- \`screenshots/06a-generated-public-key-mobile.png\`
 - \`screenshots/06b-credentials-mobile.png\`
 - \`screenshots/06c-interactive-challenge.png\`
 - \`screenshots/06d-interactive-challenge-mobile.png\`

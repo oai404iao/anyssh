@@ -44,6 +44,7 @@ use chacha20poly1305::{
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
 };
+use subtle::ConstantTimeEq;
 use thiserror::Error;
 use zeroize::Zeroizing;
 
@@ -235,6 +236,26 @@ impl LocalVault {
         self.unlocked.vault_id()
     }
 
+    fn verify_pin(&self, root: &Path, pin: &str) -> Result<bool, StorageError> {
+        let bootstrap = BootstrapDocument::load(&root.join(BOOTSTRAP_FILE_NAME))?;
+        let candidate = match bootstrap.unlock_pin(pin) {
+            Ok(candidate) => candidate,
+            Err(VaultError::InvalidPinLength | VaultError::UnlockFailed) => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+        if candidate.vault_id() != self.unlocked.vault_id() {
+            return Ok(false);
+        }
+
+        let candidate_keys = candidate.derive_keys()?;
+        let current_keys = self.unlocked.derive_keys()?;
+        let database_key_matches =
+            constant_time_bytes_equal(candidate_keys.database_key(), current_keys.database_key());
+        let record_key_matches =
+            constant_time_bytes_equal(candidate_keys.record_key(), current_keys.record_key());
+        Ok(database_key_matches & record_key_matches)
+    }
+
     pub fn cipher_version(&self) -> &str {
         &self.database.cipher_version
     }
@@ -354,6 +375,10 @@ impl LocalVault {
     fn resolve_credential(&self, id: &str) -> Result<ResolvedCredential, StorageError> {
         self.database.resolve_credential(id)
     }
+}
+
+fn constant_time_bytes_equal(left: &[u8], right: &[u8]) -> bool {
+    bool::from(left.ct_eq(right))
 }
 
 struct VaultDatabase {

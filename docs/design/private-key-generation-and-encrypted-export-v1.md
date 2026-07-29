@@ -1,6 +1,6 @@
 # Private Key Generation and Encrypted Export v1
 
-> 状态：设计中
+> 状态：实现中；Rust/Linux/Browser/OpenSSH 已验证，Windows Runner 待验证
 > 日期：2026-07-29
 
 本文定义 Desktop MVP 的 Rust-owned Private Key 生成、Public Key Reveal 和
@@ -75,6 +75,9 @@ React { label, username, algorithm }
   128 个字符。
 - 生成任务不得占用 DB Actor Thread。只有完成后的 `Zeroizing<String>` 进入
   `CreateCredential`。
+- Generation、Public Projection 和 Export 共用一个 `ApplicationCore` 有界
+  Operation Slot；并发请求返回 Busy Error，不向 Blocking Pool 排入无界 RSA
+  工作。
 - 生成失败不得创建部分 Credential。
 - Schema 保持 v7；Generated Key 与 Imported Key 都是 `private_key` Kind。
 
@@ -122,12 +125,12 @@ Step-up 成功只对当前 Export Request 有效，不产生长期 Token。
 ## Encrypted Export
 
 ```text
-Resolved Private Key
-  -> decrypt if needed
-    -> Native Export Passphrase
-      -> ssh-key AES-256-CTR + bcrypt-pbkdf
-        -> OpenSSH Zeroizing<String>
-          -> Rust Native Save Picker
+React { credentialId }
+  -> Rust Native Save Picker selects Destination
+    -> Native PIN Step-up + Export Passphrase confirmation
+      -> ApplicationCore resolves/decrypts Private Key
+        -> ssh-key AES-256-CTR + bcrypt-pbkdf
+          -> OpenSSH Zeroizing<String>
             -> create_new + bounded write + fsync
 ```
 
@@ -136,8 +139,23 @@ Resolved Private Key
 - 文件必须不存在。拒绝 Symlink/Reparse Point、目录、Device、FIFO 和 Socket。
 - Unix 使用 `0600`；Windows 创建当前用户受限文件。
 - 写入失败删除部分文件；成功后清空序列化 Buffer。
+- Blocking Task 在请求取消后继续运行时仍持有 Operation Slot Permit，避免提前
+  释放后并行启动第二个 RSA/Projection/Export Task。
 - Result 只返回 sanitized File Name、Algorithm、Fingerprint 和
   `encrypted: true`。
+
+Windows 的具体 File Boundary 为：
+
+- `CreateFileW` + `CREATE_NEW`，不覆盖已有 Destination。
+- `FILE_FLAG_OPEN_REPARSE_POINT`，并在打开前拒绝现有 Parent Ancestor 的
+  Reparse Point。
+- 拒绝 Final File Name 中的 `:`，不允许 Alternate Data Stream Destination。
+- 从当前 Process Token 解析 User SID，创建时应用
+  `O:<sid>D:P(A;;FA;;;<sid>)` protected DACL，不继承 Parent Directory 的较宽
+  ACL，也不依赖 Elevated Token 的 Default Owner。
+- Win32 Handle 与 Local Security Descriptor 生命周期只存在于一个
+  `cfg(windows)`、带 Safety Comment 的小型 Rust Unsafe Module；其余
+  `anyssh-app` 继续 `deny(unsafe_code)`。
 
 ## UI
 
@@ -175,14 +193,19 @@ Export：
 - `VaultLocked`
 - `CredentialNotFound`
 - `CredentialKindMismatch`
+- `OperationBusy`
+- `InvalidKey`
 - `GenerationFailed`
-- `StepUpCancelled`
+- `TaskFailed`
+- `PublicKeyTooLarge`
 - `StepUpRejected`
-- `PassphraseCancelled`
-- `PassphraseMismatch`
-- `DestinationCancelled`
+- `PassphraseRejected`
 - `DestinationExists`
+- `UnsupportedDestination`
 - `ExportFailed`
+
+Native Picker、PIN Prompt 或 Passphrase Prompt 的用户取消返回空 Result，不把
+取消当作包含底层信息的异常。
 
 错误不得包含 PIN、Passphrase、Private Key、完整 Path 或底层解析内容。
 
@@ -197,6 +220,7 @@ Export：
 | Export Passphrase | 1024 Byte |
 | PIN/Passphrase Attempts | 3 |
 | Exported OpenSSH File | 1 MiB |
+| Concurrent Private Key Operations | 1 |
 
 ## Validation
 
@@ -209,6 +233,8 @@ Export：
 - OpenSSH：
   - Generated Ed25519 与 RSA Credential Direct/Saved/Jump Authentication。
   - Exported Key 由 OpenSSH/ssh-key 使用新 Passphrase 解密。
+  - Canonical Mapping 为 Generated Ed25519 Direct、Generated RSA 4096
+    Saved Host、Exported/Reimported Ed25519 Password Jump -> Key Target。
 - Browser：
   - Metadata-only Generation、Public Key Dialog 和 Native-only Export Notice。
   - Desktop/Mobile/Compact 与 Browser Error Log。
@@ -216,6 +242,8 @@ Export：
   - X11 Native Generate、Public Key、PIN Step-up、Passphrase、Save Picker、
     Source Delete 和真实 SSH Marker。
   - Windows 真实 EXE/WebView2 + Credential UI + Save Dialog + OpenSSH Marker。
+  - Windows Export ACL 必须为 current-owner protected DACL；Junction Parent 与
+    Alternate Data Stream Fixture 必须 Fail Closed。
   - Wayland/IBus 回归，且不出现 Private Key/Passphrase/PIN。
 - Build：
   - Linux Container、Android ARM64 和 Windows。

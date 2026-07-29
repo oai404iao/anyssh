@@ -1557,6 +1557,7 @@ select:focus-visible {
 
 .resource-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
@@ -1721,6 +1722,49 @@ select:focus-visible {
   color: #77869a;
   font-size: 9px;
   line-height: 1.65;
+}
+
+.public-key-details {
+  display: grid;
+  gap: 14px;
+}
+
+.public-key-details > div:not(.editor-actions, .security-note),
+.public-key-details > label {
+  display: grid;
+  gap: 7px;
+  color: #8590a5;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.public-key-details code {
+  overflow-wrap: anywhere;
+  color: #a7dfd5;
+  font-family: "AnySSH Nerd Mono", monospace;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.55;
+}
+
+.public-key-details textarea {
+  width: 100%;
+  min-height: 112px;
+  padding: 11px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: #dbe2ef;
+  background: rgba(4, 7, 13, 0.48);
+  font-family: "AnySSH Nerd Mono", monospace;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.public-key-actions .connect-button {
+  min-width: 160px;
+  justify-content: center;
 }
 
 .route-add-row {

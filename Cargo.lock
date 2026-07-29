@@ -105,9 +105,11 @@ dependencies = [
  "libc",
  "rand",
  "russh",
+ "ssh-key",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
+ "windows 0.61.3",
  "zeroize",
 ]
 
@@ -165,6 +167,7 @@ dependencies = [
  "rand",
  "rusqlite",
  "ssh-key",
+ "subtle",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",

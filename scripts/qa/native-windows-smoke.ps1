@@ -24,6 +24,15 @@ $SshMarkerPath = Join-Path $env:TEMP "anyssh-windows-agent-ok-$Timestamp-$PID.tx
 $PrivateKeyMarkerPath = Join-Path `
   $env:TEMP `
   "anyssh-windows-encrypted-key-ok-$Timestamp-$PID.txt"
+$GeneratedKeyMarkerPath = Join-Path `
+  $env:TEMP `
+  "anyssh-windows-generated-key-ok-$Timestamp-$PID.txt"
+$ReimportedKeyMarkerPath = Join-Path `
+  $env:TEMP `
+  "anyssh-windows-reimported-key-ok-$Timestamp-$PID.txt"
+$GeneratedExportPath = Join-Path `
+  $env:TEMP `
+  "anyssh-windows-generated-export-$Timestamp-$PID.key"
 $InteractiveReadyPath = Join-Path `
   $env:TEMP `
   "anyssh-windows-interactive-ready-$Timestamp-$PID.txt"
@@ -40,12 +49,15 @@ $script:AgentPublicKeyPath = ""
 $script:SshPort = 0
 $script:SshUsername = ""
 $script:AgentFingerprint = ""
+$script:AuthorizedKeysPath = ""
 $script:EncryptedKeyPath = ""
 $script:SshdExecutable = ""
 $script:SshHostKeyPath = ""
 $script:SshConfigPath = ""
 $script:PrivateKeyPassphrase = "windows-key-passphrase"
 $script:WrongPrivateKeyPassphrase = "windows-wrong-key-passphrase"
+$script:ExportPassphrase = "windows-export-passphrase"
+$script:WrongExportPassphrase = "windows-wrong-export-passphrase"
 $script:InteractivePort = 0
 $script:InteractiveResponse = "otp-$([Guid]::NewGuid().ToString('N'))"
 $script:InteractiveUsername = "windows-interactive-user"
@@ -59,6 +71,9 @@ Remove-Item -LiteralPath $WebViewDataRoot -Recurse -Force -ErrorAction SilentlyC
 Remove-Item -LiteralPath $SshFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $SshMarkerPath -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $PrivateKeyMarkerPath -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $GeneratedKeyMarkerPath -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $ReimportedKeyMarkerPath -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $GeneratedExportPath -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $InteractiveReadyPath -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $InteractiveMarkerPath -Force -ErrorAction SilentlyContinue
 
@@ -304,6 +319,9 @@ function Stop-SshFixture {
   Remove-Item -LiteralPath $SshFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $SshMarkerPath -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $PrivateKeyMarkerPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $GeneratedKeyMarkerPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $ReimportedKeyMarkerPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $GeneratedExportPath -Force -ErrorAction SilentlyContinue
 }
 
 function Start-SshFixture {
@@ -378,6 +396,7 @@ function Start-SshFixture {
   }
   $script:AgentFingerprint = $FingerprintParts[1]
   $script:AgentPublicKeyPath = $AgentPublicKeyPath
+  $script:AuthorizedKeysPath = $AuthorizedKeysPath
 
   @(
     Get-Content -LiteralPath $AgentPublicKeyPath
@@ -453,7 +472,7 @@ LogLevel ERROR
 host=127.0.0.1
 port=$($script:SshPort)
 username=$($script:SshUsername)
-encrypted_key_source=$($script:EncryptedKeyPath)
+encrypted_key_fixture=ephemeral
 "@ | Set-Content -Encoding UTF8 -Path (Join-Path $RunDirectory "ssh-fixture.txt")
 }
 
@@ -562,6 +581,14 @@ function Start-NativeStage {
   Remove-Item Env:ANYSSH_WINDOWS_ENCRYPTED_KEY_PATH -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_KEY_PASSPHRASE -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_WRONG_KEY_PASSPHRASE -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_GENERATED_EXPORT_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_EXPORT_PASSPHRASE -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_WRONG_EXPORT_PASSPHRASE -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_VAULT_PIN -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_WRONG_VAULT_PIN -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_AUTHORIZED_KEYS_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_GENERATED_KEY_MARKER_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_REIMPORTED_KEY_MARKER_PATH -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_PRIVATE_KEY_MARKER_PATH -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_INTERACTIVE_RESPONSE -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_INTERACTIVE_MARKER_PATH -ErrorAction SilentlyContinue
@@ -584,6 +611,14 @@ function Start-NativeStage {
   $env:ANYSSH_WINDOWS_ENCRYPTED_KEY_PATH = $script:EncryptedKeyPath
   $env:ANYSSH_WINDOWS_KEY_PASSPHRASE = $script:PrivateKeyPassphrase
   $env:ANYSSH_WINDOWS_WRONG_KEY_PASSPHRASE = $script:WrongPrivateKeyPassphrase
+  $env:ANYSSH_WINDOWS_GENERATED_EXPORT_PATH = $GeneratedExportPath
+  $env:ANYSSH_WINDOWS_EXPORT_PASSPHRASE = $script:ExportPassphrase
+  $env:ANYSSH_WINDOWS_WRONG_EXPORT_PASSPHRASE = $script:WrongExportPassphrase
+  $env:ANYSSH_WINDOWS_VAULT_PIN = "246810"
+  $env:ANYSSH_WINDOWS_WRONG_VAULT_PIN = "000000"
+  $env:ANYSSH_WINDOWS_AUTHORIZED_KEYS_PATH = $script:AuthorizedKeysPath
+  $env:ANYSSH_WINDOWS_GENERATED_KEY_MARKER_PATH = $GeneratedKeyMarkerPath
+  $env:ANYSSH_WINDOWS_REIMPORTED_KEY_MARKER_PATH = $ReimportedKeyMarkerPath
   $env:ANYSSH_WINDOWS_PRIVATE_KEY_MARKER_PATH = $PrivateKeyMarkerPath
   $env:ANYSSH_WINDOWS_INTERACTIVE_HOST = "127.0.0.1"
   $env:ANYSSH_WINDOWS_INTERACTIVE_PORT = [string]$script:InteractivePort
@@ -722,6 +757,11 @@ function Assert-VaultFilesAreEncrypted {
     "Windows QA password",
     "Windows QA encrypted key",
     "Windows QA encrypted key host",
+    "Windows QA generated key",
+    "Windows QA generated RSA",
+    "Windows QA generated key host",
+    "Windows QA reimported key",
+    "Windows QA reimported key host",
     "Windows QA system agent",
     "Windows QA interactive",
     "Windows QA agent host",
@@ -733,6 +773,10 @@ function Assert-VaultFilesAreEncrypted {
     "windows-user",
     $script:InteractiveUsername,
     $script:InteractiveResponse,
+    $script:EncryptedKeyPath,
+    $script:ExportPassphrase,
+    $script:WrongExportPassphrase,
+    $GeneratedExportPath,
     $script:LocalForwardMarker,
     $script:DynamicForwardMarker,
     $script:RemoteForwardMarker,
@@ -766,6 +810,12 @@ function Assert-EvidenceContainsNoSensitiveFixtureValues {
   $Needles = @(
     $script:PrivateKeyPassphrase,
     $script:WrongPrivateKeyPassphrase,
+    $script:ExportPassphrase,
+    $script:WrongExportPassphrase,
+    "246810",
+    "000000",
+    $script:EncryptedKeyPath,
+    $GeneratedExportPath,
     $script:InteractiveResponse,
     $script:AgentFingerprint,
     $script:LocalForwardMarker,
@@ -785,7 +835,27 @@ function Assert-EvidenceContainsNoSensitiveFixtureValues {
   }
 }
 
+function Test-WindowsExportReparseGuard {
+  $EvidencePath = Join-Path $RunDirectory "windows-export-reparse-test.txt"
+  Push-Location $RootDirectory
+  try {
+    & cargo test `
+      --package anyssh-app `
+      windows_private_key_export_rejects_reparse_points_and_alternate_streams `
+      -- `
+      --nocapture 2>&1 |
+      Tee-Object -FilePath $EvidencePath
+    if ($LASTEXITCODE -ne 0) {
+      throw "The Windows Private Key export reparse-point guard test failed."
+    }
+  }
+  finally {
+    Pop-Location
+  }
+}
+
 try {
+  Test-WindowsExportReparseGuard
   Start-SshFixture
   Start-KeyboardInteractiveFixture
   Start-NativeStage -Stage "create"
@@ -809,6 +879,29 @@ try {
   $PrivateKeyMarker = Get-Content -LiteralPath $PrivateKeyMarkerPath -Raw
   if (-not $PrivateKeyMarker.Contains("ANYSSH_WINDOWS_ENCRYPTED_KEY_OK")) {
     throw "The Windows encrypted Private Key remote marker was invalid."
+  }
+  if (-not (Test-Path -LiteralPath $GeneratedKeyMarkerPath -PathType Leaf)) {
+    throw "The Windows generated Private Key session did not create its remote marker."
+  }
+  if (-not (
+      (Get-Content -LiteralPath $GeneratedKeyMarkerPath -Raw).Contains(
+        "ANYSSH_WINDOWS_GENERATED_KEY_OK"
+      )
+    )) {
+    throw "The Windows generated Private Key remote marker was invalid."
+  }
+  if (-not (Test-Path -LiteralPath $ReimportedKeyMarkerPath -PathType Leaf)) {
+    throw "The Windows reimported Private Key session did not create its remote marker."
+  }
+  if (-not (
+      (Get-Content -LiteralPath $ReimportedKeyMarkerPath -Raw).Contains(
+        "ANYSSH_WINDOWS_REIMPORTED_KEY_OK"
+      )
+    )) {
+    throw "The Windows reimported Private Key remote marker was invalid."
+  }
+  if (Test-Path -LiteralPath $GeneratedExportPath -PathType Leaf) {
+    throw "The Windows generated Private Key export source was not removed after reimport."
   }
   if (-not (Test-Path -LiteralPath $InteractiveMarkerPath -PathType Leaf)) {
     throw "The Windows Keyboard-interactive session did not create its marker."
@@ -871,6 +964,22 @@ try {
   Record AEAD fields; the source Key file was deleted before SSH connection.
 - The real EXE authenticated with the imported encrypted Key and created the
   remote marker ``$PrivateKeyMarkerPath``.
+- The real EXE generated Ed25519 and RSA 4096 Credentials inside Rust and
+  exposed only Algorithm, SHA-256 Fingerprint, and OpenSSH Public Key metadata
+  to WebView2.
+- The generated Ed25519 Credential authenticated to the standalone OpenSSH
+  Server and created ``$GeneratedKeyMarkerPath``.
+- Windows Credential UI required one wrong/correct PIN Step-up and one
+  mismatched/correct new Export Passphrase confirmation. The Native Save Dialog
+  wrote an encrypted OpenSSH Key without sending PIN, Passphrase, or Path
+  through WebView IPC.
+- The exported file was owned by the current Windows user and used a protected
+  owner-only DACL instead of inheriting broader permissions from its directory.
+- Windows junction-parent and alternate-data-stream fixtures were rejected
+  before Private Key export, leaving the real destination untouched.
+- Reimporting that exported Key required the new Passphrase, after which the
+  source file was deleted and the Credential authenticated to OpenSSH to create
+  ``$ReimportedKeyMarkerPath``.
 - Windows OpenSSH Authentication Agent enumerated the selected SHA-256 Identity
   through Rust; the temporary Private Key file was deleted before AnySSH launched.
 - The real EXE used the Agent Named Pipe to authenticate to a standalone Windows
@@ -918,6 +1027,20 @@ try {
 - ``02a3-private-key-passphrase-retry.png``
 - ``02a4-private-key-imported.png``
 - ``02a5-private-key-connected.png``
+- ``02g-generated-public-key.png``
+- ``02g2-generated-key-connected.png``
+- ``02g3-generated-key-exported.png``
+- ``generated-export-acl.txt``
+- ``windows-export-reparse-test.txt``
+- ``02g4-reimported-key-connected.png``
+- ``02a6-private-key-export-picker.png``
+- ``02a7-private-key-export-pin.png``
+- ``02a8-private-key-export-pin-retry.png``
+- ``02a9-private-key-export-passphrase.png``
+- ``02a10-private-key-export-passphrase-retry.png``
+- ``02a11-generated-key-reimport-picker.png``
+- ``02a12-generated-key-reimport-passphrase.png``
+- ``02a13-generated-key-reimport-passphrase-retry.png``
 - ``02b-system-agent-connected.png``
 - ``02b2-port-forwarding.png``
 - ``02c-known-hosts.png``
@@ -965,6 +1088,8 @@ try {
 - ``interactive-server.stdout.log``
 - ``interactive-server.stderr.log``
 - ``native-dialog-driver.txt``
+- ``key-export-driver.txt``
+- ``generated-key-reimport-driver.txt``
 - ``known-host-forget-driver.txt``
 "@ | Set-Content -Encoding UTF8 -Path (Join-Path $RunDirectory "report.md")
 
@@ -993,6 +1118,14 @@ finally {
   Remove-Item Env:ANYSSH_WINDOWS_ENCRYPTED_KEY_PATH -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_KEY_PASSPHRASE -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_WRONG_KEY_PASSPHRASE -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_GENERATED_EXPORT_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_EXPORT_PASSPHRASE -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_WRONG_EXPORT_PASSPHRASE -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_VAULT_PIN -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_WRONG_VAULT_PIN -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_AUTHORIZED_KEYS_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_GENERATED_KEY_MARKER_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_REIMPORTED_KEY_MARKER_PATH -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_PRIVATE_KEY_MARKER_PATH -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_INTERACTIVE_HOST -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_INTERACTIVE_PORT -ErrorAction SilentlyContinue
@@ -1002,6 +1135,9 @@ finally {
   Remove-Item -LiteralPath $VaultRoot -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $WebViewDataRoot -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $PrivateKeyMarkerPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $GeneratedKeyMarkerPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $ReimportedKeyMarkerPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $GeneratedExportPath -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $InteractiveReadyPath -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $InteractiveMarkerPath -Force -ErrorAction SilentlyContinue
 }

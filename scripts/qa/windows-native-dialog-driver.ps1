@@ -1,5 +1,10 @@
 param(
-  [ValidateSet("PrivateKey", "KnownHostForget")]
+  [ValidateSet(
+    "PrivateKey",
+    "KnownHostForget",
+    "KeyExport",
+    "GeneratedReimport"
+  )]
   [string]$Mode = "PrivateKey"
 )
 
@@ -18,10 +23,17 @@ foreach ($RequiredValue in @(
   }
 }
 
-if ($Mode -eq "PrivateKey") {
-  $PrivateKeyPath = $env:ANYSSH_WINDOWS_ENCRYPTED_KEY_PATH
-  $Passphrase = $env:ANYSSH_WINDOWS_KEY_PASSPHRASE
-  $WrongPassphrase = $env:ANYSSH_WINDOWS_WRONG_KEY_PASSPHRASE
+if ($Mode -eq "PrivateKey" -or $Mode -eq "GeneratedReimport") {
+  if ($Mode -eq "GeneratedReimport") {
+    $PrivateKeyPath = $env:ANYSSH_WINDOWS_GENERATED_EXPORT_PATH
+    $Passphrase = $env:ANYSSH_WINDOWS_EXPORT_PASSPHRASE
+    $WrongPassphrase = $env:ANYSSH_WINDOWS_WRONG_EXPORT_PASSPHRASE
+  }
+  else {
+    $PrivateKeyPath = $env:ANYSSH_WINDOWS_ENCRYPTED_KEY_PATH
+    $Passphrase = $env:ANYSSH_WINDOWS_KEY_PASSPHRASE
+    $WrongPassphrase = $env:ANYSSH_WINDOWS_WRONG_KEY_PASSPHRASE
+  }
   foreach ($RequiredValue in @(
     $PrivateKeyPath,
     $Passphrase,
@@ -29,6 +41,25 @@ if ($Mode -eq "PrivateKey") {
   )) {
     if ([string]::IsNullOrWhiteSpace([string]$RequiredValue)) {
       throw "Windows native Private Key dialog automation is missing a required input."
+    }
+  }
+}
+
+if ($Mode -eq "KeyExport") {
+  $ExportPath = $env:ANYSSH_WINDOWS_GENERATED_EXPORT_PATH
+  $VaultPin = $env:ANYSSH_WINDOWS_VAULT_PIN
+  $WrongVaultPin = $env:ANYSSH_WINDOWS_WRONG_VAULT_PIN
+  $ExportPassphrase = $env:ANYSSH_WINDOWS_EXPORT_PASSPHRASE
+  $WrongExportPassphrase = $env:ANYSSH_WINDOWS_WRONG_EXPORT_PASSPHRASE
+  foreach ($RequiredValue in @(
+    $ExportPath,
+    $VaultPin,
+    $WrongVaultPin,
+    $ExportPassphrase,
+    $WrongExportPassphrase
+  )) {
+    if ([string]::IsNullOrWhiteSpace([string]$RequiredValue)) {
+      throw "Windows native Key Export automation is missing a required input."
     }
   }
 }
@@ -298,6 +329,188 @@ if ($Mode -eq "KnownHostForget") {
   exit 0
 }
 
+if ($Mode -eq "KeyExport") {
+  $ExportDialog = [AnySshNativeDialogDriver]::WaitForWindow(
+    $AppProcessId,
+    "Export encrypted SSH private key",
+    60000
+  )
+  if ($ExportDialog -eq [IntPtr]::Zero) {
+    throw "The native Windows Private Key export picker did not appear."
+  }
+  [AnySshNativeDialogDriver]::CaptureWindow(
+    $ExportDialog,
+    (Join-Path $RunDirectory "02a6-private-key-export-picker.png")
+  )
+  [AnySshNativeDialogDriver]::ChooseFile($ExportDialog, $ExportPath)
+  if (-not [AnySshNativeDialogDriver]::WaitForWindowToClose(
+      $ExportDialog,
+      30000
+    )) {
+    throw "The native Windows Private Key export picker did not close."
+  }
+
+  $FirstPinPrompt = [AnySshNativeDialogDriver]::WaitForWindow(
+    $AppProcessId,
+    "Confirm AnySSH PIN",
+    60000
+  )
+  if ($FirstPinPrompt -eq [IntPtr]::Zero) {
+    throw "The native Windows Vault step-up prompt did not appear."
+  }
+  [AnySshNativeDialogDriver]::EnterPassphrase($FirstPinPrompt, $WrongVaultPin)
+  [AnySshNativeDialogDriver]::CaptureWindow(
+    $FirstPinPrompt,
+    (Join-Path $RunDirectory "02a7-private-key-export-pin.png")
+  )
+  [AnySshNativeDialogDriver]::Submit($FirstPinPrompt)
+  if (-not [AnySshNativeDialogDriver]::WaitForWindowToClose(
+      $FirstPinPrompt,
+      30000
+    )) {
+    throw "The first native Windows Vault step-up prompt did not close."
+  }
+
+  $RetryPinPrompt = [AnySshNativeDialogDriver]::WaitForWindow(
+    $AppProcessId,
+    "Confirm AnySSH PIN",
+    60000
+  )
+  if ($RetryPinPrompt -eq [IntPtr]::Zero) {
+    throw "The native Windows Vault step-up retry prompt did not appear."
+  }
+  [AnySshNativeDialogDriver]::EnterPassphrase($RetryPinPrompt, $VaultPin)
+  [AnySshNativeDialogDriver]::CaptureWindow(
+    $RetryPinPrompt,
+    (Join-Path $RunDirectory "02a8-private-key-export-pin-retry.png")
+  )
+  [AnySshNativeDialogDriver]::Submit($RetryPinPrompt)
+  if (-not [AnySshNativeDialogDriver]::WaitForWindowToClose(
+      $RetryPinPrompt,
+      30000
+    )) {
+    throw "The native Windows Vault step-up retry prompt did not close."
+  }
+
+  $FirstPassphrasePrompt = [AnySshNativeDialogDriver]::WaitForWindow(
+    $AppProcessId,
+    "Encrypt exported private key",
+    60000
+  )
+  if ($FirstPassphrasePrompt -eq [IntPtr]::Zero) {
+    throw "The native Windows export Passphrase prompt did not appear."
+  }
+  [AnySshNativeDialogDriver]::EnterPassphrase(
+    $FirstPassphrasePrompt,
+    $ExportPassphrase
+  )
+  [AnySshNativeDialogDriver]::CaptureWindow(
+    $FirstPassphrasePrompt,
+    (Join-Path $RunDirectory "02a9-private-key-export-passphrase.png")
+  )
+  [AnySshNativeDialogDriver]::Submit($FirstPassphrasePrompt)
+  if (-not [AnySshNativeDialogDriver]::WaitForWindowToClose(
+      $FirstPassphrasePrompt,
+      30000
+    )) {
+    throw "The first native Windows export Passphrase prompt did not close."
+  }
+
+  $FirstConfirmation = [AnySshNativeDialogDriver]::WaitForWindow(
+    $AppProcessId,
+    "Confirm export Passphrase",
+    60000
+  )
+  if ($FirstConfirmation -eq [IntPtr]::Zero) {
+    throw "The native Windows export Passphrase confirmation did not appear."
+  }
+  [AnySshNativeDialogDriver]::EnterPassphrase(
+    $FirstConfirmation,
+    $WrongExportPassphrase
+  )
+  [AnySshNativeDialogDriver]::Submit($FirstConfirmation)
+  if (-not [AnySshNativeDialogDriver]::WaitForWindowToClose(
+      $FirstConfirmation,
+      30000
+    )) {
+    throw "The first native Windows export Passphrase confirmation did not close."
+  }
+
+  $RetryPassphrasePrompt = [AnySshNativeDialogDriver]::WaitForWindow(
+    $AppProcessId,
+    "Encrypt exported private key",
+    60000
+  )
+  if ($RetryPassphrasePrompt -eq [IntPtr]::Zero) {
+    throw "The native Windows export Passphrase retry prompt did not appear."
+  }
+  [AnySshNativeDialogDriver]::EnterPassphrase(
+    $RetryPassphrasePrompt,
+    $ExportPassphrase
+  )
+  [AnySshNativeDialogDriver]::CaptureWindow(
+    $RetryPassphrasePrompt,
+    (Join-Path $RunDirectory "02a10-private-key-export-passphrase-retry.png")
+  )
+  [AnySshNativeDialogDriver]::Submit($RetryPassphrasePrompt)
+  if (-not [AnySshNativeDialogDriver]::WaitForWindowToClose(
+      $RetryPassphrasePrompt,
+      30000
+    )) {
+    throw "The native Windows export Passphrase retry prompt did not close."
+  }
+
+  $RetryConfirmation = [AnySshNativeDialogDriver]::WaitForWindow(
+    $AppProcessId,
+    "Confirm export Passphrase",
+    60000
+  )
+  if ($RetryConfirmation -eq [IntPtr]::Zero) {
+    throw "The native Windows export Passphrase retry confirmation did not appear."
+  }
+  [AnySshNativeDialogDriver]::EnterPassphrase(
+    $RetryConfirmation,
+    $ExportPassphrase
+  )
+  [AnySshNativeDialogDriver]::Submit($RetryConfirmation)
+  if (-not [AnySshNativeDialogDriver]::WaitForWindowToClose(
+      $RetryConfirmation,
+      30000
+    )) {
+    throw "The native Windows export Passphrase retry confirmation did not close."
+  }
+
+  "PASS" | Set-Content -Encoding ASCII -Path (
+    Join-Path $RunDirectory "key-export-driver.txt"
+  )
+  exit 0
+}
+
+$PickerScreenshot = if ($Mode -eq "GeneratedReimport") {
+  "02a11-generated-key-reimport-picker.png"
+}
+else {
+  "02a-private-key-picker.png"
+}
+$FirstPassphraseScreenshot = if ($Mode -eq "GeneratedReimport") {
+  "02a12-generated-key-reimport-passphrase.png"
+}
+else {
+  "02a2-private-key-passphrase.png"
+}
+$RetryPassphraseScreenshot = if ($Mode -eq "GeneratedReimport") {
+  "02a13-generated-key-reimport-passphrase-retry.png"
+}
+else {
+  "02a3-private-key-passphrase-retry.png"
+}
+$DriverResult = if ($Mode -eq "GeneratedReimport") {
+  "generated-key-reimport-driver.txt"
+}
+else {
+  "native-dialog-driver.txt"
+}
+
 $FileDialog = [AnySshNativeDialogDriver]::WaitForWindow(
   $AppProcessId,
   "Import SSH private key",
@@ -308,7 +521,7 @@ if ($FileDialog -eq [IntPtr]::Zero) {
 }
 [AnySshNativeDialogDriver]::CaptureWindow(
   $FileDialog,
-  (Join-Path $RunDirectory "02a-private-key-picker.png")
+  (Join-Path $RunDirectory $PickerScreenshot)
 )
 [AnySshNativeDialogDriver]::ChooseFile($FileDialog, $PrivateKeyPath)
 if (-not [AnySshNativeDialogDriver]::WaitForWindowToClose($FileDialog, 30000)) {
@@ -326,7 +539,7 @@ if ($FirstPrompt -eq [IntPtr]::Zero) {
 [AnySshNativeDialogDriver]::EnterPassphrase($FirstPrompt, $WrongPassphrase)
 [AnySshNativeDialogDriver]::CaptureWindow(
   $FirstPrompt,
-  (Join-Path $RunDirectory "02a2-private-key-passphrase.png")
+  (Join-Path $RunDirectory $FirstPassphraseScreenshot)
 )
 [AnySshNativeDialogDriver]::Submit($FirstPrompt)
 if (-not [AnySshNativeDialogDriver]::WaitForWindowToClose($FirstPrompt, 30000)) {
@@ -344,7 +557,7 @@ if ($RetryPrompt -eq [IntPtr]::Zero) {
 [AnySshNativeDialogDriver]::EnterPassphrase($RetryPrompt, $Passphrase)
 [AnySshNativeDialogDriver]::CaptureWindow(
   $RetryPrompt,
-  (Join-Path $RunDirectory "02a3-private-key-passphrase-retry.png")
+  (Join-Path $RunDirectory $RetryPassphraseScreenshot)
 )
 [AnySshNativeDialogDriver]::Submit($RetryPrompt)
 if (-not [AnySshNativeDialogDriver]::WaitForWindowToClose($RetryPrompt, 30000)) {
@@ -352,5 +565,5 @@ if (-not [AnySshNativeDialogDriver]::WaitForWindowToClose($RetryPrompt, 30000)) 
 }
 
 "PASS" | Set-Content -Encoding ASCII -Path (
-  Join-Path $RunDirectory "native-dialog-driver.txt"
+  Join-Path $RunDirectory $DriverResult
 )

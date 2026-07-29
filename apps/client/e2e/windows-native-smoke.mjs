@@ -1,6 +1,13 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { access, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  appendFile,
+  mkdir,
+  readFile,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import path from "node:path";
 import process from "node:process";
@@ -30,6 +37,24 @@ const wrongKeyPassphrase = requiredEnvironment(
 );
 const privateKeyMarkerPath = requiredEnvironment(
   "ANYSSH_WINDOWS_PRIVATE_KEY_MARKER_PATH",
+);
+const generatedExportPath = requiredEnvironment(
+  "ANYSSH_WINDOWS_GENERATED_EXPORT_PATH",
+);
+const exportPassphrase = requiredEnvironment(
+  "ANYSSH_WINDOWS_EXPORT_PASSPHRASE",
+);
+const wrongExportPassphrase = requiredEnvironment(
+  "ANYSSH_WINDOWS_WRONG_EXPORT_PASSPHRASE",
+);
+const authorizedKeysPath = requiredEnvironment(
+  "ANYSSH_WINDOWS_AUTHORIZED_KEYS_PATH",
+);
+const generatedKeyMarkerPath = requiredEnvironment(
+  "ANYSSH_WINDOWS_GENERATED_KEY_MARKER_PATH",
+);
+const reimportedKeyMarkerPath = requiredEnvironment(
+  "ANYSSH_WINDOWS_REIMPORTED_KEY_MARKER_PATH",
 );
 const interactiveHost = requiredEnvironment("ANYSSH_WINDOWS_INTERACTIVE_HOST");
 const interactivePort = requiredEnvironment("ANYSSH_WINDOWS_INTERACTIVE_PORT");
@@ -163,6 +188,7 @@ async function createVaultAndRepository(targetPage) {
 
   await importEncryptedPrivateKey(targetPage);
   await connectWithEncryptedPrivateKey(targetPage);
+  await generateExportAndReimportPrivateKeys(targetPage);
 
   await targetPage.locator(".primary-nav .nav-item").nth(3).click();
   await targetPage.getByRole("button", { name: "New system agent" }).click();
@@ -392,6 +418,15 @@ async function unlockRestartedVault(targetPage) {
       .locator(".resource-card")
       .filter({ hasText: "Windows QA interactive" }),
   ).toContainText("Keyboard-interactive");
+  for (const label of [
+    "Windows QA generated key",
+    "Windows QA generated RSA",
+    "Windows QA reimported key",
+  ]) {
+    await assert(
+      targetPage.locator(".resource-card").filter({ hasText: label }),
+    ).toContainText("Private Key");
+  }
 
   await targetPage.locator(".primary-nav .nav-item").nth(1).click();
   await assert(
@@ -419,6 +454,16 @@ async function unlockRestartedVault(targetPage) {
       .locator(".resource-card")
       .filter({ hasText: "Windows QA target" }),
   ).toBeVisible();
+  await assert(
+    targetPage
+      .locator(".resource-card")
+      .filter({ hasText: "Windows QA generated key host" }),
+  ).toContainText("Private Key");
+  await assert(
+    targetPage
+      .locator(".resource-card")
+      .filter({ hasText: "Windows QA reimported key host" }),
+  ).toContainText("Private Key");
   const privateKeyHost = targetPage
     .locator(".resource-card")
     .filter({ hasText: "Windows QA encrypted key host" });
@@ -577,6 +622,173 @@ async function connectWithEncryptedPrivateKey(targetPage) {
     "02a5-private-key-connected.png",
     "02a5-private-key-connected.txt",
   );
+  await targetPage.getByRole("button", { name: "Disconnect" }).click();
+  await assert(
+    targetPage.getByText("The SSH session has ended."),
+  ).toBeVisible();
+}
+
+async function generateExportAndReimportPrivateKeys(targetPage) {
+  await targetPage.locator(".primary-nav .nav-item").nth(3).click();
+  await targetPage.getByRole("button", { name: "Generate key" }).click();
+  const generatedDialog = targetPage.getByRole("dialog", {
+    name: "Generate Private Key",
+  });
+  await generatedDialog
+    .getByLabel("Credential label")
+    .fill("Windows QA generated key");
+  await generatedDialog.getByLabel("Username").fill(sshUsername);
+  await generatedDialog.getByLabel("Algorithm").selectOption("ed25519");
+  await assert(generatedDialog.getByLabel("PIN")).toHaveCount(0);
+  await assert(generatedDialog.getByLabel("Passphrase")).toHaveCount(0);
+  await generatedDialog.getByRole("button", { name: "Generate key" }).click();
+  let generatedCredential = targetPage
+    .locator(".resource-card")
+    .filter({ hasText: "Windows QA generated key" });
+  await assert(generatedCredential).toContainText("Private Key");
+
+  await generatedCredential.getByRole("button", { name: "Public key" }).click();
+  const publicDialog = targetPage.getByRole("dialog", { name: "Public Key" });
+  const generatedPublicKey = await publicDialog
+    .getByLabel("OpenSSH Public Key")
+    .inputValue();
+  assert(generatedPublicKey.startsWith("ssh-ed25519 ")).toBe(true);
+  await assert(publicDialog).toContainText("SHA256:");
+  await appendFile(authorizedKeysPath, `\r\n${generatedPublicKey}\r\n`, "utf8");
+  await capture(
+    targetPage,
+    "02g-generated-public-key.png",
+    "02g-generated-public-key.txt",
+  );
+  await publicDialog.getByRole("button", { name: "Close" }).click();
+
+  await createPrivateKeyHostAndConnect(
+    targetPage,
+    "Windows QA generated key host",
+    "Windows QA generated key",
+    generatedKeyMarkerPath,
+    "ANYSSH_WINDOWS_GENERATED_KEY_OK",
+    "02g2-generated-key-connected.png",
+    "02g2-generated-key-connected.txt",
+  );
+
+  await targetPage.locator(".primary-nav .nav-item").nth(3).click();
+  generatedCredential = targetPage
+    .locator(".resource-card")
+    .filter({ hasText: "Windows QA generated key" });
+  const exportDriver = runNativeDialogDriver("KeyExport");
+  await generatedCredential
+    .getByRole("button", { name: "Export encrypted…" })
+    .click();
+  await exportDriver;
+  await assert(
+    targetPage.getByText(/Encrypted ssh-ed25519 Private Key exported to/u),
+  ).toBeVisible();
+  await assert.poll(() => fileExists(generatedExportPath)).toBe(true);
+  await verifyGeneratedExportAcl();
+  await capture(
+    targetPage,
+    "02g3-generated-key-exported.png",
+    "02g3-generated-key-exported.txt",
+  );
+
+  await targetPage.getByRole("button", { name: "Import private key" }).click();
+  const reimportDialog = targetPage.getByRole("dialog", {
+    name: "Import Private Key",
+  });
+  await reimportDialog
+    .getByLabel("Credential label")
+    .fill("Windows QA reimported key");
+  await reimportDialog.getByLabel("Username").fill(sshUsername);
+  const reimportDriver = runNativeDialogDriver("GeneratedReimport");
+  await reimportDialog
+    .getByRole("button", { name: "Choose private key" })
+    .click();
+  await reimportDriver;
+  await assert(
+    targetPage
+      .locator(".resource-card")
+      .filter({ hasText: "Windows QA reimported key" }),
+  ).toContainText("Private Key");
+  await unlink(generatedExportPath);
+
+  await createPrivateKeyHostAndConnect(
+    targetPage,
+    "Windows QA reimported key host",
+    "Windows QA reimported key",
+    reimportedKeyMarkerPath,
+    "ANYSSH_WINDOWS_REIMPORTED_KEY_OK",
+    "02g4-reimported-key-connected.png",
+    "02g4-reimported-key-connected.txt",
+  );
+
+  await targetPage.locator(".primary-nav .nav-item").nth(3).click();
+  await targetPage.getByRole("button", { name: "Generate key" }).click();
+  const rsaDialog = targetPage.getByRole("dialog", {
+    name: "Generate Private Key",
+  });
+  await rsaDialog
+    .getByLabel("Credential label")
+    .fill("Windows QA generated RSA");
+  await rsaDialog.getByLabel("Username").fill(sshUsername);
+  await rsaDialog.getByLabel("Algorithm").selectOption("rsa4096");
+  await rsaDialog.getByRole("button", { name: "Generate key" }).click();
+  const rsaCredential = targetPage
+    .locator(".resource-card")
+    .filter({ hasText: "Windows QA generated RSA" });
+  await assert(rsaCredential).toContainText("Private Key", {
+    timeout: 60_000,
+  });
+  await rsaCredential.getByRole("button", { name: "Public key" }).click();
+  const rsaPublicDialog = targetPage.getByRole("dialog", {
+    name: "Public Key",
+  });
+  await assert(rsaPublicDialog).toContainText("ssh-rsa");
+  await assert(rsaPublicDialog.getByLabel("OpenSSH Public Key")).toHaveValue(
+    /^ssh-rsa /u,
+  );
+  await rsaPublicDialog.getByRole("button", { name: "Close" }).click();
+}
+
+async function createPrivateKeyHostAndConnect(
+  targetPage,
+  hostLabel,
+  credentialLabel,
+  markerPath,
+  marker,
+  screenshotName,
+  snapshotName,
+) {
+  await targetPage.locator(".primary-nav .nav-item").nth(2).click();
+  await targetPage.getByRole("button", { name: "New host" }).click();
+  const hostDialog = targetPage.getByRole("dialog", { name: "New Host" });
+  await hostDialog.getByLabel("Display name").fill(hostLabel);
+  await hostDialog.getByLabel("Host", { exact: true }).fill(sshHost);
+  await hostDialog.getByRole("spinbutton", { name: "Port" }).fill(sshPort);
+  await hostDialog.getByLabel("Credential behavior").selectOption("set");
+  await hostDialog.getByLabel("Credential reference").selectOption({
+    label: `${credentialLabel} · ${sshUsername}`,
+  });
+  await hostDialog.getByRole("button", { name: "Save Host" }).click();
+  const host = targetPage
+    .locator(".resource-card")
+    .filter({ hasText: hostLabel });
+  await host.getByRole("button", { name: "Open" }).click();
+  await targetPage.getByRole("button", { name: "Connect saved Host" }).click();
+  await assert(
+    targetPage.getByText("Interactive shell is active."),
+  ).toBeVisible();
+  await assert(
+    targetPage.getByRole("dialog", { name: "Verify server identity" }),
+  ).toHaveCount(0);
+  const terminalInput = targetPage.getByRole("textbox", {
+    name: "Terminal input",
+  });
+  await terminalInput.focus();
+  await terminalInput.pressSequentially(`echo ${marker} > "${markerPath}"`);
+  await terminalInput.press("Enter");
+  await assert.poll(() => fileExists(markerPath)).toBe(true);
+  await capture(targetPage, screenshotName, snapshotName);
   await targetPage.getByRole("button", { name: "Disconnect" }).click();
   await assert(
     targetPage.getByText("The SSH session has ended."),
@@ -899,6 +1111,92 @@ function runNativeDialogDriver(mode = "PrivateKey") {
   });
 }
 
+async function verifyGeneratedExportAcl() {
+  const output = await runPowerShell(`
+$acl = Get-Acl -LiteralPath $env:ANYSSH_WINDOWS_GENERATED_EXPORT_PATH
+$currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$ownerSid = $acl.GetOwner(
+  [System.Security.Principal.SecurityIdentifier]
+).Value
+if ($ownerSid -ne $currentSid) {
+  throw "The generated export is not owned by the current Windows user."
+}
+if (-not $acl.AreAccessRulesProtected) {
+  throw "The generated export DACL still inherits parent permissions."
+}
+$rules = @($acl.Access)
+if ($rules.Count -ne 1) {
+  throw "The generated export DACL contains unexpected access rules."
+}
+$ruleSid = $rules[0].IdentityReference.Translate(
+  [System.Security.Principal.SecurityIdentifier]
+).Value
+if ($ruleSid -ne $currentSid) {
+  throw "The generated export DACL grants access to a non-user principal."
+}
+if ($rules[0].AccessControlType -ne
+  [System.Security.AccessControl.AccessControlType]::Allow) {
+  throw "The generated export DACL rule is not an allow rule."
+}
+$fullControl = [System.Security.AccessControl.FileSystemRights]::FullControl
+if (($rules[0].FileSystemRights -band $fullControl) -ne $fullControl) {
+  throw "The generated export does not have the protected owner-only DACL."
+}
+"owner=current-user"
+"dacl=protected-owner-only"
+`);
+  await writeFile(
+    path.join(runDirectory, "generated-export-acl.txt"),
+    `${output.trim()}\n`,
+  );
+}
+
+function runPowerShell(command) {
+  return new Promise((resolve, reject) => {
+    const output = [];
+    const child = spawn(
+      "powershell.exe",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        command,
+      ],
+      {
+        env: {
+          ANYSSH_WINDOWS_GENERATED_EXPORT_PATH: generatedExportPath,
+          PATH: process.env.PATH,
+          PATHEXT: process.env.PATHEXT,
+          SystemRoot: process.env.SystemRoot,
+          TEMP: process.env.TEMP,
+          TMP: process.env.TMP,
+          WINDIR: process.env.WINDIR,
+        },
+        windowsHide: true,
+      },
+    );
+    child.stdout.on("data", (chunk) => output.push(String(chunk)));
+    child.stderr.on("data", (chunk) => output.push(String(chunk)));
+    child.on("error", (error) => reject(error));
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve(output.join(""));
+      } else {
+        reject(
+          new Error(
+            `Windows ACL validation failed (${code}): ${redact(
+              output.join(""),
+            )}`,
+          ),
+        );
+      }
+    });
+  });
+}
+
 async function findAnySshPage(connectedBrowser) {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
@@ -1090,7 +1388,15 @@ function redact(value) {
     .replaceAll(password, "[REDACTED]")
     .replaceAll(keyPassphrase, "[REDACTED]")
     .replaceAll(wrongKeyPassphrase, "[REDACTED]")
-    .replaceAll(interactiveResponse, "[REDACTED]");
+    .replaceAll(exportPassphrase, "[REDACTED]")
+    .replaceAll(wrongExportPassphrase, "[REDACTED]")
+    .replaceAll(encryptedKeyPath, "[REDACTED]")
+    .replaceAll(generatedExportPath, "[REDACTED]")
+    .replaceAll(agentFingerprint, "[REDACTED]")
+    .replaceAll(interactiveResponse, "[REDACTED]")
+    .replaceAll(localForwardMarker, "[REDACTED]")
+    .replaceAll(dynamicForwardMarker, "[REDACTED]")
+    .replaceAll(remoteForwardMarker, "[REDACTED]");
 }
 
 async function fileExists(filePath) {

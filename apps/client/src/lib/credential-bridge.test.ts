@@ -3,7 +3,11 @@ import {
   createKeyboardInteractiveCredential,
   createPasswordCredential,
   createSystemAgentCredential,
+  credentialOperationsUseNativeRuntime,
   deleteCredential,
+  exportPrivateKeyCredential,
+  generatePrivateKeyCredential,
+  getPrivateKeyPublicSummary,
   importPrivateKeyCredential,
   listCredentials,
   listSystemAgentIdentities,
@@ -64,6 +68,39 @@ describe("browser preview credential bridge", () => {
     });
     expect(JSON.stringify(imported)).not.toContain("privateKeyMaterial");
     expect(JSON.stringify(imported)).not.toContain("passphrase");
+  });
+
+  it("generates metadata and reveals only the Public Key projection", async () => {
+    const generated = await generatePrivateKeyCredential({
+      label: "Generated RSA",
+      username: "key-user",
+      algorithm: "rsa4096",
+    });
+    expect(generated).toMatchObject({
+      label: "Generated RSA",
+      username: "key-user",
+      kind: "privateKey",
+    });
+
+    const publicKey = await getPrivateKeyPublicSummary(generated.id);
+    expect(publicKey).toMatchObject({
+      credentialId: generated.id,
+      algorithm: "ssh-rsa",
+    });
+    expect(publicKey.fingerprintSha256).toMatch(/^SHA256:/u);
+    expect(publicKey.opensshPublicKey).toMatch(/^ssh-rsa /u);
+    const serialized = JSON.stringify({ generated, publicKey });
+    expect(serialized).not.toContain("PRIVATE KEY");
+    expect(serialized).not.toContain("passphrase");
+    expect(serialized).not.toContain("pin");
+    expect(serialized).not.toContain("path");
+    expect(credentialOperationsUseNativeRuntime()).toBe(false);
+    await expect(exportPrivateKeyCredential(generated.id)).resolves.toBeNull();
+
+    await expect(deleteCredential(generated.id)).resolves.toBe(true);
+    await expect(getPrivateKeyPublicSummary(generated.id)).rejects.toThrow(
+      "not found",
+    );
   });
 
   it("selects a metadata-only System Agent identity by fingerprint", async () => {

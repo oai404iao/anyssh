@@ -155,6 +155,11 @@ impl DatabaseActorHandle {
             .await
     }
 
+    pub async fn verify_pin(&self, pin: Zeroizing<String>) -> Result<bool, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::VerifyPin { pin, response })
+            .await
+    }
+
     pub async fn create_credential(
         &self,
         label: String,
@@ -503,6 +508,7 @@ type JumpRouteListResponse = oneshot::Sender<Result<Vec<JumpRouteSummary>, Datab
 type ResolvedHostConnectionPlanResponse =
     oneshot::Sender<Result<ResolvedHostConnectionPlan, DatabaseActorError>>;
 type DeleteResponse = oneshot::Sender<Result<bool, DatabaseActorError>>;
+type PinVerificationResponse = oneshot::Sender<Result<bool, DatabaseActorError>>;
 type EmptyResponse = oneshot::Sender<Result<(), DatabaseActorError>>;
 
 enum DatabaseCommand {
@@ -519,6 +525,10 @@ enum DatabaseCommand {
     },
     Lock {
         response: VaultStatusResponse,
+    },
+    VerifyPin {
+        pin: Zeroizing<String>,
+        response: PinVerificationResponse,
     },
     CreateCredential {
         label: String,
@@ -694,6 +704,14 @@ impl DatabaseActorState {
     fn lock(&mut self) -> VaultStatus {
         self.unlocked = None;
         self.status()
+    }
+
+    fn verify_pin(&self, pin: Zeroizing<String>) -> Result<bool, DatabaseActorError> {
+        self.unlocked
+            .as_ref()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .verify_pin(&self.root, pin.as_str())
+            .map_err(DatabaseActorError::from)
     }
 
     fn create_credential(
@@ -1016,6 +1034,9 @@ fn run_database_actor(
             DatabaseCommand::Lock { response } => {
                 let _ = response.send(Ok(state.lock()));
             }
+            DatabaseCommand::VerifyPin { pin, response } => {
+                let _ = response.send(state.verify_pin(pin));
+            }
             DatabaseCommand::CreateCredential {
                 label,
                 username,
@@ -1225,11 +1246,27 @@ mod tests {
             actor.create(Zeroizing::new("123456".to_owned())).await,
             Err(DatabaseActorError::AlreadyUnlocked)
         ));
+        assert!(
+            actor
+                .verify_pin(Zeroizing::new("123456".to_owned()))
+                .await
+                .expect("correct PIN step-up")
+        );
+        assert!(
+            !actor
+                .verify_pin(Zeroizing::new("654321".to_owned()))
+                .await
+                .expect("wrong PIN step-up")
+        );
 
         assert_eq!(
             actor.lock().await.expect("lock vault").state(),
             VaultState::Locked
         );
+        assert!(matches!(
+            actor.verify_pin(Zeroizing::new("123456".to_owned())).await,
+            Err(DatabaseActorError::VaultLocked)
+        ));
 
         let wrong_pin = actor
             .unlock(Zeroizing::new("654321".to_owned()))
@@ -1248,6 +1285,12 @@ mod tests {
                 .expect("unlock vault")
                 .state(),
             VaultState::Unlocked
+        );
+        assert!(
+            actor
+                .verify_pin(Zeroizing::new("123456".to_owned()))
+                .await
+                .expect("PIN step-up after unlock")
         );
 
         actor.shutdown().await.expect("shutdown actor");

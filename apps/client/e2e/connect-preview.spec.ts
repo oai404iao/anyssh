@@ -508,6 +508,48 @@ test("manages Groups, Credentials, Hosts, and ordered Jump Routes", async ({
   await keyDialog.getByRole("button", { name: "Choose private key" }).click();
   await expect(page.getByText("QA imported key")).toBeVisible();
 
+  await page.getByRole("button", { name: "Generate key" }).click();
+  const generatedKeyDialog = page.getByRole("dialog", {
+    name: "Generate Private Key",
+  });
+  await generatedKeyDialog
+    .getByLabel("Credential label")
+    .fill("QA generated key");
+  await generatedKeyDialog.getByLabel("Username").fill("qa-generated-user");
+  await generatedKeyDialog.getByLabel("Algorithm").selectOption("rsa4096");
+  await expect(generatedKeyDialog.getByLabel("Passphrase")).toHaveCount(0);
+  await expect(generatedKeyDialog.getByLabel("PIN")).toHaveCount(0);
+  await expect(generatedKeyDialog.locator('input[type="file"]')).toHaveCount(0);
+  await generatedKeyDialog
+    .getByRole("button", { name: "Generate key" })
+    .click();
+  const generatedKey = page
+    .locator(".resource-card")
+    .filter({ hasText: "QA generated key" });
+  await expect(generatedKey).toContainText("Private Key");
+  await expect(generatedKey).toContainText("Secret hidden");
+  await generatedKey.getByRole("button", { name: "Public key" }).click();
+  const publicKeyDialog = page.getByRole("dialog", { name: "Public Key" });
+  await expect(publicKeyDialog).toContainText("ssh-rsa");
+  await expect(publicKeyDialog).toContainText("SHA256:");
+  await expect(publicKeyDialog.getByLabel("OpenSSH Public Key")).toHaveValue(
+    /^ssh-rsa /u,
+  );
+  await expect(publicKeyDialog.getByLabel("Passphrase")).toHaveCount(0);
+  await expect(
+    publicKeyDialog.getByLabel("Private Key", { exact: true }),
+  ).toHaveCount(0);
+  await publicKeyDialog.getByRole("button", { name: "Close" }).click();
+  await generatedKey.getByRole("button", { name: "Export encrypted…" }).click();
+  await expect(
+    page.getByText(
+      "Encrypted Private Key export is available in the native AnySSH runtime. Browser QA writes no file.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByLabel("PIN", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Passphrase", { exact: true })).toHaveCount(0);
+  await expect(page.locator('input[type="file"]')).toHaveCount(0);
+
   await page.getByRole("button", { name: "New system agent" }).click();
   const agentDialog = page.getByRole("dialog", {
     name: "New System Agent Credential",

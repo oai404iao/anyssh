@@ -11,6 +11,11 @@ DRIVER="$RUN_DIR/anyssh-x11-driver"
 PRIVATE_KEY_FIXTURE="/tmp/000-anyssh-native-import-key"
 PRIVATE_KEY_PASSPHRASE="native-key-passphrase"
 WRONG_PRIVATE_KEY_PASSPHRASE="wrong-key-passphrase"
+GENERATED_EXPORT_PATH="/tmp/anyssh-native-generated-export-$RANDOM-$$.key"
+GENERATED_EXPORT_PUBLIC_PATH="$GENERATED_EXPORT_PATH.pub"
+GENERATED_REIMPORT_PATH="/tmp/000-anyssh-native-reimport-key"
+GENERATED_EXPORT_PASSPHRASE="native-export-passphrase"
+WRONG_GENERATED_EXPORT_PASSPHRASE="wrong-native-export-passphrase"
 INTERACTIVE_RESPONSE="otp-$RANDOM-$RANDOM"
 FORWARD_ECHO_PORT=8080
 LOCAL_FORWARD_PORT=18080
@@ -48,7 +53,12 @@ cleanup() {
     wait "$FORWARD_SERVER_PID" >/dev/null 2>&1 || true
   fi
   docker rm -f "$CONTAINER_NAME" "$PAM_CONTAINER_NAME" >/dev/null 2>&1 || true
-  rm -f "$PRIVATE_KEY_FIXTURE" "$PRIVATE_KEY_FIXTURE.pub"
+  rm -f \
+    "$PRIVATE_KEY_FIXTURE" \
+    "$PRIVATE_KEY_FIXTURE.pub" \
+    "$GENERATED_EXPORT_PATH" \
+    "$GENERATED_EXPORT_PUBLIC_PATH" \
+    "$GENERATED_REIMPORT_PATH"
   if [[ -n "$AGENT_SOCKET" ]]; then
     rm -f "$AGENT_SOCKET"
   fi
@@ -109,7 +119,12 @@ done
 
 mkdir -p "$RUN_DIR"
 mkdir -p "$RUN_DIR/xdg-cache" "$RUN_DIR/xdg-config" "$RUN_DIR/xdg-data"
-rm -f "$PRIVATE_KEY_FIXTURE" "$PRIVATE_KEY_FIXTURE.pub"
+rm -f \
+  "$PRIVATE_KEY_FIXTURE" \
+  "$PRIVATE_KEY_FIXTURE.pub" \
+  "$GENERATED_EXPORT_PATH" \
+  "$GENERATED_EXPORT_PUBLIC_PATH" \
+  "$GENERATED_REIMPORT_PATH"
 ssh-keygen \
   -q \
   -t ed25519 \
@@ -398,6 +413,239 @@ for marker in \
 done
 rm -f "$PRIVATE_KEY_FIXTURE"
 
+"$DRIVER" click 700 145
+sleep 1
+"$DRIVER" type "Native generated key"
+"$DRIVER" tab
+"$DRIVER" type "anyssh"
+"$DRIVER" tab
+"$DRIVER" tab
+"$DRIVER" enter
+sleep 5
+"$DRIVER" probe "$RUN_DIR/10a-generated-private-key.bmp" >/dev/null
+
+"$DRIVER" click 1025 276
+sleep 2
+"$DRIVER" probe "$RUN_DIR/10b-generated-public-key.bmp" >/dev/null
+"$DRIVER" click 878 198
+sleep 1
+
+"$DRIVER" click 1115 276
+EXPORT_PICKER_READY=0
+for _ in $(seq 1 40); do
+  if ANYSSH_X11_WINDOW_MATCH="Export encrypted SSH private key" \
+    "$DRIVER" probe >/dev/null 2>&1; then
+    EXPORT_PICKER_READY=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$EXPORT_PICKER_READY" -ne 1 ]]; then
+  echo "The encrypted Private Key export picker did not appear." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-private-key-export-picker.bmp" >/dev/null || true
+  exit 1
+fi
+ANYSSH_X11_WINDOW_MATCH="Export encrypted SSH private key" \
+  "$DRIVER" probe "$RUN_DIR/10c-private-key-export-picker.bmp" >/dev/null
+"$DRIVER" ctrl-l
+sleep 0.5
+"$DRIVER" type "$GENERATED_EXPORT_PATH"
+"$DRIVER" enter
+sleep 1
+"$DRIVER" enter
+
+STEP_UP_READY=0
+for _ in $(seq 1 40); do
+  if ANYSSH_X11_WINDOW_MATCH="Confirm AnySSH PIN" \
+    "$DRIVER" probe >/dev/null 2>&1; then
+    STEP_UP_READY=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$STEP_UP_READY" -ne 1 ]]; then
+  echo "The native Vault step-up prompt did not appear." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-private-key-export-pin.bmp" >/dev/null || true
+  exit 1
+fi
+ANYSSH_X11_WINDOW_MATCH="Confirm AnySSH PIN" \
+  "$DRIVER" probe "$RUN_DIR/10d-private-key-export-pin.bmp" >/dev/null
+"$DRIVER" type "000000"
+"$DRIVER" enter
+sleep 2
+if ! ANYSSH_X11_WINDOW_MATCH="Confirm AnySSH PIN" \
+  "$DRIVER" probe "$RUN_DIR/10e-private-key-export-pin-retry.bmp" >/dev/null 2>&1; then
+  echo "The native Vault step-up retry prompt did not appear." >&2
+  exit 1
+fi
+"$DRIVER" type "246810"
+"$DRIVER" enter
+sleep 2
+
+EXPORT_PASSPHRASE_READY=0
+for _ in $(seq 1 40); do
+  if ANYSSH_X11_WINDOW_MATCH="Encrypt exported private key" \
+    "$DRIVER" probe >/dev/null 2>&1; then
+    EXPORT_PASSPHRASE_READY=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$EXPORT_PASSPHRASE_READY" -ne 1 ]]; then
+  echo "The native export Passphrase prompt did not appear." >&2
+  exit 1
+fi
+ANYSSH_X11_WINDOW_MATCH="Encrypt exported private key" \
+  "$DRIVER" probe "$RUN_DIR/10f-private-key-export-passphrase.bmp" >/dev/null
+"$DRIVER" type "$GENERATED_EXPORT_PASSPHRASE"
+"$DRIVER" tab
+"$DRIVER" type "$WRONG_GENERATED_EXPORT_PASSPHRASE"
+"$DRIVER" enter
+sleep 2
+if ! ANYSSH_X11_WINDOW_MATCH="Encrypt exported private key" \
+  "$DRIVER" probe "$RUN_DIR/10g-private-key-export-passphrase-retry.bmp" >/dev/null 2>&1; then
+  echo "The native export Passphrase retry prompt did not appear." >&2
+  exit 1
+fi
+"$DRIVER" type "$GENERATED_EXPORT_PASSPHRASE"
+"$DRIVER" tab
+"$DRIVER" type "$GENERATED_EXPORT_PASSPHRASE"
+"$DRIVER" enter
+
+EXPORT_READY=0
+for _ in $(seq 1 60); do
+  if [[ -f "$GENERATED_EXPORT_PATH" ]]; then
+    EXPORT_READY=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$EXPORT_READY" -ne 1 ]]; then
+  echo "The encrypted generated Private Key export was not created." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-private-key-export.bmp" >/dev/null || true
+  exit 1
+fi
+if ssh-keygen \
+  -y \
+  -P "$WRONG_GENERATED_EXPORT_PASSPHRASE" \
+  -f "$GENERATED_EXPORT_PATH" >/dev/null 2>&1; then
+  echo "The exported Private Key accepted the wrong Passphrase." >&2
+  exit 1
+fi
+ssh-keygen \
+  -y \
+  -P "$GENERATED_EXPORT_PASSPHRASE" \
+  -f "$GENERATED_EXPORT_PATH" \
+  >"$GENERATED_EXPORT_PUBLIC_PATH"
+docker exec -i "$CONTAINER_NAME" \
+  sh -c 'cat >> /home/anyssh/.ssh/authorized_keys' \
+  <"$GENERATED_EXPORT_PUBLIC_PATH"
+docker exec "$CONTAINER_NAME" \
+  sh -c 'chown anyssh:anyssh /home/anyssh/.ssh/authorized_keys && chmod 600 /home/anyssh/.ssh/authorized_keys'
+cp "$GENERATED_EXPORT_PATH" "$GENERATED_REIMPORT_PATH"
+chmod 600 "$GENERATED_REIMPORT_PATH"
+"$DRIVER" probe "$RUN_DIR/10h-private-key-exported.bmp" >/dev/null
+
+"$DRIVER" click 1060 145
+sleep 1
+"$DRIVER" type "Native reimported key"
+"$DRIVER" tab
+"$DRIVER" type "anyssh"
+"$DRIVER" tab
+"$DRIVER" enter
+REIMPORT_PICKER_READY=0
+for _ in $(seq 1 40); do
+  if ANYSSH_X11_WINDOW_MATCH="Import SSH private key" \
+    "$DRIVER" probe >/dev/null 2>&1; then
+    REIMPORT_PICKER_READY=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$REIMPORT_PICKER_READY" -ne 1 ]]; then
+  echo "The generated Key reimport picker did not appear." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-generated-key-reimport-picker.bmp" >/dev/null || true
+  exit 1
+fi
+"$DRIVER" ctrl-l
+sleep 0.5
+"$DRIVER" type "/tmp"
+"$DRIVER" enter
+sleep 0.5
+"$DRIVER" enter
+sleep 2
+"$DRIVER" enter
+
+REIMPORT_PASSPHRASE_READY=0
+for _ in $(seq 1 40); do
+  if ANYSSH_X11_WINDOW_MATCH="Unlock SSH private key" \
+    "$DRIVER" probe >/dev/null 2>&1; then
+    REIMPORT_PASSPHRASE_READY=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$REIMPORT_PASSPHRASE_READY" -ne 1 ]]; then
+  echo "The generated Key reimport Passphrase prompt did not appear." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-generated-key-reimport-passphrase.bmp" >/dev/null || true
+  exit 1
+fi
+ANYSSH_X11_WINDOW_MATCH="Unlock SSH private key" \
+  "$DRIVER" probe "$RUN_DIR/10i-generated-key-reimport-passphrase.bmp" >/dev/null
+"$DRIVER" type "$GENERATED_EXPORT_PASSPHRASE"
+"$DRIVER" click 750 452
+sleep 5
+"$DRIVER" probe "$RUN_DIR/10j-generated-key-reimported.bmp" >/dev/null
+
+rm -f \
+  "$GENERATED_EXPORT_PATH" \
+  "$GENERATED_EXPORT_PUBLIC_PATH" \
+  "$GENERATED_REIMPORT_PATH"
+for deleted_source in \
+  "$GENERATED_EXPORT_PATH" \
+  "$GENERATED_EXPORT_PUBLIC_PATH" \
+  "$GENERATED_REIMPORT_PATH"; do
+  if [[ -e "$deleted_source" ]]; then
+    echo "A generated Private Key export/reimport source was not deleted." >&2
+    exit 1
+  fi
+done
+
+"$DRIVER" click 700 145
+sleep 1
+"$DRIVER" type "Native generated RSA"
+"$DRIVER" tab
+"$DRIVER" type "anyssh"
+"$DRIVER" tab
+"$DRIVER" down
+"$DRIVER" tab
+"$DRIVER" enter
+# RSA 4096 generation is intentionally CPU-bound and can exceed a few seconds
+# on shared CI runners. Wait long enough for the modal to close before choosing
+# the generated Credential's Public Key action.
+sleep 30
+"$DRIVER" click 1025 371
+sleep 2
+"$DRIVER" probe "$RUN_DIR/10l-generated-rsa-public-key.bmp" >/dev/null
+"$DRIVER" click 878 198
+sleep 1
+
+for marker in \
+  "BEGIN OPENSSH PRIVATE KEY" \
+  "246810" \
+  "000000" \
+  "$GENERATED_EXPORT_PATH" \
+  "$GENERATED_EXPORT_PASSPHRASE" \
+  "$WRONG_GENERATED_EXPORT_PASSPHRASE" \
+  "Native generated key" \
+  "Native generated RSA"; do
+  if grep -R -a -F "$marker" "$VAULT_ROOT" >/dev/null 2>&1 \
+    || grep -a -F "$marker" "$RUN_DIR/native.log" >/dev/null 2>&1; then
+    echo "Generated/exported Private Key material leaked into Vault or log." >&2
+    exit 1
+  fi
+done
+
 "$DRIVER" click 900 145
 sleep 2
 "$DRIVER" type "Native system agent"
@@ -639,7 +887,9 @@ FORWARD_SERVER_PID=""
 for marker in \
   "$LOCAL_FORWARD_MARKER" \
   "$DYNAMIC_FORWARD_MARKER" \
-  "$REMOTE_FORWARD_MARKER"; do
+  "$REMOTE_FORWARD_MARKER" \
+  "$GENERATED_EXPORT_PASSPHRASE" \
+  "$WRONG_GENERATED_EXPORT_PASSPHRASE"; do
   if grep -R -a -F "$marker" "$VAULT_ROOT" >/dev/null 2>&1 \
     || grep -a -F "$marker" "$RUN_DIR/native.log" >/dev/null 2>&1; then
     echo "A Port Forward payload marker leaked into Vault or native logs." >&2
@@ -1085,6 +1335,17 @@ cat >"$RUN_DIR/report.md" <<EOF
 - The imported Key and both test Passphrases remained absent from Vault file
   plaintext scans, and the temporary source file was deleted before SSH testing
   continued.
+- The same native UI generated Ed25519 and RSA 4096 Credentials in Rust and
+  displayed only their Public Key Algorithm, SHA-256 Fingerprint, and OpenSSH
+  Public Key in WebView.
+- Encrypted Export used a Rust-owned Native Save Picker, one wrong/correct
+  GTK PIN Step-up, and one mismatched/correct new Passphrase confirmation.
+  \`ssh-keygen -y\` rejected the wrong Passphrase and derived the expected
+  Public Key with the accepted Passphrase.
+- The exported Key was reimported through the Native Picker and GTK Secure
+  Entry using the new Passphrase, then the exported source file was deleted.
+- Generated Private Key material, PIN, Export Passphrases, and the full export
+  Path remained absent from Vault plaintext and the native log.
 - The same native UI enumerated one \`SSH_AUTH_SOCK\` Identity and created a
   Fingerprint-selected System Agent Credential without persisting the Agent Key
   or Fingerprint in plaintext.
@@ -1131,6 +1392,17 @@ cat >"$RUN_DIR/report.md" <<EOF
 - \`08-private-key-passphrase-prompt.bmp\`
 - \`09-private-key-passphrase-retry.bmp\`
 - \`10-private-key-imported.bmp\`
+- \`10a-generated-private-key.bmp\`
+- \`10b-generated-public-key.bmp\`
+- \`10c-private-key-export-picker.bmp\`
+- \`10d-private-key-export-pin.bmp\`
+- \`10e-private-key-export-pin-retry.bmp\`
+- \`10f-private-key-export-passphrase.bmp\`
+- \`10g-private-key-export-passphrase-retry.bmp\`
+- \`10h-private-key-exported.bmp\`
+- \`10i-generated-key-reimport-passphrase.bmp\`
+- \`10j-generated-key-reimported.bmp\`
+- \`10l-generated-rsa-public-key.bmp\`
 - \`11-system-agent-created.bmp\`
 - \`12-password-entered.bmp\`
 - \`13-host-key-dialog.bmp\`

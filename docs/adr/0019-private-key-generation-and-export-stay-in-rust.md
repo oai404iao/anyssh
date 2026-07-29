@@ -73,7 +73,8 @@ Path 越过现有安全边界。未加密导出还容易把长期私钥直接暴
 - Desktop 需要新的 Native PIN、Passphrase Confirmation 和 Save Picker 流程。
 - PIN Step-up 必须由 DB Actor 验证，不能把 VMK/KEK 或 PIN 暴露给 Tauri
   Command。
-- RSA 4096 生成可能较慢，必须离开 UI/DB Actor 热路径并支持取消/错误边界。
+- RSA 4096 生成可能较慢，必须离开 UI/DB Actor 热路径，使用单并发槽和
+  Fail-closed Task Error Boundary。
 - 文件创建需要跨平台处理 Symlink/Reparse Point、权限、取消和部分写入清理。
 
 ## 验证

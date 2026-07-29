@@ -67,11 +67,44 @@
   `6fcb1a68d5d791d164f3ed43209aa3a9613b5acf` 的 GitHub Actions Run
   `30416305300` 九个 Job 全部通过并接受 ADR-0018。
 - [x] 2026-07-29：创建 Proposed ADR-0019、Design 和本 ExecPlan。
-- [ ] 完成 Milestone 1：Rust Key Generation 与 Public Projection。
-- [ ] 完成 Milestone 2：Native Step-up 与 Encrypted Export。
-- [ ] 完成 Milestone 3：Tauri/React Product UI。
+- [x] 2026-07-29：完成 Milestone 1：Rust Key Generation 与 Public
+  Projection。Ed25519/RSA 4096、Imported Encrypted Key Projection、Lock/Kind
+  Failure、Debug Redaction 和 Comment Bound 均有 Unit Test。
+- [x] 2026-07-29：完成 Milestone 2：Native Step-up 与 Encrypted Export。
+  Linux GTK、Windows Credential UI、create-new、Unix `0600`、Windows
+  protected owner-only DACL、Reparse Point/ADS 拒绝和 Partial Cleanup 已实现。
+- [x] 2026-07-29：完成 Milestone 3：Tauri/React Product UI。Typed IPC、
+  Browser Metadata Preview、Generate/Public/Export UI、Vitest、Playwright 和
+  agent-browser 已通过。
 - [ ] 完成 Milestone 4：OpenSSH 与 Native QA。
 - [ ] 完成 Milestone 5：全量回归与治理。
+- [x] 2026-07-29：新增
+  `generated_private_key_smoke.rs`。Generated Ed25519 通过 Direct、
+  Generated RSA 4096 通过 Saved Host、Encrypted Export/Reimport 通过
+  Password Jump -> Private Key Target 完成真实 OpenSSH Authentication。
+- [x] 2026-07-29：`pnpm test:ssh:smoke` 通过；Canonical Fixture 现在覆盖
+  imported/generated/exported Private Key。
+- [x] 2026-07-29：`pnpm qa:native:xvfb` 通过，Evidence 为
+  `artifacts/native-xvfb/smoke-1785303021-2441062`。已人工检查 Ed25519/RSA
+  Public Projection、Native Save Picker、错误/正确 PIN、Passphrase
+  Mismatch/Retry、Export Result 和新 Passphrase 原生 Reimport。
+- [x] 2026-07-29：`pnpm qa:native:wayland` 回归通过，Evidence 为
+  `artifacts/native-wayland/smoke-1785303237-2447216`。
+- [x] 2026-07-29：`pnpm qa:browser` 通过，Evidence 为
+  `artifacts/agent-browser/smoke-1785302978`；Desktop/Mobile Public Key
+  Dialog、Metadata-only Generation 和 no-file Export 已人工检查，Error Log
+  为空。
+- [ ] 在真实 Windows Runner 编译并执行 Credential UI、Save Dialog、
+  owner-only ACL、Junction/ADS Guard、Export/Reimport 和 OpenSSH Marker。
+- [x] 2026-07-29：Linux Container Build 通过，
+  `artifacts/linux-build/build-1785303364-1/anyssh-client` SHA-256 为
+  `d2f1f4cc59ced897f89ba79989fa643a24fac485ab8fae1bd04b8dc7233da612`。
+- [x] 2026-07-29：Android ARM64 Container Build 通过，
+  `artifacts/android-build/build-1785303420-1/AnySSH-arm64-debug.apk`
+  SHA-256 为
+  `847abd61804aaf827a100d15d9de72333b59725e61206a0cb82359d009f6f3cd`。
+- [ ] 运行同 Commit GitHub Actions，检查全部 Artifact 和 Windows/Linux/
+  Android Build Hash。
 
 ## Milestones
 
@@ -176,6 +209,21 @@ git diff --check
   AES-256-CTR + bcrypt-pbkdf Encryption；不需要调用外部 `ssh-keygen`。
 - 2026-07-29：现有 Private Key Credential 已足够保存 Generated Key，不需要
   Schema v8。主要新边界是已解锁 Vault 的 PIN Step-up 和 Native Export File。
+- 2026-07-29：RSA 4096 在共享 Runner 上可能超过数秒；X11 QA 必须等待
+  Generation Modal 真正关闭，固定的短等待会把后续点击错误路由到 Modal。
+- 2026-07-29：Generated Key 的协议验收可以复用现有 OpenSSH Topology：
+  Test 仅把 Public Key 追加到 Fixture `authorized_keys`，Private Key 始终留在
+  ApplicationCore/Vault。
+- 2026-07-29：Windows `std::fs::OpenOptions` 不能表达 protected current-owner
+  DACL。实现使用一个受限的 `cfg(windows)` Win32 Unsafe Boundary：
+  `CreateFileW(CREATE_NEW | FILE_FLAG_OPEN_REPARSE_POINT)` 加
+  `O:<current-user-sid>D:P(A;;FA;;;<current-user-sid>)`；独立 Windows-target
+  Compile Probe 已通过，真实 Runtime 仍需 Windows CI。
+- 2026-07-29：Wayland Forward QA 暴露 Number Input Focus 后首字符偶发丢失；
+  在 `ctrl-a` 与输入之间增加短等待后回归通过。
+- 2026-07-29：`spawn_blocking` 的 Join Future 被取消时 Blocking Task 不会自动
+  停止；Operation Permit 必须移入 Blocking Closure，并在 Generation 完成后
+  随 Key 一起返回，才能避免取消窗口提前释放并发槽。
 
 ## Decision Log
 
@@ -186,7 +234,20 @@ git diff --check
   覆盖已有文件。
 - 2026-07-29：路线图中的 Private Key “Reveal”在 v1 收窄为 Public Key Reveal；
   不在 React Modal 或 Web Clipboard 暴露 Private Key。
+- 2026-07-29：Canonical OpenSSH 覆盖采用三条互补路径：Generated Ed25519
+  Direct、Generated RSA 4096 Saved Host、Exported/Reimported Ed25519 Jump。
+- 2026-07-29：Generation/Public Projection/Export 共用一个
+  `ApplicationCore` Operation Slot；并发请求 Fail Closed，避免被攻陷 WebView
+  向 Blocking Pool 无界提交 RSA 4096 工作。Permit 随 Blocking Task 生命周期
+  持有，Task 完成或失败后才释放。
+- 2026-07-29：Windows Export File 使用当前 Owner 的 protected DACL，拒绝
+  Reparse Point Ancestor 与 Alternate Data Stream。为保持 Win32 Handle/
+  Security Descriptor 生命周期可审计，`anyssh-app` 从全 crate
+  `forbid(unsafe_code)` 收窄为 `deny(unsafe_code)`，只允许该 Windows-only
+  Module 的带 Safety Comment Unsafe。
 
 ## Outcomes & Retrospective
 
-尚未完成。
+Rust、Browser、OpenSSH、X11 和 Wayland 已完成并有本地 Evidence。Windows
+真实 Runner、同 Commit CI、CI Artifact Hash/Secret 复核以及 ADR-0019 最终
+状态尚未完成，因此计划继续保持 Active。
