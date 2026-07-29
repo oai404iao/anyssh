@@ -11,7 +11,13 @@ import {
   ConfigurationWorkspace,
   type ConfigurationSection,
 } from "./components/ConfigurationWorkspace";
-import { TerminalPane, type TerminalHandle } from "./components/TerminalPane";
+import { AppearanceWorkspace } from "./components/AppearanceWorkspace";
+import { SnippetWorkspace } from "./components/SnippetWorkspace";
+import {
+  TerminalPane,
+  type TerminalAppearance,
+  type TerminalHandle,
+} from "./components/TerminalPane";
 import { VaultGate } from "./components/VaultGate";
 import {
   confirmHostKey,
@@ -32,6 +38,21 @@ import {
   type SshPortForwardSummary,
 } from "./lib/ssh-bridge";
 import {
+  DEFAULT_APPEARANCE_SETTINGS,
+  getAppearanceSettings,
+  fontAssetUrl,
+  importedFontCssFamily,
+  listFontAssets,
+  listSystemFonts,
+  listTerminalThemes,
+  terminalThemeById,
+  updateAppearanceSettings,
+  type AppearanceSettings,
+  type FontAssetSummary,
+  type SystemFontSummary,
+  type TerminalThemeSummary,
+} from "./lib/appearance-bridge";
+import {
   listCredentials,
   type CredentialSummary,
 } from "./lib/credential-bridge";
@@ -44,6 +65,7 @@ import {
   type JumpRouteSummary,
 } from "./lib/host-bridge";
 import { listKnownHosts, type KnownHostSummary } from "./lib/known-host-bridge";
+import { listSnippets, type SnippetSummary } from "./lib/snippet-bridge";
 import {
   createVault,
   getVaultStatus,
@@ -80,7 +102,8 @@ interface PortForwardForm {
   destinationPort: string;
 }
 
-type WorkspaceView = "terminal" | ConfigurationSection;
+type WorkspaceView =
+  "terminal" | "appearance" | "snippets" | ConfigurationSection;
 
 interface SessionTab {
   id: string;
@@ -137,6 +160,26 @@ let nextSessionTabId = 1;
 
 function formatForwardEndpoint(host: string, port: number): string {
   return `${host.includes(":") ? `[${host}]` : host}:${port}`;
+}
+
+function isConfigurationSection(
+  view: WorkspaceView,
+): view is ConfigurationSection {
+  return ["groups", "hosts", "credentials", "routes", "knownHosts"].includes(
+    view,
+  );
+}
+
+function terminalFontFamily(settings: AppearanceSettings): string {
+  const genericFamilies = new Set(["monospace", "ui-monospace"]);
+  const family =
+    settings.fontSourceKind === "imported" && settings.fontId
+      ? importedFontCssFamily(settings.fontId)
+      : settings.fontFamily;
+  const primary = genericFamilies.has(family)
+    ? family
+    : `"${family.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+  return `${primary}, "Noto Emoji Variable", "Noto Sans Mono CJK SC", "SFMono-Regular", Consolas, monospace`;
 }
 
 function createSessionTab(
@@ -218,6 +261,16 @@ function App() {
   const [hosts, setHosts] = useState<HostSummary[]>([]);
   const [routes, setRoutes] = useState<JumpRouteSummary[]>([]);
   const [knownHosts, setKnownHosts] = useState<KnownHostSummary[]>([]);
+  const [appearance, setAppearance] = useState<AppearanceSettings>(() => ({
+    ...DEFAULT_APPEARANCE_SETTINGS,
+  }));
+  const [terminalThemes, setTerminalThemes] = useState<TerminalThemeSummary[]>(
+    [],
+  );
+  const [fontAssets, setFontAssets] = useState<FontAssetSummary[]>([]);
+  const [systemFonts, setSystemFonts] = useState<SystemFontSummary[]>([]);
+  const [fontFaceRevision, setFontFaceRevision] = useState(0);
+  const [snippets, setSnippets] = useState<SnippetSummary[]>([]);
   const [repositoryLoading, setRepositoryLoading] = useState(false);
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
 
@@ -310,18 +363,33 @@ function App() {
         nextHosts,
         nextRoutes,
         nextKnownHosts,
+        nextAppearance,
+        nextTerminalThemes,
+        nextFontAssets,
+        nextSystemFonts,
+        nextSnippets,
       ] = await Promise.all([
         listCredentials(),
         listGroups(),
         listHosts(),
         listJumpRoutes(),
         listKnownHosts(),
+        getAppearanceSettings(),
+        listTerminalThemes(),
+        listFontAssets(),
+        listSystemFonts(),
+        listSnippets(),
       ]);
       setCredentials(nextCredentials);
       setGroups(nextGroups);
       setHosts(nextHosts);
       setRoutes(nextRoutes);
       setKnownHosts(nextKnownHosts);
+      setAppearance(nextAppearance);
+      setTerminalThemes(nextTerminalThemes);
+      setFontAssets(nextFontAssets);
+      setSystemFonts(nextSystemFonts);
+      setSnippets(nextSnippets);
       replaceSessionTabs((current) =>
         current.map((tab) =>
           tab.selectedSavedHostId &&
@@ -340,6 +408,14 @@ function App() {
       setRepositoryLoading(false);
     }
   }, [replaceSessionTabs]);
+
+  const applyAppearanceSettings = useCallback(
+    async (settings: AppearanceSettings) => {
+      const updated = await updateAppearanceSettings(settings);
+      setAppearance(updated);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!isNativeRuntime) return;
@@ -371,6 +447,50 @@ function App() {
     }, 0);
     return () => window.clearTimeout(refreshTimer);
   }, [refreshRepository, vaultStatus?.state]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = () => {
+      const resolved =
+        appearance.appTheme === "system"
+          ? media.matches
+            ? "dark"
+            : "light"
+          : appearance.appTheme;
+      document.documentElement.dataset.appTheme = resolved;
+    };
+    applyTheme();
+    if (appearance.appTheme !== "system") return;
+    media.addEventListener("change", applyTheme);
+    return () => media.removeEventListener("change", applyTheme);
+  }, [appearance.appTheme]);
+
+  useEffect(() => {
+    if (!isNativeRuntime || typeof FontFace === "undefined") return;
+    let active = true;
+    const loaded: FontFace[] = [];
+    void Promise.allSettled(
+      fontAssets.map(async (font) => {
+        const face = new FontFace(
+          importedFontCssFamily(font.id),
+          `url("${fontAssetUrl(font)}")`,
+        );
+        await face.load();
+        if (active) {
+          document.fonts.add(face);
+          loaded.push(face);
+        }
+      }),
+    ).then(() => {
+      if (active) setFontFaceRevision((current) => current + 1);
+    });
+    return () => {
+      active = false;
+      for (const face of loaded) {
+        document.fonts.delete(face);
+      }
+    };
+  }, [fontAssets]);
 
   useEffect(() => {
     appMountedRef.current = true;
@@ -509,6 +629,18 @@ function App() {
         : null,
     [routes, selectedSavedHost],
   );
+  const terminalAppearance = useMemo<TerminalAppearance>(() => {
+    const theme = terminalThemeById(terminalThemes, appearance.terminalThemeId);
+    return {
+      fontFamily: terminalFontFamily(appearance),
+      fontLoadRevision: fontFaceRevision,
+      fontSize: appearance.fontSize,
+      lineHeight: appearance.lineHeightMillis / 1000,
+      ligaturesEnabled: appearance.ligaturesEnabled,
+      ambiguousWidth: appearance.ambiguousWidth,
+      palette: theme.palette,
+    };
+  }, [appearance, fontFaceRevision, terminalThemes]);
 
   const writeSystemLine = useCallback((tabId: string, message: string) => {
     terminalRefs.current
@@ -1192,7 +1324,11 @@ function App() {
   const workspaceTitle =
     workspaceView === "terminal"
       ? selectedSavedHost?.displayName || form.name || "New connection"
-      : configurationTitle[workspaceView];
+      : workspaceView === "appearance"
+        ? "Appearance"
+        : workspaceView === "snippets"
+          ? "Snippets"
+          : configurationTitle[workspaceView];
 
   if (isNativeRuntime && vaultStatus?.state !== "unlocked") {
     return (
@@ -1272,6 +1408,24 @@ function App() {
             <NavIcon name="knownHosts" />
             Known hosts
             <span className="nav-count">{knownHosts.length}</span>
+          </button>
+          <button
+            className={`nav-item ${workspaceView === "snippets" ? "active" : ""}`}
+            onClick={() => setWorkspaceView("snippets")}
+            type="button"
+          >
+            <NavIcon name="snippets" />
+            Snippets
+            <span className="nav-count">{snippets.length}</span>
+          </button>
+          <button
+            className={`nav-item ${workspaceView === "appearance" ? "active" : ""}`}
+            onClick={() => setWorkspaceView("appearance")}
+            type="button"
+          >
+            <NavIcon name="appearance" />
+            Appearance
+            <span className="coming-soon">Aa</span>
           </button>
         </nav>
 
@@ -1389,6 +1543,8 @@ function App() {
               ["credentials", "Credentials"],
               ["routes", "Routes"],
               ["knownHosts", "Known"],
+              ["snippets", "Snippets"],
+              ["appearance", "Appearance"],
             ] as const
           ).map(([view, label]) => (
             <button
@@ -1515,6 +1671,7 @@ function App() {
                     role="tabpanel"
                   >
                     <TerminalPane
+                      appearance={terminalAppearance}
                       onInput={(input) => handleTerminalInput(tab.id, input)}
                       onResize={(columns, rows) =>
                         handleTerminalResize(tab.id, columns, rows)
@@ -1948,7 +2105,7 @@ function App() {
             </aside>
           )}
         </div>
-        {workspaceView !== "terminal" && (
+        {isConfigurationSection(workspaceView) && (
           <ConfigurationWorkspace
             credentials={credentials}
             groups={groups}
@@ -1960,6 +2117,31 @@ function App() {
             onOpenHost={selectSavedHost}
             routes={routes}
             section={workspaceView}
+          />
+        )}
+        {workspaceView === "appearance" && (
+          <AppearanceWorkspace
+            fonts={fontAssets}
+            key={JSON.stringify(appearance)}
+            loadError={repositoryError}
+            loading={repositoryLoading}
+            onChanged={refreshRepository}
+            onUpdate={applyAppearanceSettings}
+            settings={appearance}
+            systemFonts={systemFonts}
+            themes={terminalThemes}
+          />
+        )}
+        {workspaceView === "snippets" && (
+          <SnippetWorkspace
+            activeSessionId={connected ? sessionId : null}
+            activeSessionTitle={
+              selectedSavedHost?.displayName || form.name || "Current Session"
+            }
+            loadError={repositoryError}
+            loading={repositoryLoading}
+            onChanged={refreshRepository}
+            snippets={snippets}
           />
         )}
       </section>
@@ -2192,7 +2374,15 @@ function AuthenticationChallengeDialog({
 function NavIcon({
   name,
 }: {
-  name: "terminal" | "groups" | "hosts" | "keys" | "routes" | "knownHosts";
+  name:
+    | "terminal"
+    | "groups"
+    | "hosts"
+    | "keys"
+    | "routes"
+    | "knownHosts"
+    | "snippets"
+    | "appearance";
 }) {
   const paths = {
     terminal: "M4 5h16v14H4zM7.5 9l3 3-3 3M12.5 15H17",
@@ -2202,6 +2392,8 @@ function NavIcon({
     routes: "M6 5.5h4v4H6zM14 14.5h4v4h-4zM10 7.5h3a3 3 0 0 1 3 3v4",
     knownHosts:
       "M12 3.5 19 6v5.5c0 4.2-2.8 7.4-7 9-4.2-1.6-7-4.8-7-9V6l7-2.5Zm-3 8 2 2 4-4",
+    snippets: "M5 4.5h14v15H5zM8 8h8M8 12h5M8 16h7",
+    appearance: "M5 18 10.5 5h3L19 18M7.2 13h9.6M18 5.5h2M19 4.5v2",
   };
 
   return (

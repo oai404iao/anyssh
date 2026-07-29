@@ -216,6 +216,114 @@ agent-browser --session "$SESSION" wait 300
 agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/03d-first-tab-after-close.png"
 
+agent-browser --session "$SESSION" eval \
+  'window.__anysshTerminalMount = document.querySelector(".terminal-mount"); true' \
+  >"$OUTPUT_DIR/03e-terminal-mount-before.txt"
+agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(8)"
+agent-browser --session "$SESSION" wait --text "Apply appearance"
+agent-browser --session "$SESSION" find role button click --name "Import Theme"
+agent-browser --session "$SESSION" wait --text "Browser QA Midnight"
+agent-browser --session "$SESSION" find role button click --name "Import Font"
+agent-browser --session "$SESSION" wait --text "Browser QA Mono"
+agent-browser --session "$SESSION" select '[aria-label="App theme"]' "light"
+agent-browser --session "$SESSION" select \
+  '[aria-label="Terminal theme"]' "theme-browser-1"
+agent-browser --session "$SESSION" select \
+  '[aria-label="Terminal font"]' "imported:font-browser-1"
+agent-browser --session "$SESSION" fill \
+  '[aria-label="Terminal font size"]' "16"
+agent-browser --session "$SESSION" select \
+  '[aria-label="Terminal line height"]' "1600"
+agent-browser --session "$SESSION" check \
+  '.appearance-form input[type="checkbox"]'
+agent-browser --session "$SESSION" select \
+  '[aria-label="East Asian ambiguous width"]' "wide"
+agent-browser --session "$SESSION" find role button click \
+  --name "Apply appearance"
+agent-browser --session "$SESSION" wait --fn \
+  "document.documentElement.dataset.appTheme === 'light'"
+agent-browser --session "$SESSION" snapshot -i \
+  >"$OUTPUT_DIR/03e-appearance-snapshot.txt"
+if grep -F 'input type="file"' \
+  "$OUTPUT_DIR/03e-appearance-snapshot.txt" >/dev/null; then
+  echo "Browser Appearance import exposed a file input." >&2
+  exit 1
+fi
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/03e-appearance-light.png"
+agent-browser --session "$SESSION" set viewport 390 844
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/03f-appearance-light-mobile.png"
+agent-browser --session "$SESSION" set viewport 1440 900
+agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(1)"
+if [[ "$(agent-browser --session "$SESSION" eval \
+  'window.__anysshTerminalMount === document.querySelector(".terminal-mount")')" != "true" ]]; then
+  echo "Appearance update recreated the mounted Terminal." >&2
+  exit 1
+fi
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/03g-terminal-custom-appearance.png"
+
+agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(7)"
+agent-browser --session "$SESSION" wait --text "Snippets"
+agent-browser --session "$SESSION" find role button click --name "New Snippet"
+agent-browser --session "$SESSION" find label "Label" fill \
+  "Browser QA multi-line"
+agent-browser --session "$SESSION" fill \
+  '[aria-label="Snippet command template"]' \
+  $'echo {{target}}\nprintf browser-qa-finished'
+agent-browser --session "$SESSION" find role button click \
+  --name "Save Snippet"
+agent-browser --session "$SESSION" wait --text "Browser QA multi-line"
+agent-browser --session "$SESSION" snapshot \
+  >"$OUTPUT_DIR/03h-snippet-summary-snapshot.txt"
+if grep -F "printf browser-qa-finished" \
+  "$OUTPUT_DIR/03h-snippet-summary-snapshot.txt" >/dev/null; then
+  echo "Snippet list exposed the encrypted Body outside explicit Edit." >&2
+  exit 1
+fi
+agent-browser --session "$SESSION" click \
+  ".snippet-card:last-child .snippet-actions button:nth-child(2)"
+agent-browser --session "$SESSION" find label "target" fill "browser-qa-marker"
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/03h-snippet-confirmation.png"
+agent-browser --session "$SESSION" check \
+  '.multiline-confirmation input[type="checkbox"]'
+agent-browser --session "$SESSION" find role button click \
+  --name "Run in Session"
+agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(1)"
+agent-browser --session "$SESSION" wait 300
+SNIPPET_TERMINAL_TEXT="$(
+  agent-browser --session "$SESSION" get text ".xterm-rows"
+)"
+if [[ "$SNIPPET_TERMINAL_TEXT" != *"echo browser-qa-marker"* ]] \
+  || [[ "$SNIPPET_TERMINAL_TEXT" != *"printf browser-qa-finished"* ]]; then
+  echo "The variable-aware multi-line Snippet did not reach the selected Terminal." >&2
+  exit 1
+fi
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/03i-snippet-terminal-output.png"
+
+agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(8)"
+agent-browser --session "$SESSION" select '[aria-label="App theme"]' "dark"
+agent-browser --session "$SESSION" select \
+  '[aria-label="Terminal theme"]' "builtin:obsidian"
+agent-browser --session "$SESSION" select \
+  '[aria-label="Terminal font"]' "bundled:anyssh-nerd-mono"
+agent-browser --session "$SESSION" fill \
+  '[aria-label="Terminal font size"]' "13"
+agent-browser --session "$SESSION" select \
+  '[aria-label="Terminal line height"]' "1420"
+agent-browser --session "$SESSION" uncheck \
+  '.appearance-form input[type="checkbox"]'
+agent-browser --session "$SESSION" select \
+  '[aria-label="East Asian ambiguous width"]' "narrow"
+agent-browser --session "$SESSION" find role button click \
+  --name "Apply appearance"
+agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(1)"
+agent-browser --session "$SESSION" wait --fn \
+  "document.documentElement.dataset.appTheme === 'dark'"
+
 agent-browser --session "$SESSION" set viewport 390 844
 agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/04-mobile-connected.png"
@@ -528,6 +636,12 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
   the first Tab's three Forwards active, and Disconnect cleared them.
 - Two concurrent Preview Session Tabs rendered at desktop/mobile widths; closing
   the second Tab left the first Terminal connected and accepting input.
+- App Light/Dark, Custom Terminal Theme, imported Font metadata, Font Size,
+  Line Height, Ligature, and Ambiguous Width settings updated the existing
+  mounted xterm.js instance without recreating it.
+- Browser Theme/Font import exposed metadata only and no file input or Path.
+- Snippet list kept Body hidden; a variable-aware multi-line Snippet required
+  full Preview/Confirmation and reached only the selected connected Terminal.
 - Compact 1024x768 layout rendered with an icon-only sidebar.
 - Responsive layout rendered at 390x844.
 - Disconnect returned the UI to the disconnected state.
@@ -570,6 +684,11 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
 - \`screenshots/03b-multi-tab-desktop.png\`
 - \`screenshots/03c-multi-tab-mobile.png\`
 - \`screenshots/03d-first-tab-after-close.png\`
+- \`screenshots/03e-appearance-light.png\`
+- \`screenshots/03f-appearance-light-mobile.png\`
+- \`screenshots/03g-terminal-custom-appearance.png\`
+- \`screenshots/03h-snippet-confirmation.png\`
+- \`screenshots/03i-snippet-terminal-output.png\`
 - \`screenshots/04-mobile-connected.png\`
 - \`screenshots/05-disconnected.png\`
 - \`screenshots/05b-known-hosts.png\`

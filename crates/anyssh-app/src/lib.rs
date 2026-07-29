@@ -1,12 +1,16 @@
 #![deny(unsafe_code)]
 
+mod font_assets;
+mod theme_import;
+
 use std::{
+    collections::BTreeMap,
     fmt,
     fs::{File, OpenOptions},
     future::Future,
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 use anyssh_domain::{SshEndpoint, SshEndpointIdentity, TerminalSize};
@@ -26,6 +30,19 @@ use thiserror::Error;
 use tokio::sync::Semaphore;
 use zeroize::Zeroizing;
 
+pub use font_assets::{
+    FONT_ASSET_DIRECTORY_NAME, FontAssetError, MAX_SYSTEM_FONT_SUMMARIES, SystemFontSummary,
+    read_managed_font_asset,
+};
+use font_assets::{
+    cleanup_orphaned_font_assets, cleanup_stale_font_staging, commit_staged_font_asset,
+    current_unix_millis, ensure_font_asset_store, enumerate_system_fonts, read_font_import,
+    remove_managed_font_asset, remove_staged_font_asset, stage_font_asset,
+    verify_managed_font_asset,
+};
+use theme_import::read_terminal_theme_import;
+pub use theme_import::{MAX_TERMINAL_THEME_FILE_BYTES, TerminalThemeImportError};
+
 const _: () = assert!(anyssh_storage::MAX_JUMP_ROUTE_STEPS == anyssh_ssh::MAX_JUMP_HOSTS);
 const _: () = assert!(anyssh_storage::MAX_KNOWN_HOST_KEYS == anyssh_ssh::MAX_TRUSTED_HOST_KEYS);
 const _: () = assert!(
@@ -34,6 +51,7 @@ const _: () = assert!(
 pub const PRIVATE_KEY_PASSPHRASE_MAX_ATTEMPTS: u8 = 3;
 pub const PRIVATE_KEY_EXPORT_MAX_ATTEMPTS: u8 = 3;
 const PRIVATE_KEY_OPERATION_CONCURRENCY: usize = 1;
+const FONT_ASSET_OPERATION_CONCURRENCY: usize = 1;
 const MAX_PRIVATE_KEY_PROMPT_LABEL_CHARS: usize = 128;
 const DEFAULT_PRIVATE_KEY_PROMPT_LABEL: &str = "Imported private key";
 const MAX_GENERATED_PRIVATE_KEY_COMMENT_CHARS: usize = 128;
@@ -42,6 +60,7 @@ const MAX_PRIVATE_KEY_EXPORT_PASSPHRASE_BYTES: usize = 1024;
 const MAX_PRIVATE_KEY_EXPORT_FILE_NAME_CHARS: usize = 128;
 const DEFAULT_PRIVATE_KEY_EXPORT_FILE_NAME: &str = "anyssh-private-key";
 const PRIVATE_KEY_EXPORT_OPERATION_LABEL: &str = "Export SSH private key";
+const MAX_PREPARED_SNIPPET_INPUT_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PrivateKeyGenerationAlgorithm {
@@ -227,10 +246,41 @@ impl fmt::Debug for PrivateKeyExportSummary {
     }
 }
 
+pub struct PreparedSnippetInput {
+    input: Zeroizing<String>,
+    multiline: bool,
+}
+
+impl PreparedSnippetInput {
+    pub fn input(&self) -> &str {
+        self.input.as_str()
+    }
+
+    pub const fn multiline(&self) -> bool {
+        self.multiline
+    }
+
+    pub fn into_input(self) -> Zeroizing<String> {
+        self.input
+    }
+}
+
+impl fmt::Debug for PreparedSnippetInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedSnippetInput")
+            .field("input", &"<redacted>")
+            .field("multiline", &self.multiline)
+            .finish()
+    }
+}
+
 pub use anyssh_storage::{
-    CredentialKind, CredentialSummary, DatabaseActorConfig, DatabaseActorStartError, GroupSummary,
-    HostSummary, JumpRouteSummary, KnownHostKeySummary, KnownHostSummary, MAX_GROUP_DEPTH,
-    Override, VaultState, VaultStatus,
+    AmbiguousWidth, AppTheme, AppearanceSettings, CredentialKind, CredentialSummary,
+    DatabaseActorConfig, DatabaseActorStartError, FontAssetFormat, FontAssetSummary,
+    FontSourceKind, GroupSummary, HostSummary, JumpRouteSummary, KnownHostKeySummary,
+    KnownHostSummary, MAX_GROUP_DEPTH, Override, SnippetDraft, SnippetSummary, TerminalPalette,
+    TerminalThemeSummary, VaultState, VaultStatus, is_valid_font_asset_id,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -298,6 +348,9 @@ pub trait KnownHostForgetPrompt: Send + Sync {
 pub struct ApplicationCore {
     database: DatabaseActorHandle,
     private_key_operations: Arc<Semaphore>,
+    font_asset_root: Option<Arc<PathBuf>>,
+    font_asset_operations: Arc<Semaphore>,
+    system_fonts: Arc<OnceLock<Vec<SystemFontSummary>>>,
 }
 
 impl fmt::Debug for ApplicationCore {
@@ -306,6 +359,9 @@ impl fmt::Debug for ApplicationCore {
             .debug_struct("ApplicationCore")
             .field("database", &self.database)
             .field("private_key_operations", &"<bounded>")
+            .field("font_asset_root", &self.font_asset_root.is_some())
+            .field("font_asset_operations", &"<bounded>")
+            .field("system_fonts", &"<bounded metadata>")
             .finish_non_exhaustive()
     }
 }
@@ -315,13 +371,26 @@ impl ApplicationCore {
         vault_root: PathBuf,
         config: DatabaseActorConfig,
     ) -> Result<Self, DatabaseActorStartError> {
-        DatabaseActorHandle::spawn(vault_root, config).map(Self::new)
+        let font_asset_root = vault_root.join(FONT_ASSET_DIRECTORY_NAME);
+        DatabaseActorHandle::spawn(vault_root, config)
+            .map(|database| Self::new_with_font_asset_root(database, font_asset_root))
     }
 
     pub fn new(database: DatabaseActorHandle) -> Self {
+        Self::new_inner(database, None)
+    }
+
+    fn new_with_font_asset_root(database: DatabaseActorHandle, font_asset_root: PathBuf) -> Self {
+        Self::new_inner(database, Some(Arc::new(font_asset_root)))
+    }
+
+    fn new_inner(database: DatabaseActorHandle, font_asset_root: Option<Arc<PathBuf>>) -> Self {
         Self {
             database,
             private_key_operations: Arc::new(Semaphore::new(PRIVATE_KEY_OPERATION_CONCURRENCY)),
+            font_asset_root,
+            font_asset_operations: Arc::new(Semaphore::new(FONT_ASSET_OPERATION_CONCURRENCY)),
+            system_fonts: Arc::new(OnceLock::new()),
         }
     }
 
@@ -351,6 +420,303 @@ impl ApplicationCore {
 
     pub async fn lock_vault(&self) -> Result<VaultStatus, ApplicationError> {
         self.database.lock().await.map_err(ApplicationError::from)
+    }
+
+    pub async fn get_appearance_settings(&self) -> Result<AppearanceSettings, ApplicationError> {
+        self.database
+            .get_appearance_settings()
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn update_appearance_settings(
+        &self,
+        settings: AppearanceSettings,
+    ) -> Result<AppearanceSettings, ApplicationError> {
+        self.database
+            .update_appearance_settings(settings)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn create_terminal_theme(
+        &self,
+        label: String,
+        palette: TerminalPalette,
+    ) -> Result<TerminalThemeSummary, ApplicationError> {
+        self.database
+            .create_terminal_theme(label, palette)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn import_terminal_theme_from_path(
+        &self,
+        path: PathBuf,
+    ) -> Result<TerminalThemeSummary, ApplicationError> {
+        let permit = self
+            .font_asset_operations
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| TerminalThemeImportError::Unavailable)?;
+        let (theme, permit) = tokio::task::spawn_blocking(move || {
+            read_terminal_theme_import(&path).map(|theme| (theme, permit))
+        })
+        .await
+        .map_err(|_| TerminalThemeImportError::TaskFailed)??;
+        let result = self
+            .database
+            .create_terminal_theme(theme.label, theme.palette)
+            .await
+            .map_err(ApplicationError::from);
+        drop(permit);
+        result
+    }
+
+    pub async fn list_terminal_themes(
+        &self,
+    ) -> Result<Vec<TerminalThemeSummary>, ApplicationError> {
+        self.database
+            .list_terminal_themes()
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn delete_terminal_theme(&self, id: String) -> Result<bool, ApplicationError> {
+        self.database
+            .delete_terminal_theme(id)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn import_font_asset_from_path(
+        &self,
+        path: PathBuf,
+    ) -> Result<FontAssetSummary, ApplicationError> {
+        let root = self.font_asset_root()?;
+        let permit = self
+            .font_asset_operations
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| FontAssetError::Unavailable)?;
+        let (prepared, permit) = tokio::task::spawn_blocking(move || {
+            read_font_import(&path).map(|prepared| (prepared, permit))
+        })
+        .await
+        .map_err(|_| FontAssetError::TaskFailed)??;
+        let summary = FontAssetSummary::generate(
+            prepared.family,
+            prepared.style,
+            prepared.format,
+            prepared.sha256_hex,
+            prepared.bytes.len() as u64,
+            current_unix_millis()?,
+        )
+        .map_err(|_| FontAssetError::InvalidFont)?;
+
+        let stage_root = root.clone();
+        let stage_summary = summary.clone();
+        let (staged, permit) = tokio::task::spawn_blocking(move || {
+            stage_font_asset(&stage_root, &stage_summary, &prepared.bytes)
+                .map(|staged| (staged, permit))
+        })
+        .await
+        .map_err(|_| FontAssetError::TaskFailed)??;
+
+        let registered = match self.database.register_font_asset(summary).await {
+            Ok(summary) => summary,
+            Err(error) => {
+                let _ = tokio::task::spawn_blocking(move || {
+                    remove_staged_font_asset(&staged);
+                    drop(permit);
+                })
+                .await;
+                return Err(ApplicationError::Database(error));
+            }
+        };
+
+        let (commit_result, staged, permit) = tokio::task::spawn_blocking(move || {
+            let result = commit_staged_font_asset(&staged);
+            (result, staged, permit)
+        })
+        .await
+        .map_err(|_| FontAssetError::TaskFailed)?;
+        if let Err(error) = commit_result {
+            let _ = self
+                .database
+                .delete_font_asset(registered.id().to_owned())
+                .await;
+            let _ = tokio::task::spawn_blocking(move || {
+                remove_staged_font_asset(&staged);
+                drop(permit);
+            })
+            .await;
+            return Err(error.into());
+        }
+        drop(permit);
+        Ok(registered)
+    }
+
+    pub async fn list_font_assets(&self) -> Result<Vec<FontAssetSummary>, ApplicationError> {
+        let root = self.font_asset_root()?;
+        let permit = self
+            .font_asset_operations
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| FontAssetError::Unavailable)?;
+        let stored = self
+            .database
+            .list_font_assets()
+            .await
+            .map_err(ApplicationError::from)?;
+        let verify_root = root.clone();
+        let (valid, invalid, permit) = tokio::task::spawn_blocking(move || {
+            ensure_font_asset_store(&verify_root)?;
+            cleanup_stale_font_staging(&verify_root)?;
+            cleanup_orphaned_font_assets(&verify_root, &stored)?;
+            let mut valid = Vec::new();
+            let mut invalid = Vec::new();
+            for font in stored {
+                match verify_managed_font_asset(&verify_root, &font) {
+                    Ok(true) => valid.push(font),
+                    Ok(false) | Err(_) => invalid.push(font),
+                }
+            }
+            Ok::<_, FontAssetError>((valid, invalid, permit))
+        })
+        .await
+        .map_err(|_| FontAssetError::TaskFailed)??;
+
+        for font in &invalid {
+            self.database
+                .delete_font_asset(font.id().to_owned())
+                .await
+                .map_err(ApplicationError::from)?;
+        }
+        if !invalid.is_empty() {
+            let cleanup_root = root;
+            let _ = tokio::task::spawn_blocking(move || {
+                for font in invalid {
+                    let _ = remove_managed_font_asset(&cleanup_root, &font);
+                }
+                drop(permit);
+            })
+            .await;
+        } else {
+            drop(permit);
+        }
+        Ok(valid)
+    }
+
+    pub async fn delete_font_asset(&self, id: String) -> Result<bool, ApplicationError> {
+        let root = self.font_asset_root()?;
+        let permit = self
+            .font_asset_operations
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| FontAssetError::Unavailable)?;
+        let stored = self
+            .database
+            .list_font_assets()
+            .await
+            .map_err(ApplicationError::from)?;
+        let summary = stored.into_iter().find(|font| font.id() == id);
+        let deleted = self
+            .database
+            .delete_font_asset(id)
+            .await
+            .map_err(ApplicationError::from)?;
+        if let Some(summary) = summary {
+            let _ = tokio::task::spawn_blocking(move || {
+                let _ = remove_managed_font_asset(&root, &summary);
+                drop(permit);
+            })
+            .await;
+        } else {
+            drop(permit);
+        }
+        Ok(deleted)
+    }
+
+    pub async fn list_system_fonts(&self) -> Result<Vec<SystemFontSummary>, ApplicationError> {
+        if let Some(fonts) = self.system_fonts.get() {
+            return Ok(fonts.clone());
+        }
+        let fonts = tokio::task::spawn_blocking(enumerate_system_fonts)
+            .await
+            .map_err(|_| FontAssetError::TaskFailed)?;
+        let _ = self.system_fonts.set(fonts.clone());
+        Ok(self.system_fonts.get().cloned().unwrap_or(fonts))
+    }
+
+    fn font_asset_root(&self) -> Result<Arc<PathBuf>, FontAssetError> {
+        self.font_asset_root
+            .clone()
+            .ok_or(FontAssetError::Unavailable)
+    }
+
+    pub async fn create_snippet(
+        &self,
+        label: String,
+        body: Zeroizing<String>,
+    ) -> Result<SnippetSummary, ApplicationError> {
+        self.database
+            .create_snippet(label, body)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn update_snippet(
+        &self,
+        id: String,
+        label: String,
+        body: Zeroizing<String>,
+    ) -> Result<SnippetSummary, ApplicationError> {
+        self.database
+            .update_snippet(id, label, body)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn list_snippets(&self) -> Result<Vec<SnippetSummary>, ApplicationError> {
+        self.database
+            .list_snippets()
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn get_snippet(&self, id: String) -> Result<SnippetDraft, ApplicationError> {
+        self.database
+            .get_snippet(id)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn delete_snippet(&self, id: String) -> Result<bool, ApplicationError> {
+        self.database
+            .delete_snippet(id)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn prepare_snippet_input(
+        &self,
+        id: String,
+        variables: BTreeMap<String, String>,
+        append_enter: bool,
+        confirmed_multiline: bool,
+    ) -> Result<PreparedSnippetInput, ApplicationError> {
+        let draft = self
+            .database
+            .get_snippet(id)
+            .await
+            .map_err(ApplicationError::from)?;
+        prepare_snippet_input(draft, variables, append_enter, confirmed_multiline)
+            .map_err(ApplicationError::from)
     }
 
     pub async fn create_password_credential(
@@ -1145,11 +1511,27 @@ pub enum ApplicationError {
     #[error(transparent)]
     KnownHostForgetPrompt(#[from] KnownHostForgetPromptError),
     #[error(transparent)]
+    SnippetExecution(#[from] SnippetExecutionError),
+    #[error(transparent)]
+    FontAsset(#[from] FontAssetError),
+    #[error(transparent)]
+    TerminalThemeImport(#[from] TerminalThemeImportError),
+    #[error(transparent)]
     SystemAgent(#[from] SystemAgentError),
     #[error(transparent)]
     SessionControl(#[from] SessionControlError),
     #[error(transparent)]
     Database(#[from] DatabaseActorError),
+}
+
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum SnippetExecutionError {
+    #[error("Snippet variables are invalid")]
+    InvalidVariables,
+    #[error("multi-line Snippet requires explicit confirmation")]
+    MultilineConfirmationRequired,
+    #[error("rendered Snippet exceeds the supported size")]
+    RenderedInputTooLarge,
 }
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -1344,6 +1726,28 @@ fn decode_stored_private_key(
 
 fn valid_private_key_export_passphrase(passphrase: &str) -> bool {
     !passphrase.is_empty() && passphrase.len() <= MAX_PRIVATE_KEY_EXPORT_PASSPHRASE_BYTES
+}
+
+fn prepare_snippet_input(
+    draft: SnippetDraft,
+    variables: BTreeMap<String, String>,
+    append_enter: bool,
+    confirmed_multiline: bool,
+) -> Result<PreparedSnippetInput, SnippetExecutionError> {
+    let mut input = draft
+        .render(&variables)
+        .map_err(|_| SnippetExecutionError::InvalidVariables)?;
+    let multiline = input.contains('\n') || input.contains('\r');
+    if multiline && !confirmed_multiline {
+        return Err(SnippetExecutionError::MultilineConfirmationRequired);
+    }
+    if append_enter {
+        if input.len() >= MAX_PREPARED_SNIPPET_INPUT_BYTES {
+            return Err(SnippetExecutionError::RenderedInputTooLarge);
+        }
+        input.push('\r');
+    }
+    Ok(PreparedSnippetInput { input, multiline })
 }
 
 fn export_private_key_to_new_file(
@@ -1824,6 +2228,11 @@ mod tests {
             .expect("generate fixture Private Key")
     }
 
+    fn bundled_terminal_font_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../apps/client/src/assets/fonts/JetBrainsMonoNerdFontMono-Regular.ttf")
+    }
+
     enum TestPromptReply {
         Passphrase(&'static str),
         Cancel,
@@ -2061,6 +2470,155 @@ mod tests {
             resolved.authentication,
             SessionAuthentication::KeyboardInteractive
         ));
+    }
+
+    #[tokio::test]
+    async fn snippet_input_is_rendered_in_rust_and_requires_multiline_confirmation() {
+        let (core, _directory) = test_core();
+        core.create_vault(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+
+        let single = core
+            .create_snippet(
+                "Single line".to_owned(),
+                Zeroizing::new("echo {{target}}".to_owned()),
+            )
+            .await
+            .expect("create single-line Snippet");
+        let missing = core
+            .prepare_snippet_input(single.id().to_owned(), BTreeMap::new(), true, false)
+            .await
+            .expect_err("missing variable must fail");
+        assert!(matches!(
+            missing,
+            ApplicationError::SnippetExecution(SnippetExecutionError::InvalidVariables)
+        ));
+
+        let prepared = core
+            .prepare_snippet_input(
+                single.id().to_owned(),
+                BTreeMap::from([("target".to_owned(), "server".to_owned())]),
+                true,
+                false,
+            )
+            .await
+            .expect("prepare single-line Snippet");
+        assert_eq!(prepared.input(), "echo server\r");
+        assert!(!prepared.multiline());
+        assert!(!format!("{prepared:?}").contains("echo server"));
+
+        let multi = core
+            .create_snippet(
+                "Multi line".to_owned(),
+                Zeroizing::new("printf first\nprintf {{value}}".to_owned()),
+            )
+            .await
+            .expect("create multi-line Snippet");
+        let confirmation = core
+            .prepare_snippet_input(
+                multi.id().to_owned(),
+                BTreeMap::from([("value".to_owned(), "second".to_owned())]),
+                false,
+                false,
+            )
+            .await
+            .expect_err("multi-line Snippet needs confirmation");
+        assert!(matches!(
+            confirmation,
+            ApplicationError::SnippetExecution(
+                SnippetExecutionError::MultilineConfirmationRequired
+            )
+        ));
+        let confirmed = core
+            .prepare_snippet_input(
+                multi.id().to_owned(),
+                BTreeMap::from([("value".to_owned(), "second".to_owned())]),
+                false,
+                true,
+            )
+            .await
+            .expect("confirmed multi-line Snippet");
+        assert!(confirmed.multiline());
+        assert_eq!(confirmed.input(), "printf first\nprintf second");
+    }
+
+    #[tokio::test]
+    async fn imported_font_asset_is_integrity_checked_and_falls_back_after_tampering() {
+        let (core, directory) = test_core();
+        core.create_vault(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+
+        let font = core
+            .import_font_asset_from_path(bundled_terminal_font_path())
+            .await
+            .expect("import bundled Font through native boundary");
+        assert_eq!(font.format(), FontAssetFormat::Ttf);
+        assert!(!font.family().is_empty());
+        assert_eq!(
+            core.list_font_assets()
+                .await
+                .expect("list Font assets")
+                .as_slice(),
+            std::slice::from_ref(&font)
+        );
+
+        let asset_root = directory
+            .path()
+            .join("vault")
+            .join(FONT_ASSET_DIRECTORY_NAME);
+        let bytes =
+            read_managed_font_asset(&asset_root, font.id(), font.format(), font.sha256_hex())
+                .expect("read verified Font protocol payload");
+        assert_eq!(bytes.len() as u64, font.size_bytes());
+        let asset_path = asset_root.join(format!("{}.{}", font.id(), font.format().extension()));
+        let orphan_path = asset_root.join("font-orphan.ttf");
+        std::fs::copy(&asset_path, &orphan_path).expect("create orphaned managed Font");
+        assert_eq!(
+            core.list_font_assets()
+                .await
+                .expect("clean orphaned Font assets")
+                .as_slice(),
+            std::slice::from_ref(&font)
+        );
+        assert!(!orphan_path.exists());
+
+        let current = core
+            .get_appearance_settings()
+            .await
+            .expect("Appearance settings");
+        core.update_appearance_settings(
+            AppearanceSettings::new(
+                current.app_theme(),
+                current.terminal_theme_id().to_owned(),
+                FontSourceKind::Imported,
+                Some(font.id().to_owned()),
+                font.family().to_owned(),
+                current.font_size(),
+                current.line_height_millis(),
+                current.ligatures_enabled(),
+                current.ambiguous_width(),
+            )
+            .expect("Imported Font Appearance"),
+        )
+        .await
+        .expect("select imported Font");
+
+        std::fs::write(&asset_path, b"tampered-font").expect("tamper managed Font");
+        assert!(
+            core.list_font_assets()
+                .await
+                .expect("reconcile tampered Font")
+                .is_empty()
+        );
+        let fallback = core
+            .get_appearance_settings()
+            .await
+            .expect("Appearance fallback");
+        assert_eq!(fallback.font_source_kind(), FontSourceKind::Bundled);
+        assert_eq!(fallback.font_id(), Some(anyssh_storage::DEFAULT_FONT_ID));
+        assert!(!asset_path.exists());
     }
 
     #[tokio::test]

@@ -9,6 +9,8 @@ PAM_CONTAINER_NAME="anyssh-native-xvfb-pam-$RANDOM-$$"
 RUN_DIR="$ROOT_DIR/artifacts/native-xvfb/smoke-$(date +%s)-$$"
 DRIVER="$RUN_DIR/anyssh-x11-driver"
 PRIVATE_KEY_FIXTURE="/tmp/000-anyssh-native-import-key"
+FONT_FIXTURE="/tmp/000-anyssh-native-font.ttf"
+THEME_FIXTURE="/tmp/000-anyssh-native-theme.json"
 PRIVATE_KEY_PASSPHRASE="native-key-passphrase"
 WRONG_PRIVATE_KEY_PASSPHRASE="wrong-key-passphrase"
 GENERATED_EXPORT_FILE_NAME="anyssh-native-generated-export-$RANDOM-$$.key"
@@ -28,6 +30,8 @@ TAB_CLOSE_FORWARD_PORT=18085
 LOCAL_FORWARD_MARKER="local-forward-$RANDOM-$RANDOM"
 DYNAMIC_FORWARD_MARKER="dynamic-forward-$RANDOM-$RANDOM"
 REMOTE_FORWARD_MARKER="remote-forward-$RANDOM-$RANDOM"
+SNIPPET_MARKER="anyssh-native-snippet-$RANDOM-$RANDOM"
+SNIPPET_BODY_MARKER="native-snippet-body-$RANDOM-$RANDOM"
 APP_GROUP=""
 XVFB_PID=""
 AGENT_PID=""
@@ -57,6 +61,8 @@ cleanup() {
   rm -f \
     "$PRIVATE_KEY_FIXTURE" \
     "$PRIVATE_KEY_FIXTURE.pub" \
+    "$FONT_FIXTURE" \
+    "$THEME_FIXTURE" \
     "$GENERATED_EXPORT_PATH" \
     "$GENERATED_EXPORT_PUBLIC_PATH" \
     "$GENERATED_REIMPORT_PATH"
@@ -123,6 +129,8 @@ mkdir -p "$RUN_DIR/xdg-cache" "$RUN_DIR/xdg-config" "$RUN_DIR/xdg-data"
 rm -f \
   "$PRIVATE_KEY_FIXTURE" \
   "$PRIVATE_KEY_FIXTURE.pub" \
+  "$FONT_FIXTURE" \
+  "$THEME_FIXTURE" \
   "$GENERATED_EXPORT_PATH" \
   "$GENERATED_EXPORT_PUBLIC_PATH" \
   "$GENERATED_REIMPORT_PATH"
@@ -132,6 +140,38 @@ ssh-keygen \
   -N "" \
   -C anyssh-native-import \
   -f "$PRIVATE_KEY_FIXTURE"
+cp \
+  "$ROOT_DIR/apps/client/src/assets/fonts/JetBrainsMonoNerdFontMono-Regular.ttf" \
+  "$FONT_FIXTURE"
+cat >"$THEME_FIXTURE" <<'EOF'
+{
+  "schemaVersion": 1,
+  "label": "Native Aurora",
+  "palette": {
+    "background": "#101426",
+    "foreground": "#d7f4ed",
+    "cursor": "#7df5cf",
+    "cursorAccent": "#101426",
+    "selectionBackground": "#255f57",
+    "black": "#0b2422",
+    "red": "#ff7f8f",
+    "green": "#7df5cf",
+    "yellow": "#ffd47d",
+    "blue": "#75bfff",
+    "magenta": "#c6a7ff",
+    "cyan": "#5de5dc",
+    "white": "#d7f4ed",
+    "brightBlack": "#5a837d",
+    "brightRed": "#ffa6b1",
+    "brightGreen": "#a5ffe3",
+    "brightYellow": "#ffe2a5",
+    "brightBlue": "#a4d5ff",
+    "brightMagenta": "#dccaff",
+    "brightCyan": "#94f5ee",
+    "brightWhite": "#f3fffc"
+  }
+}
+EOF
 AGENT_SOCKET="/tmp/anyssh-agent-$RANDOM-$$"
 ssh-agent -a "$AGENT_SOCKET" -D \
   >"$RUN_DIR/ssh-agent.stdout.log" \
@@ -319,7 +359,8 @@ if [[ "$VAULT_READY" -ne 1 ]]; then
   exit 1
 fi
 
-if grep -R -a -F "246810" "$VAULT_ROOT" >/dev/null 2>&1; then
+if grep -R -a -F --exclude-dir=font-assets \
+  "246810" "$VAULT_ROOT" >/dev/null 2>&1; then
   echo "The test PIN leaked into a Vault file." >&2
   exit 1
 fi
@@ -349,6 +390,92 @@ sleep 0.5
 "$DRIVER" enter
 sleep 3
 "$DRIVER" probe "$RUN_DIR/07-vault-reunlocked.bmp" >/dev/null
+
+"$DRIVER" click 100 430
+sleep 2
+"$DRIVER" click 1085 147
+THEME_PICKER_READY=0
+for _ in $(seq 1 40); do
+  if ANYSSH_X11_WINDOW_MATCH="Import AnySSH Terminal Theme" \
+    "$DRIVER" probe >/dev/null 2>&1; then
+    THEME_PICKER_READY=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$THEME_PICKER_READY" -ne 1 ]]; then
+  echo "The native Terminal Theme picker did not appear." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-terminal-theme-picker.bmp" >/dev/null || true
+  exit 1
+fi
+"$DRIVER" ctrl-l
+sleep 0.5
+"$DRIVER" type "/tmp"
+"$DRIVER" enter
+sleep 0.5
+"$DRIVER" enter
+sleep 2
+"$DRIVER" enter
+sleep 3
+
+"$DRIVER" click 1190 147
+FONT_PICKER_READY=0
+for _ in $(seq 1 40); do
+  if ANYSSH_X11_WINDOW_MATCH="Import Terminal Font" \
+    "$DRIVER" probe >/dev/null 2>&1; then
+    FONT_PICKER_READY=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$FONT_PICKER_READY" -ne 1 ]]; then
+  echo "The native Terminal Font picker did not appear." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-terminal-font-picker.bmp" >/dev/null || true
+  exit 1
+fi
+"$DRIVER" ctrl-l
+sleep 0.5
+"$DRIVER" type "/tmp"
+"$DRIVER" enter
+sleep 0.5
+"$DRIVER" enter
+sleep 2
+"$DRIVER" enter
+
+IMPORTED_FONT_PATH=""
+for _ in $(seq 1 80); do
+  IMPORTED_FONT_PATH="$(
+    find "$VAULT_ROOT/font-assets" -maxdepth 1 -type f -name 'font-*.ttf' \
+      -print -quit 2>/dev/null || true
+  )"
+  if [[ -n "$IMPORTED_FONT_PATH" ]]; then
+    break
+  fi
+  sleep 0.25
+done
+if [[ -z "$IMPORTED_FONT_PATH" ]]; then
+  echo "The native imported Font asset was not created." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-terminal-font-import.bmp" >/dev/null || true
+  exit 1
+fi
+if [[ "$(stat -c '%a' "$VAULT_ROOT/font-assets")" != "700" ]] \
+  || [[ "$(stat -c '%a' "$IMPORTED_FONT_PATH")" != "600" ]]; then
+  echo "The imported Font asset permissions were not private." >&2
+  exit 1
+fi
+if [[ "$(sha256sum "$FONT_FIXTURE" | awk '{print $1}')" != \
+  "$(sha256sum "$IMPORTED_FONT_PATH" | awk '{print $1}')" ]]; then
+  echo "The managed Font asset digest did not match the selected source." >&2
+  exit 1
+fi
+rm -f "$FONT_FIXTURE" "$THEME_FIXTURE"
+
+# The imported Theme and Font are selected and applied automatically.
+sleep 3
+"$DRIVER" probe "$RUN_DIR/07a-appearance-font-theme.bmp" >/dev/null
+"$DRIVER" click 100 106
+sleep 2
+"$DRIVER" probe "$RUN_DIR/07b-terminal-imported-font.bmp" >/dev/null
 
 "$DRIVER" click 100 240
 sleep 1
@@ -407,7 +534,8 @@ for marker in \
   "BEGIN OPENSSH PRIVATE KEY" \
   "$PRIVATE_KEY_PASSPHRASE" \
   "$WRONG_PRIVATE_KEY_PASSPHRASE"; do
-  if grep -R -a -F "$marker" "$VAULT_ROOT" >/dev/null 2>&1; then
+  if grep -R -a -F --exclude-dir=font-assets \
+    "$marker" "$VAULT_ROOT" >/dev/null 2>&1; then
     echo "The imported Private Key or Passphrase leaked into a Vault file." >&2
     exit 1
   fi
@@ -657,7 +785,8 @@ for marker in \
   "$WRONG_GENERATED_EXPORT_PASSPHRASE" \
   "Native generated key" \
   "Native generated RSA"; do
-  if grep -R -a -F "$marker" "$VAULT_ROOT" >/dev/null 2>&1 \
+  if grep -R -a -F --exclude-dir=font-assets \
+    "$marker" "$VAULT_ROOT" >/dev/null 2>&1 \
     || grep -a -F "$marker" "$RUN_DIR/native.log" >/dev/null 2>&1; then
     echo "Generated/exported Private Key material leaked into Vault or log." >&2
     exit 1
@@ -675,7 +804,8 @@ sleep 2
 sleep 4
 "$DRIVER" probe "$RUN_DIR/11-system-agent-created.bmp" >/dev/null
 for marker in "Native system agent" "$AGENT_FINGERPRINT"; do
-  if grep -R -a -F "$marker" "$VAULT_ROOT" >/dev/null 2>&1; then
+  if grep -R -a -F --exclude-dir=font-assets \
+    "$marker" "$VAULT_ROOT" >/dev/null 2>&1; then
     echo "System Agent Credential metadata leaked into a Vault file." >&2
     exit 1
   fi
@@ -908,12 +1038,61 @@ for marker in \
   "$REMOTE_FORWARD_MARKER" \
   "$GENERATED_EXPORT_PASSPHRASE" \
   "$WRONG_GENERATED_EXPORT_PASSPHRASE"; do
-  if grep -R -a -F "$marker" "$VAULT_ROOT" >/dev/null 2>&1 \
+  if grep -R -a -F --exclude-dir=font-assets \
+    "$marker" "$VAULT_ROOT" >/dev/null 2>&1 \
     || grep -a -F "$marker" "$RUN_DIR/native.log" >/dev/null 2>&1; then
     echo "A Port Forward payload marker leaked into Vault or native logs." >&2
     exit 1
   fi
 done
+
+"$DRIVER" click 100 385
+sleep 2
+"$DRIVER" click 1188 148
+sleep 1
+"$DRIVER" type "Native remote Snippet"
+"$DRIVER" tab
+"$DRIVER" type \
+  $'touch /tmp/{{marker}}\nprintf '"$SNIPPET_BODY_MARKER"
+"$DRIVER" tab
+"$DRIVER" tab
+"$DRIVER" enter
+sleep 3
+"$DRIVER" probe "$RUN_DIR/14b-snippet-summary.bmp" >/dev/null
+"$DRIVER" click 1108 343
+sleep 2
+"$DRIVER" type "$SNIPPET_MARKER"
+"$DRIVER" probe "$RUN_DIR/14c-snippet-confirmation.bmp" >/dev/null
+"$DRIVER" tab
+"$DRIVER" tab
+"$DRIVER" space
+"$DRIVER" tab
+"$DRIVER" tab
+"$DRIVER" enter
+
+SNIPPET_SUCCEEDED=0
+for _ in $(seq 1 40); do
+  if docker exec "$CONTAINER_NAME" \
+    test -f "/tmp/$SNIPPET_MARKER" >/dev/null 2>&1; then
+    SNIPPET_SUCCEEDED=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$SNIPPET_SUCCEEDED" -ne 1 ]]; then
+  echo "The confirmed native Snippet did not reach the selected SSH PTY." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-native-snippet.bmp" >/dev/null || true
+  exit 1
+fi
+"$DRIVER" click 100 106
+sleep 1
+"$DRIVER" probe "$RUN_DIR/14d-snippet-terminal-output.bmp" >/dev/null
+if grep -R -a -F --exclude-dir=font-assets \
+  "$SNIPPET_BODY_MARKER" "$VAULT_ROOT" >/dev/null 2>&1 \
+  || grep -a -F "$SNIPPET_MARKER" "$RUN_DIR/native.log" >/dev/null 2>&1; then
+  echo "Snippet Body or variable value leaked into Vault plaintext or native log." >&2
+  exit 1
+fi
 
 "$DRIVER" click 1117 44
 sleep 1
@@ -1234,7 +1413,8 @@ if [[ "$INTERACTIVE_SUCCEEDED" -ne 1 ]]; then
   tail -n 120 "$RUN_DIR/native.log" >&2
   exit 1
 fi
-if grep -R -a -F "$INTERACTIVE_RESPONSE" "$VAULT_ROOT" >/dev/null 2>&1 \
+if grep -R -a -F --exclude-dir=font-assets \
+  "$INTERACTIVE_RESPONSE" "$VAULT_ROOT" >/dev/null 2>&1 \
   || grep -a -F "$INTERACTIVE_RESPONSE" "$RUN_DIR/native.log" >/dev/null 2>&1; then
   echo "The Keyboard-interactive response leaked into native evidence or Vault files." >&2
   exit 1
@@ -1308,7 +1488,8 @@ if ss -ltn 2>/dev/null |
   echo "Vault Lock left a Session Forward listener open." >&2
   exit 1
 fi
-if grep -R -a -F "$INTERACTIVE_RESPONSE" "$VAULT_ROOT" >/dev/null 2>&1 \
+if grep -R -a -F --exclude-dir=font-assets \
+  "$INTERACTIVE_RESPONSE" "$VAULT_ROOT" >/dev/null 2>&1 \
   || grep -a -F "$INTERACTIVE_RESPONSE" "$RUN_DIR/native.log" >/dev/null 2>&1; then
   echo "The repeated Keyboard-interactive response leaked during Vault lock." >&2
   exit 1
@@ -1345,6 +1526,12 @@ cat >"$RUN_DIR/report.md" <<EOF
 - Lock Vault dropped the unlocked Rust storage state and returned to the PIN gate.
 - An incorrect PIN was rejected without opening the workspace.
 - The same PIN reopened the existing Vault before the SSH session started.
+- Appearance imported a bounded JSON Terminal Theme and a TTF through
+  Rust-owned GTK Native Pickers. The source Paths never entered WebView,
+  the managed Font used an opaque filename with matching SHA-256 digest,
+  and the private asset directory/file modes were \`0700\`/\`0600\`.
+- The imported Terminal Theme/Font updated the already mounted xterm.js
+  instance through the restricted \`anyssh-font\` protocol.
 - The Credential UI opened a native file picker for an encrypted Ed25519
   Private Key, then displayed an in-process GTK Secure Entry outside WebView.
 - An incorrect Passphrase produced a bounded retry prompt; the correct
@@ -1373,6 +1560,9 @@ cat >"$RUN_DIR/report.md" <<EOF
 - X11 keyboard events reached xterm.js and created \`/tmp/anyssh-native-ok\` remotely.
 - A 4 MiB terminal stream drained through Tauri/xterm acknowledgement backpressure and
   created \`/tmp/anyssh-native-large-ok\` after the output completed.
+- A Record-AEAD Snippet kept its Body out of list UI, rendered a literal
+  \`{{marker}}\` variable in Rust, required multi-line confirmation, and
+  created the requested remote marker only in the selected live SSH PTY.
 - The real native UI started Local, unauthenticated Dynamic SOCKS5, and Remote
   Loopback Forwards. External TCP clients crossed the owning russh Session in
   both directions while payload markers stayed absent from IPC logs, Vault, and
@@ -1407,6 +1597,8 @@ cat >"$RUN_DIR/report.md" <<EOF
 - \`05-vault-wrong-pin.bmp\`
 - \`06-vault-unlock-pin-entered.bmp\`
 - \`07-vault-reunlocked.bmp\`
+- \`07a-appearance-font-theme.bmp\`
+- \`07b-terminal-imported-font.bmp\`
 - \`08-private-key-passphrase-prompt.bmp\`
 - \`09-private-key-passphrase-retry.bmp\`
 - \`10-private-key-imported.bmp\`
@@ -1425,6 +1617,9 @@ cat >"$RUN_DIR/report.md" <<EOF
 - \`12-password-entered.bmp\`
 - \`13-host-key-dialog.bmp\`
 - \`14-command-succeeded.bmp\`
+- \`14b-snippet-summary.bmp\`
+- \`14c-snippet-confirmation.bmp\`
+- \`14d-snippet-terminal-output.bmp\`
 - \`14a-port-forwarding.bmp\`
 - \`15-disconnected.bmp\`
 - \`16-durable-tofu-reconnect.bmp\`

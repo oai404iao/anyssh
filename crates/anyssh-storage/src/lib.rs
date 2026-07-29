@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod actor;
+mod appearance;
 mod connection_plan;
 mod credential;
 mod entity_id;
@@ -9,10 +10,16 @@ mod host;
 mod inheritance;
 mod jump_route;
 mod known_host;
+mod snippet;
 
 pub use actor::{
     DEFAULT_DATABASE_COMMAND_QUEUE_CAPACITY, DatabaseActorConfig, DatabaseActorError,
     DatabaseActorHandle, DatabaseActorStartError, VaultState, VaultStatus,
+};
+pub use appearance::{
+    AmbiguousWidth, AppTheme, AppearanceSettings, DEFAULT_FONT_FAMILY, DEFAULT_FONT_ID,
+    DEFAULT_TERMINAL_THEME_ID, FontAssetFormat, FontAssetSummary, FontSourceKind,
+    MAX_IMPORTED_FONT_BYTES, TerminalPalette, TerminalThemeSummary, is_valid_font_asset_id,
 };
 pub use connection_plan::{ResolvedHostConnection, ResolvedHostConnectionPlan};
 pub use credential::{CredentialKind, CredentialSecret, CredentialSummary, ResolvedCredential};
@@ -24,13 +31,14 @@ pub use known_host::{
     KnownHostKeySummary, KnownHostSummary, MAX_KNOWN_HOST_KEYS, MAX_KNOWN_HOST_PUBLIC_KEY_BYTES,
     ResolvedKnownHostPolicy,
 };
+pub use snippet::{SnippetDraft, SnippetSummary};
 
 use std::{
     collections::{HashMap, HashSet},
     fmt::Write as _,
     fs::{self, File},
     path::Path,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyssh_domain::SshEndpointIdentity;
@@ -49,18 +57,20 @@ use thiserror::Error;
 use zeroize::Zeroizing;
 
 use crate::{
+    appearance::{MAX_IMPORTED_FONTS, MAX_TERMINAL_THEMES, valid_custom_terminal_theme_id},
     credential::{CredentialRecord, generate_credential_id, validate_credential_id},
     group::validate_group_id,
     host::validate_host_id,
     inheritance::SET_STATE,
     jump_route::validate_jump_route_id,
     known_host::{ValidatedKnownHostKey, validate_known_host_id, validate_known_host_key},
+    snippet::{MAX_SNIPPETS, SnippetRecord, valid_snippet_id},
 };
 
 pub const BOOTSTRAP_FILE_NAME: &str = "vault.bootstrap.json";
 pub const DATABASE_FILE_NAME: &str = "vault.db";
 
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 const KEY_BYTES: usize = 32;
 const NONCE_BYTES: usize = 24;
 
@@ -120,6 +130,28 @@ pub enum StorageError {
     KnownHostNotFound,
     #[error("known Host already trusts a different key")]
     KnownHostConflict,
+    #[error("appearance settings are invalid")]
+    InvalidAppearance,
+    #[error("Terminal Theme record is invalid")]
+    InvalidTerminalTheme,
+    #[error("Terminal Theme was not found")]
+    TerminalThemeNotFound,
+    #[error("Terminal Theme limit was reached")]
+    TerminalThemeLimit,
+    #[error("Font Asset record is invalid")]
+    InvalidFontAsset,
+    #[error("Font Asset was not found")]
+    FontAssetNotFound,
+    #[error("Font Asset limit was reached")]
+    FontAssetLimit,
+    #[error("Snippet record is invalid")]
+    InvalidSnippet,
+    #[error("Snippet was not found")]
+    SnippetNotFound,
+    #[error("Snippet limit was reached")]
+    SnippetLimit,
+    #[error("Snippet variables are invalid")]
+    InvalidSnippetVariables,
     #[error("vault schema migration was interrupted")]
     MigrationInterrupted,
     #[error(transparent)]
@@ -258,6 +290,67 @@ impl LocalVault {
 
     pub fn cipher_version(&self) -> &str {
         &self.database.cipher_version
+    }
+
+    fn get_appearance_settings(&self) -> Result<AppearanceSettings, StorageError> {
+        self.database.get_appearance_settings()
+    }
+
+    fn update_appearance_settings(
+        &mut self,
+        settings: &AppearanceSettings,
+    ) -> Result<AppearanceSettings, StorageError> {
+        self.database.update_appearance_settings(settings)
+    }
+
+    fn create_terminal_theme(
+        &mut self,
+        theme: &TerminalThemeSummary,
+    ) -> Result<TerminalThemeSummary, StorageError> {
+        self.database.create_terminal_theme(theme)
+    }
+
+    fn list_terminal_themes(&self) -> Result<Vec<TerminalThemeSummary>, StorageError> {
+        self.database.list_terminal_themes()
+    }
+
+    fn delete_terminal_theme(&mut self, id: &str) -> Result<bool, StorageError> {
+        self.database.delete_terminal_theme(id)
+    }
+
+    fn register_font_asset(
+        &mut self,
+        font: &FontAssetSummary,
+    ) -> Result<FontAssetSummary, StorageError> {
+        self.database.register_font_asset(font)
+    }
+
+    fn list_font_assets(&self) -> Result<Vec<FontAssetSummary>, StorageError> {
+        self.database.list_font_assets()
+    }
+
+    fn delete_font_asset(&mut self, id: &str) -> Result<bool, StorageError> {
+        self.database.delete_font_asset(id)
+    }
+
+    fn create_snippet(&mut self, record: &SnippetRecord) -> Result<SnippetSummary, StorageError> {
+        self.database.create_snippet(record)
+    }
+
+    fn update_snippet(&mut self, record: &SnippetRecord) -> Result<SnippetSummary, StorageError> {
+        self.database.update_snippet(record)
+    }
+
+    fn list_snippets(&self) -> Result<Vec<SnippetSummary>, StorageError> {
+        self.database.list_snippets()
+    }
+
+    fn get_snippet(&self, id: &str) -> Result<SnippetDraft, StorageError> {
+        self.database.get_snippet(id)
+    }
+
+    fn delete_snippet(&mut self, id: &str) -> Result<bool, StorageError> {
+        self.database.delete_snippet(id)
     }
 
     fn create_group(&mut self, record: &GroupSummary) -> Result<GroupSummary, StorageError> {
@@ -406,6 +499,7 @@ impl VaultDatabase {
         database.migrate_to_v5(false)?;
         database.migrate_to_v6(false)?;
         database.migrate_to_v7(false)?;
+        database.migrate_to_v8(false)?;
         database.connection.execute(
             "INSERT INTO vault_meta(key, value) VALUES('vault_id', ?1)",
             [keys.vault_id()],
@@ -480,6 +574,435 @@ impl VaultDatabase {
             record_key: Zeroizing::new(*keys.record_key()),
             cipher_version,
         })
+    }
+
+    fn get_appearance_settings(&self) -> Result<AppearanceSettings, StorageError> {
+        let stored = self.connection.query_row(
+            "
+            SELECT app_theme, terminal_theme_id, font_source_kind, font_id,
+                   font_family, font_size, line_height_millis,
+                   ligatures_enabled, ambiguous_width
+            FROM appearance_settings
+            WHERE singleton_id = 1
+            ",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, String>(8)?,
+                ))
+            },
+        )?;
+        let (
+            app_theme,
+            terminal_theme_id,
+            font_source_kind,
+            font_id,
+            font_family,
+            font_size,
+            line_height_millis,
+            ligatures_enabled,
+            ambiguous_width,
+        ) = stored;
+        let ligatures_enabled = match ligatures_enabled {
+            0 => false,
+            1 => true,
+            _ => return Err(StorageError::RecordIntegrity),
+        };
+        AppearanceSettings::new(
+            AppTheme::from_storage(&app_theme)?,
+            terminal_theme_id,
+            FontSourceKind::from_storage(&font_source_kind)?,
+            font_id,
+            font_family,
+            u16::try_from(font_size).map_err(|_| StorageError::RecordIntegrity)?,
+            u16::try_from(line_height_millis).map_err(|_| StorageError::RecordIntegrity)?,
+            ligatures_enabled,
+            AmbiguousWidth::from_storage(&ambiguous_width)?,
+        )
+        .map_err(|_| StorageError::RecordIntegrity)
+    }
+
+    fn update_appearance_settings(
+        &mut self,
+        settings: &AppearanceSettings,
+    ) -> Result<AppearanceSettings, StorageError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        validate_appearance_references(&transaction, settings)?;
+        let changed = transaction.execute(
+            "
+            UPDATE appearance_settings
+            SET app_theme = ?1,
+                terminal_theme_id = ?2,
+                font_source_kind = ?3,
+                font_id = ?4,
+                font_family = ?5,
+                font_size = ?6,
+                line_height_millis = ?7,
+                ligatures_enabled = ?8,
+                ambiguous_width = ?9
+            WHERE singleton_id = 1
+            ",
+            params![
+                settings.app_theme().storage_value(),
+                settings.terminal_theme_id(),
+                settings.font_source_kind().storage_value(),
+                settings.font_id(),
+                settings.font_family(),
+                i64::from(settings.font_size()),
+                i64::from(settings.line_height_millis()),
+                i64::from(settings.ligatures_enabled()),
+                settings.ambiguous_width().storage_value(),
+            ],
+        )?;
+        if changed != 1 {
+            return Err(StorageError::RecordIntegrity);
+        }
+        transaction.commit()?;
+        Ok(settings.clone())
+    }
+
+    fn create_terminal_theme(
+        &mut self,
+        theme: &TerminalThemeSummary,
+    ) -> Result<TerminalThemeSummary, StorageError> {
+        let count: i64 =
+            self.connection
+                .query_row("SELECT count(*) FROM terminal_themes", [], |row| row.get(0))?;
+        if count
+            >= i64::try_from(MAX_TERMINAL_THEMES).map_err(|_| StorageError::TerminalThemeLimit)?
+        {
+            return Err(StorageError::TerminalThemeLimit);
+        }
+        let palette_json = serde_json::to_string(theme.palette())
+            .map_err(|_| StorageError::InvalidTerminalTheme)?;
+        self.connection.execute(
+            "
+            INSERT INTO terminal_themes(id, label, schema_version, palette_json)
+            VALUES(?1, ?2, ?3, ?4)
+            ",
+            params![
+                theme.id(),
+                theme.label(),
+                i64::from(theme.schema_version()),
+                palette_json,
+            ],
+        )?;
+        Ok(theme.clone())
+    }
+
+    fn list_terminal_themes(&self) -> Result<Vec<TerminalThemeSummary>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT id, label, schema_version, palette_json
+            FROM terminal_themes
+            ORDER BY label COLLATE NOCASE, id
+            ",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        rows.map(|row| terminal_theme_from_stored(row?)).collect()
+    }
+
+    fn delete_terminal_theme(&mut self, id: &str) -> Result<bool, StorageError> {
+        if !valid_custom_terminal_theme_id(id) {
+            return Err(StorageError::InvalidTerminalTheme);
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute(
+            "
+            UPDATE appearance_settings
+            SET terminal_theme_id = ?2
+            WHERE singleton_id = 1 AND terminal_theme_id = ?1
+            ",
+            params![id, DEFAULT_TERMINAL_THEME_ID],
+        )?;
+        let changed = transaction.execute("DELETE FROM terminal_themes WHERE id = ?1", [id])?;
+        transaction.commit()?;
+        Ok(changed == 1)
+    }
+
+    fn register_font_asset(
+        &mut self,
+        font: &FontAssetSummary,
+    ) -> Result<FontAssetSummary, StorageError> {
+        let count: i64 =
+            self.connection
+                .query_row("SELECT count(*) FROM font_assets", [], |row| row.get(0))?;
+        if count >= i64::try_from(MAX_IMPORTED_FONTS).map_err(|_| StorageError::FontAssetLimit)? {
+            return Err(StorageError::FontAssetLimit);
+        }
+        self.connection.execute(
+            "
+            INSERT INTO font_assets(
+                id, family, style, format, sha256_hex, size_bytes, created_at
+            )
+            VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            ",
+            params![
+                font.id(),
+                font.family(),
+                font.style(),
+                font.format().storage_value(),
+                font.sha256_hex(),
+                i64::try_from(font.size_bytes()).map_err(|_| StorageError::InvalidFontAsset)?,
+                font.created_at(),
+            ],
+        )?;
+        Ok(font.clone())
+    }
+
+    fn list_font_assets(&self) -> Result<Vec<FontAssetSummary>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT id, family, style, format, sha256_hex, size_bytes, created_at
+            FROM font_assets
+            ORDER BY family COLLATE NOCASE, style COLLATE NOCASE, id
+            ",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+            ))
+        })?;
+        rows.map(|row| font_asset_from_stored(row?)).collect()
+    }
+
+    fn delete_font_asset(&mut self, id: &str) -> Result<bool, StorageError> {
+        if !is_valid_font_asset_id(id) {
+            return Err(StorageError::InvalidFontAsset);
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute(
+            "
+            UPDATE appearance_settings
+            SET font_source_kind = 'bundled',
+                font_id = ?2,
+                font_family = ?3
+            WHERE singleton_id = 1
+              AND font_source_kind = 'imported'
+              AND font_id = ?1
+            ",
+            params![id, DEFAULT_FONT_ID, DEFAULT_FONT_FAMILY],
+        )?;
+        let changed = transaction.execute("DELETE FROM font_assets WHERE id = ?1", [id])?;
+        transaction.commit()?;
+        Ok(changed == 1)
+    }
+
+    fn create_snippet(&mut self, record: &SnippetRecord) -> Result<SnippetSummary, StorageError> {
+        let count: i64 = self
+            .connection
+            .query_row("SELECT count(*) FROM snippets", [], |row| row.get(0))?;
+        if count >= i64::try_from(MAX_SNIPPETS).map_err(|_| StorageError::SnippetLimit)? {
+            return Err(StorageError::SnippetLimit);
+        }
+        let encrypted = self.encrypt_snippet_body(&record.id, record.body.as_bytes())?;
+        let variables_json =
+            serde_json::to_string(&record.variables).map_err(|_| StorageError::InvalidSnippet)?;
+        self.connection.execute(
+            "
+            INSERT INTO snippets(
+                id, label, body_nonce, body_ciphertext, variables_json,
+                line_count, created_at, updated_at
+            )
+            VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            ",
+            params![
+                &record.id,
+                &record.label,
+                encrypted.nonce.as_slice(),
+                encrypted.ciphertext.as_slice(),
+                variables_json,
+                i64::from(record.line_count),
+                record.created_at,
+                record.updated_at,
+            ],
+        )?;
+        Ok(record.summary())
+    }
+
+    fn update_snippet(&mut self, record: &SnippetRecord) -> Result<SnippetSummary, StorageError> {
+        let encrypted = self.encrypt_snippet_body(&record.id, record.body.as_bytes())?;
+        let variables_json =
+            serde_json::to_string(&record.variables).map_err(|_| StorageError::InvalidSnippet)?;
+        let changed = self.connection.execute(
+            "
+            UPDATE snippets
+            SET label = ?2,
+                body_nonce = ?3,
+                body_ciphertext = ?4,
+                variables_json = ?5,
+                line_count = ?6,
+                updated_at = ?7
+            WHERE id = ?1
+            ",
+            params![
+                &record.id,
+                &record.label,
+                encrypted.nonce.as_slice(),
+                encrypted.ciphertext.as_slice(),
+                variables_json,
+                i64::from(record.line_count),
+                record.updated_at,
+            ],
+        )?;
+        if changed != 1 {
+            return Err(StorageError::SnippetNotFound);
+        }
+        Ok(record.summary())
+    }
+
+    fn list_snippets(&self) -> Result<Vec<SnippetSummary>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT id, label, variables_json, line_count, updated_at
+            FROM snippets
+            ORDER BY label COLLATE NOCASE, id
+            ",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })?;
+        rows.map(|row| snippet_summary_from_stored(row?)).collect()
+    }
+
+    fn get_snippet(&self, id: &str) -> Result<SnippetDraft, StorageError> {
+        if !valid_snippet_id(id) {
+            return Err(StorageError::InvalidSnippet);
+        }
+        let stored = self
+            .connection
+            .query_row(
+                "
+                SELECT label, body_nonce, body_ciphertext, updated_at
+                FROM snippets
+                WHERE id = ?1
+                ",
+                [id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StorageError::SnippetNotFound)?;
+        let body = self.decrypt_snippet_body(id, stored.1, stored.2)?;
+        SnippetDraft::new(id.to_owned(), stored.0, body, stored.3)
+            .map_err(|_| StorageError::RecordIntegrity)
+    }
+
+    fn delete_snippet(&mut self, id: &str) -> Result<bool, StorageError> {
+        if !valid_snippet_id(id) {
+            return Err(StorageError::InvalidSnippet);
+        }
+        Ok(self
+            .connection
+            .execute("DELETE FROM snippets WHERE id = ?1", [id])?
+            == 1)
+    }
+
+    fn encrypt_snippet_body(
+        &self,
+        snippet_id: &str,
+        plaintext: &[u8],
+    ) -> Result<EncryptedField, StorageError> {
+        self.encrypt_record_field(&snippet_record_aad(&self.vault_id, snippet_id), plaintext)
+    }
+
+    fn decrypt_snippet_body(
+        &self,
+        snippet_id: &str,
+        nonce: Vec<u8>,
+        ciphertext: Vec<u8>,
+    ) -> Result<Zeroizing<String>, StorageError> {
+        self.decrypt_record_field(
+            &snippet_record_aad(&self.vault_id, snippet_id),
+            nonce,
+            ciphertext,
+        )
+    }
+
+    fn encrypt_record_field(
+        &self,
+        aad: &str,
+        plaintext: &[u8],
+    ) -> Result<EncryptedField, StorageError> {
+        let mut nonce = [0_u8; NONCE_BYTES];
+        getrandom::fill(&mut nonce).map_err(|_| StorageError::RecordIntegrity)?;
+        let cipher = XChaCha20Poly1305::new_from_slice(&self.record_key[..])
+            .map_err(|_| StorageError::RecordIntegrity)?;
+        let ciphertext = cipher
+            .encrypt(
+                XNonce::from_slice(&nonce),
+                Payload {
+                    msg: plaintext,
+                    aad: aad.as_bytes(),
+                },
+            )
+            .map_err(|_| StorageError::RecordIntegrity)?;
+        Ok(EncryptedField { nonce, ciphertext })
+    }
+
+    fn decrypt_record_field(
+        &self,
+        aad: &str,
+        nonce: Vec<u8>,
+        ciphertext: Vec<u8>,
+    ) -> Result<Zeroizing<String>, StorageError> {
+        let nonce: [u8; NONCE_BYTES] = nonce
+            .try_into()
+            .map_err(|_| StorageError::RecordIntegrity)?;
+        let cipher = XChaCha20Poly1305::new_from_slice(&self.record_key[..])
+            .map_err(|_| StorageError::RecordIntegrity)?;
+        let plaintext = Zeroizing::new(
+            cipher
+                .decrypt(
+                    XNonce::from_slice(&nonce),
+                    Payload {
+                        msg: &ciphertext,
+                        aad: aad.as_bytes(),
+                    },
+                )
+                .map_err(|_| StorageError::RecordIntegrity)?,
+        );
+        let value = std::str::from_utf8(&plaintext).map_err(|_| StorageError::RecordIntegrity)?;
+        Ok(Zeroizing::new(value.to_owned()))
     }
 
     fn create_group(&mut self, record: &GroupSummary) -> Result<GroupSummary, StorageError> {
@@ -1426,31 +1949,40 @@ impl VaultDatabase {
                 self.migrate_to_v4(false)?;
                 self.migrate_to_v5(false)?;
                 self.migrate_to_v6(false)?;
-                self.migrate_to_v7(false)
+                self.migrate_to_v7(false)?;
+                self.migrate_to_v8(false)
             }
             2 => {
                 self.migrate_to_v3(false)?;
                 self.migrate_to_v4(false)?;
                 self.migrate_to_v5(false)?;
                 self.migrate_to_v6(false)?;
-                self.migrate_to_v7(false)
+                self.migrate_to_v7(false)?;
+                self.migrate_to_v8(false)
             }
             3 => {
                 self.migrate_to_v4(false)?;
                 self.migrate_to_v5(false)?;
                 self.migrate_to_v6(false)?;
-                self.migrate_to_v7(false)
+                self.migrate_to_v7(false)?;
+                self.migrate_to_v8(false)
             }
             4 => {
                 self.migrate_to_v5(false)?;
                 self.migrate_to_v6(false)?;
-                self.migrate_to_v7(false)
+                self.migrate_to_v7(false)?;
+                self.migrate_to_v8(false)
             }
             5 => {
                 self.migrate_to_v6(false)?;
-                self.migrate_to_v7(false)
+                self.migrate_to_v7(false)?;
+                self.migrate_to_v8(false)
             }
-            6 => self.migrate_to_v7(false),
+            6 => {
+                self.migrate_to_v7(false)?;
+                self.migrate_to_v8(false)
+            }
+            7 => self.migrate_to_v8(false),
             version => Err(StorageError::UnsupportedSchema(version)),
         }
     }
@@ -2053,6 +2585,92 @@ impl VaultDatabase {
             DROP TABLE legacy_credentials_v6;
             ",
         )?;
+        transaction.pragma_update(None, "user_version", 7_i64)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    fn migrate_to_v8(&mut self, simulate_interruption: bool) -> Result<(), StorageError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE appearance_settings(
+                singleton_id INTEGER PRIMARY KEY NOT NULL CHECK(singleton_id = 1),
+                app_theme TEXT NOT NULL CHECK(app_theme IN ('system', 'dark', 'light')),
+                terminal_theme_id TEXT NOT NULL,
+                font_source_kind TEXT NOT NULL
+                    CHECK(font_source_kind IN ('bundled', 'system', 'imported')),
+                font_id TEXT,
+                font_family TEXT NOT NULL,
+                font_size INTEGER NOT NULL CHECK(font_size BETWEEN 10 AND 32),
+                line_height_millis INTEGER NOT NULL
+                    CHECK(line_height_millis BETWEEN 1000 AND 2000),
+                ligatures_enabled INTEGER NOT NULL
+                    CHECK(ligatures_enabled IN (0, 1)),
+                ambiguous_width TEXT NOT NULL
+                    CHECK(ambiguous_width IN ('narrow', 'wide')),
+                CHECK(
+                    (font_source_kind = 'bundled' AND font_id IS NOT NULL)
+                    OR (font_source_kind = 'system' AND font_id IS NULL)
+                    OR (font_source_kind = 'imported' AND font_id IS NOT NULL)
+                )
+            );
+
+            CREATE TABLE terminal_themes(
+                id TEXT PRIMARY KEY NOT NULL,
+                label TEXT NOT NULL,
+                schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+                palette_json TEXT NOT NULL
+            ) WITHOUT ROWID;
+
+            CREATE TABLE font_assets(
+                id TEXT PRIMARY KEY NOT NULL,
+                family TEXT NOT NULL,
+                style TEXT NOT NULL,
+                format TEXT NOT NULL CHECK(format IN ('ttf', 'otf', 'ttc', 'woff2')),
+                sha256_hex TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL CHECK(size_bytes BETWEEN 1 AND 16777216),
+                created_at INTEGER NOT NULL CHECK(created_at >= 0)
+            ) WITHOUT ROWID;
+
+            CREATE TABLE snippets(
+                id TEXT PRIMARY KEY NOT NULL,
+                label TEXT NOT NULL,
+                body_nonce BLOB NOT NULL,
+                body_ciphertext BLOB NOT NULL,
+                variables_json TEXT NOT NULL,
+                line_count INTEGER NOT NULL CHECK(line_count >= 1),
+                created_at INTEGER NOT NULL CHECK(created_at >= 0),
+                updated_at INTEGER NOT NULL CHECK(updated_at >= created_at)
+            ) WITHOUT ROWID;
+
+            CREATE INDEX terminal_themes_label_idx
+                ON terminal_themes(label COLLATE NOCASE, id);
+            CREATE INDEX font_assets_family_idx
+                ON font_assets(family COLLATE NOCASE, style COLLATE NOCASE, id);
+            CREATE INDEX snippets_label_idx
+                ON snippets(label COLLATE NOCASE, id);
+
+            INSERT INTO appearance_settings(
+                singleton_id, app_theme, terminal_theme_id,
+                font_source_kind, font_id, font_family,
+                font_size, line_height_millis,
+                ligatures_enabled, ambiguous_width
+            )
+            VALUES(
+                1, 'dark', 'builtin:obsidian',
+                'bundled', 'builtin:anyssh-nerd-mono', 'AnySSH Nerd Mono',
+                13, 1420, 0, 'narrow'
+            );
+            ",
+        )?;
+
+        if simulate_interruption {
+            return Err(StorageError::MigrationInterrupted);
+        }
+
         transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         transaction.commit()?;
         Ok(())
@@ -2450,6 +3068,84 @@ struct MigratedLegacyHost {
     encrypted: EncryptedCredential,
 }
 
+fn validate_appearance_references(
+    transaction: &Transaction<'_>,
+    settings: &AppearanceSettings,
+) -> Result<(), StorageError> {
+    if valid_custom_terminal_theme_id(settings.terminal_theme_id())
+        && !transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM terminal_themes WHERE id = ?1)",
+            [settings.terminal_theme_id()],
+            |row| row.get::<_, bool>(0),
+        )?
+    {
+        return Err(StorageError::TerminalThemeNotFound);
+    }
+
+    if settings.font_source_kind() == FontSourceKind::Imported {
+        let Some(font_id) = settings.font_id() else {
+            return Err(StorageError::InvalidAppearance);
+        };
+        let stored_family = transaction
+            .query_row(
+                "SELECT family FROM font_assets WHERE id = ?1",
+                [font_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or(StorageError::FontAssetNotFound)?;
+        if stored_family != settings.font_family() {
+            return Err(StorageError::InvalidAppearance);
+        }
+    }
+
+    Ok(())
+}
+
+fn terminal_theme_from_stored(
+    stored: (String, String, i64, String),
+) -> Result<TerminalThemeSummary, StorageError> {
+    let palette = serde_json::from_str::<TerminalPalette>(&stored.3)
+        .map_err(|_| StorageError::RecordIntegrity)?;
+    TerminalThemeSummary::new(
+        stored.0,
+        stored.1,
+        u16::try_from(stored.2).map_err(|_| StorageError::RecordIntegrity)?,
+        palette,
+    )
+    .map_err(|_| StorageError::RecordIntegrity)
+}
+
+fn font_asset_from_stored(
+    stored: (String, String, String, String, String, i64, i64),
+) -> Result<FontAssetSummary, StorageError> {
+    FontAssetSummary::new(
+        stored.0,
+        stored.1,
+        stored.2,
+        FontAssetFormat::from_storage(&stored.3)?,
+        stored.4,
+        u64::try_from(stored.5).map_err(|_| StorageError::RecordIntegrity)?,
+        stored.6,
+    )
+    .map_err(|_| StorageError::RecordIntegrity)
+}
+
+fn snippet_summary_from_stored(
+    stored: (String, String, String, i64, i64),
+) -> Result<SnippetSummary, StorageError> {
+    let variables = serde_json::from_str::<Vec<String>>(&stored.2)
+        .map_err(|_| StorageError::RecordIntegrity)?;
+    SnippetSummary::new(
+        stored.0,
+        stored.1,
+        variables,
+        u32::try_from(stored.3).map_err(|_| StorageError::RecordIntegrity)?,
+        stored.4,
+    )
+    .map_err(|_| StorageError::RecordIntegrity)
+}
+
 fn validate_group_references(
     transaction: &Transaction<'_>,
     group: &GroupSummary,
@@ -2798,6 +3494,17 @@ fn credential_record_aad(
     )
 }
 
+fn snippet_record_aad(vault_id: &str, snippet_id: &str) -> String {
+    format!("anyssh/record/v8|{vault_id}|snippet|{snippet_id}|body")
+}
+
+pub(crate) fn current_unix_millis() -> Result<i64, StorageError> {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| StorageError::RecordIntegrity)?;
+    i64::try_from(duration.as_millis()).map_err(|_| StorageError::RecordIntegrity)
+}
+
 fn create_private_directory(path: &Path) -> Result<(), StorageError> {
     if path.exists() {
         return Ok(());
@@ -2975,6 +3682,32 @@ mod tests {
             public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string(),
             public_key.to_bytes().expect("Known Host key bytes"),
         )
+    }
+
+    fn fixture_terminal_palette() -> TerminalPalette {
+        TerminalPalette {
+            background: "#090d16".to_owned(),
+            foreground: "#c8d0df".to_owned(),
+            cursor: "#6be6d2".to_owned(),
+            cursor_accent: "#090d16".to_owned(),
+            selection_background: "#294a50".to_owned(),
+            black: "#11151f".to_owned(),
+            red: "#ff7888".to_owned(),
+            green: "#6be6d2".to_owned(),
+            yellow: "#ffc66d".to_owned(),
+            blue: "#7aa2f7".to_owned(),
+            magenta: "#b29cff".to_owned(),
+            cyan: "#6be6d2".to_owned(),
+            white: "#c8d0df".to_owned(),
+            bright_black: "#667188".to_owned(),
+            bright_red: "#ff9aa6".to_owned(),
+            bright_green: "#93f2e2".to_owned(),
+            bright_yellow: "#ffdb9e".to_owned(),
+            bright_blue: "#a5c2ff".to_owned(),
+            bright_magenta: "#c9bdff".to_owned(),
+            bright_cyan: "#9af4e5".to_owned(),
+            bright_white: "#f1f5ff".to_owned(),
+        }
     }
 
     #[test]
@@ -4480,6 +5213,172 @@ mod tests {
     }
 
     #[test]
+    fn interrupted_v8_migration_preserves_complete_v7_schema() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let mut vault =
+            LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+        downgrade_to_v7_schema(&vault);
+
+        let error = vault
+            .database
+            .migrate_to_v8(true)
+            .expect_err("migration must fail");
+        assert!(matches!(error, StorageError::MigrationInterrupted));
+
+        let version: i64 = vault
+            .database
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("schema version");
+        let v8_tables: i64 = vault
+            .database
+            .connection
+            .query_row(
+                "
+                SELECT count(*)
+                FROM sqlite_schema
+                WHERE type = 'table'
+                  AND name IN (
+                      'appearance_settings',
+                      'terminal_themes',
+                      'font_assets',
+                      'snippets'
+                  )
+                ",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count v8 tables");
+
+        assert_eq!(version, 7);
+        assert_eq!(v8_tables, 0);
+        assert!(
+            vault
+                .list_credentials()
+                .expect("v7 Credentials stay readable")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn appearance_theme_font_and_snippet_survive_restart_without_plaintext() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("vault");
+        let mut vault =
+            LocalVault::create(&root, "123456", test_parameters()).expect("create vault");
+
+        assert_eq!(
+            vault.get_appearance_settings().expect("default Appearance"),
+            AppearanceSettings::defaults()
+        );
+
+        let theme =
+            TerminalThemeSummary::generate("QA Aurora".to_owned(), fixture_terminal_palette())
+                .expect("Theme");
+        vault
+            .create_terminal_theme(&theme)
+            .expect("create Terminal Theme");
+
+        let font = FontAssetSummary::new(
+            "font-qa-imported".to_owned(),
+            "QA Imported Mono".to_owned(),
+            "Regular".to_owned(),
+            FontAssetFormat::Ttf,
+            "a".repeat(64),
+            4_096,
+            1,
+        )
+        .expect("Font Asset");
+        vault
+            .register_font_asset(&font)
+            .expect("register Font Asset");
+
+        let settings = AppearanceSettings::new(
+            AppTheme::Light,
+            theme.id().to_owned(),
+            FontSourceKind::Imported,
+            Some(font.id().to_owned()),
+            font.family().to_owned(),
+            17,
+            1_600,
+            true,
+            AmbiguousWidth::Wide,
+        )
+        .expect("Appearance");
+        vault
+            .update_appearance_settings(&settings)
+            .expect("update Appearance");
+
+        let snippet_secret = "printf 'snippet-body-must-stay-encrypted %s\\n' {{target}}";
+        let snippet = SnippetRecord::new(
+            "snippet-qa".to_owned(),
+            "QA Marker".to_owned(),
+            Zeroizing::new(snippet_secret.to_owned()),
+            1,
+            1,
+        )
+        .expect("Snippet");
+        vault.create_snippet(&snippet).expect("create Snippet");
+        assert_eq!(
+            vault.list_snippets().expect("list Snippets"),
+            [snippet.summary()]
+        );
+        assert_eq!(
+            vault.get_snippet("snippet-qa").expect("get Snippet").body(),
+            snippet_secret
+        );
+        assert_files_do_not_contain(&root, &[snippet_secret.as_bytes()]);
+
+        drop(vault);
+        let mut restarted = LocalVault::unlock(&root, "123456").expect("restart Appearance Vault");
+        assert_eq!(
+            restarted
+                .get_appearance_settings()
+                .expect("restarted Appearance"),
+            settings
+        );
+        assert_eq!(
+            restarted
+                .list_terminal_themes()
+                .expect("restarted Themes")
+                .as_slice(),
+            std::slice::from_ref(&theme)
+        );
+        assert_eq!(
+            restarted
+                .list_font_assets()
+                .expect("restarted Fonts")
+                .as_slice(),
+            std::slice::from_ref(&font)
+        );
+        assert_eq!(
+            restarted
+                .get_snippet("snippet-qa")
+                .expect("restarted Snippet")
+                .body(),
+            snippet_secret
+        );
+
+        assert!(
+            restarted
+                .delete_terminal_theme(theme.id())
+                .expect("delete Theme")
+        );
+        assert_eq!(
+            restarted
+                .get_appearance_settings()
+                .expect("Theme fallback")
+                .terminal_theme_id(),
+            DEFAULT_TERMINAL_THEME_ID
+        );
+        assert!(restarted.delete_font_asset(font.id()).expect("delete Font"));
+        let fallback = restarted.get_appearance_settings().expect("Font fallback");
+        assert_eq!(fallback.font_source_kind(), FontSourceKind::Bundled);
+        assert_eq!(fallback.font_id(), Some(DEFAULT_FONT_ID));
+    }
+
+    #[test]
     fn schema_v7_rejects_invalid_keyboard_interactive_secret_shapes() {
         let directory = tempfile::tempdir().expect("tempdir");
         let root = directory.path().join("vault");
@@ -4961,7 +5860,32 @@ mod tests {
         }
     }
 
+    fn drop_v8_tables(vault: &LocalVault) {
+        vault
+            .database
+            .connection
+            .execute_batch(
+                "
+                DROP TABLE IF EXISTS snippets;
+                DROP TABLE IF EXISTS font_assets;
+                DROP TABLE IF EXISTS terminal_themes;
+                DROP TABLE IF EXISTS appearance_settings;
+                ",
+            )
+            .expect("drop v8 tables");
+    }
+
+    fn downgrade_to_v7_schema(vault: &LocalVault) {
+        drop_v8_tables(vault);
+        vault
+            .database
+            .connection
+            .pragma_update(None, "user_version", 7_i64)
+            .expect("downgrade fixture to v7");
+    }
+
     fn downgrade_to_v2_schema(vault: &LocalVault) {
+        drop_v8_tables(vault);
         vault
             .database
             .connection
@@ -4990,6 +5914,7 @@ mod tests {
     }
 
     fn downgrade_to_v3_schema(vault: &LocalVault) {
+        drop_v8_tables(vault);
         vault
             .database
             .connection
@@ -5052,6 +5977,7 @@ mod tests {
     }
 
     fn downgrade_to_v6_schema(vault: &LocalVault) {
+        drop_v8_tables(vault);
         vault
             .database
             .connection
@@ -5206,6 +6132,7 @@ mod tests {
     }
 
     fn downgrade_to_v4_schema(vault: &LocalVault) {
+        drop_v8_tables(vault);
         vault
             .database
             .connection

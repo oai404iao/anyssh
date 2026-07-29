@@ -39,6 +39,14 @@ $InteractiveReadyPath = Join-Path `
 $InteractiveMarkerPath = Join-Path `
   $env:TEMP `
   "anyssh-windows-interactive-ok-$Timestamp-$PID.txt"
+$AppearanceFixtureRoot = Join-Path `
+  $env:TEMP `
+  "anyssh-windows-appearance-$Timestamp-$PID"
+$ThemeFixturePath = Join-Path $AppearanceFixtureRoot "windows-aurora.json"
+$FontFixturePath = Join-Path $AppearanceFixtureRoot "windows-terminal-font.ttf"
+$SnippetMarkerPath = Join-Path `
+  $env:TEMP `
+  "anyssh-windows-snippet-ok-$Timestamp-$PID.txt"
 $script:NativeProcess = $null
 $script:NativeWindowHandle = [IntPtr]::Zero
 $script:StageRecords = @()
@@ -64,6 +72,7 @@ $script:InteractiveUsername = "windows-interactive-user"
 $script:LocalForwardMarker = "ANYSSH_WINDOWS_LOCAL_FORWARD_PAYLOAD"
 $script:DynamicForwardMarker = "ANYSSH_WINDOWS_DYNAMIC_FORWARD_PAYLOAD"
 $script:RemoteForwardMarker = "ANYSSH_WINDOWS_REMOTE_FORWARD_PAYLOAD"
+$script:SnippetBodyMarker = "ANYSSH_WINDOWS_SNIPPET_BODY_$([Guid]::NewGuid().ToString('N'))"
 
 New-Item -ItemType Directory -Force -Path $RunDirectory | Out-Null
 Remove-Item -LiteralPath $VaultRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -76,6 +85,47 @@ Remove-Item -LiteralPath $ReimportedKeyMarkerPath -Force -ErrorAction SilentlyCo
 Remove-Item -LiteralPath $GeneratedExportPath -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $InteractiveReadyPath -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $InteractiveMarkerPath -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $AppearanceFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $SnippetMarkerPath -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $AppearanceFixtureRoot | Out-Null
+$BundledFontPath = Join-Path `
+  $RootDirectory `
+  "apps\client\src\assets\fonts\JetBrainsMonoNerdFontMono-Regular.ttf"
+Copy-Item -LiteralPath $BundledFontPath -Destination $FontFixturePath
+$FontFixtureHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $FontFixturePath).Hash
+$ThemeFixture = @"
+{
+  "version": 1,
+  "label": "Windows Aurora",
+  "palette": {
+    "background": "#101426",
+    "foreground": "#D8E2F0",
+    "cursor": "#73F7D0",
+    "selectionBackground": "#334466AA",
+    "black": "#0B1020",
+    "red": "#FF6B7A",
+    "green": "#73F7D0",
+    "yellow": "#FFD166",
+    "blue": "#6CA0FF",
+    "magenta": "#C792EA",
+    "cyan": "#65D1FF",
+    "white": "#D8E2F0",
+    "brightBlack": "#5C6784",
+    "brightRed": "#FF8A98",
+    "brightGreen": "#96FFD9",
+    "brightYellow": "#FFE29A",
+    "brightBlue": "#91B8FF",
+    "brightMagenta": "#DDB3F5",
+    "brightCyan": "#8BE0FF",
+    "brightWhite": "#FFFFFF"
+  }
+}
+"@
+[System.IO.File]::WriteAllText(
+  $ThemeFixturePath,
+  $ThemeFixture,
+  [System.Text.UTF8Encoding]::new($false)
+)
 
 Add-Type -TypeDefinition @"
 using System;
@@ -595,6 +645,10 @@ function Start-NativeStage {
   Remove-Item Env:ANYSSH_WINDOWS_LOCAL_FORWARD_MARKER -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_DYNAMIC_FORWARD_MARKER -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_REMOTE_FORWARD_MARKER -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_THEME_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_FONT_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_SNIPPET_MARKER_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_SNIPPET_BODY_MARKER -ErrorAction SilentlyContinue
 
   $StandardOutput = Join-Path $RunDirectory "app-$Stage.stdout.log"
   $StandardError = Join-Path $RunDirectory "app-$Stage.stderr.log"
@@ -628,6 +682,10 @@ function Start-NativeStage {
   $env:ANYSSH_WINDOWS_LOCAL_FORWARD_MARKER = $script:LocalForwardMarker
   $env:ANYSSH_WINDOWS_DYNAMIC_FORWARD_MARKER = $script:DynamicForwardMarker
   $env:ANYSSH_WINDOWS_REMOTE_FORWARD_MARKER = $script:RemoteForwardMarker
+  $env:ANYSSH_WINDOWS_THEME_PATH = $ThemeFixturePath
+  $env:ANYSSH_WINDOWS_FONT_PATH = $FontFixturePath
+  $env:ANYSSH_WINDOWS_SNIPPET_MARKER_PATH = $SnippetMarkerPath
+  $env:ANYSSH_WINDOWS_SNIPPET_BODY_MARKER = $script:SnippetBodyMarker
 
   $Targets = $null
   $Version = $null
@@ -769,6 +827,8 @@ function Assert-VaultFilesAreEncrypted {
     "Windows QA target",
     "Windows QA group",
     "Windows QA route",
+    "Windows QA snippet",
+    "Windows Aurora",
     "target.internal",
     "windows-user",
     $script:InteractiveUsername,
@@ -780,10 +840,24 @@ function Assert-VaultFilesAreEncrypted {
     $script:LocalForwardMarker,
     $script:DynamicForwardMarker,
     $script:RemoteForwardMarker,
+    $script:SnippetBodyMarker,
+    $SnippetMarkerPath,
+    $ThemeFixturePath,
+    $FontFixturePath,
     $script:SshUsername,
     $script:AgentFingerprint
   )
+  $FontAssetsRoot = [System.IO.Path]::GetFullPath(
+    (Join-Path $VaultRoot "font-assets")
+  )
   foreach ($File in Get-ChildItem -LiteralPath $VaultRoot -Recurse -File) {
+    $FullName = [System.IO.Path]::GetFullPath($File.FullName)
+    if ($FullName.StartsWith(
+        "$FontAssetsRoot$([System.IO.Path]::DirectorySeparatorChar)",
+        [System.StringComparison]::OrdinalIgnoreCase
+      )) {
+      continue
+    }
     $Text = [System.Text.Encoding]::UTF8.GetString(
       [System.IO.File]::ReadAllBytes($File.FullName)
     )
@@ -819,6 +893,8 @@ function Assert-EvidenceContainsNoSensitiveFixtureValues {
     $script:LocalForwardMarker,
     $script:DynamicForwardMarker,
     $script:RemoteForwardMarker,
+    $ThemeFixturePath,
+    $FontFixturePath,
     "BEGIN OPENSSH PRIVATE KEY"
   )
   $TextOnlyNeedles = @(
@@ -891,6 +967,33 @@ try {
   Start-KeyboardInteractiveFixture
   Start-NativeStage -Stage "create"
   Stop-NativeProcess
+  if (-not (Test-Path -LiteralPath $SnippetMarkerPath -PathType Leaf)) {
+    throw "The Windows Snippet did not create its remote marker."
+  }
+  $SnippetMarker = Get-Content -LiteralPath $SnippetMarkerPath -Raw
+  if (-not $SnippetMarker.Contains("$($script:SnippetBodyMarker)_ONE") -or
+    -not $SnippetMarker.Contains("$($script:SnippetBodyMarker)_TWO")) {
+    throw "The Windows Snippet remote marker was invalid."
+  }
+  $ManagedFont = Get-ChildItem `
+    -LiteralPath (Join-Path $VaultRoot "font-assets") `
+    -Filter "font-*.ttf" `
+    -File |
+    Select-Object -First 1
+  if ($null -eq $ManagedFont) {
+    throw "The Windows imported Font managed asset was not created."
+  }
+  $ManagedFontHash = (
+    Get-FileHash -Algorithm SHA256 -LiteralPath $ManagedFont.FullName
+  ).Hash
+  if ($ManagedFontHash -ne $FontFixtureHash) {
+    throw "The Windows imported Font managed asset digest did not match its source."
+  }
+  Remove-Item -LiteralPath $AppearanceFixtureRoot -Recurse -Force
+  if ((Test-Path -LiteralPath $ThemeFixturePath -PathType Leaf) -or
+    (Test-Path -LiteralPath $FontFixturePath -PathType Leaf)) {
+    throw "The Windows Appearance source fixtures still existed before restart."
+  }
   if (-not (Test-Path -LiteralPath $SshMarkerPath -PathType Leaf)) {
     throw "The Windows System Agent session did not create its remote marker."
   }
@@ -1015,6 +1118,17 @@ try {
   through Rust; the temporary Private Key file was deleted before AnySSH launched.
 - The real EXE used the Agent Named Pipe to authenticate to a standalone Windows
   OpenSSH Server and created the remote marker ``$SshMarkerPath``.
+- Native Windows Theme and Font pickers imported a strict JSON Terminal Theme
+  and TTF without adding source Path or Font bytes to WebView IPC. Picker Path
+  inputs were provided only after AnySSH launched, the managed Font digest
+  matched its source, and both source fixtures were deleted before restart.
+- App Light Theme and the imported Terminal Theme/Font updated the already
+  mounted xterm.js instance through the restricted ``anyssh-font`` protocol.
+  The selected resources and loaded Font survived process restart.
+- A Record-AEAD, variable-aware multi-line Snippet kept its Body out of list
+  projections, required complete Preview/confirmation, wrote
+  ``$SnippetMarkerPath`` only through the selected SSH PTY, and retained only
+  its summary across process restart.
 - The Agent Session started real Local, unauthenticated Dynamic SOCKS5, and
   Remote Loopback Forwards through the same russh transport. External TCP
   clients completed all three paths, Dynamic Stop closed its listener, and
@@ -1038,14 +1152,16 @@ try {
 - Rotating the standalone OpenSSH Host Key at the same Endpoint produced a
   typed hard-block dialog with Trusted and Received Fingerprints and no Accept
   or Replace action.
-- Password/System Agent Credentials, Group, inherited/direct Hosts, and Jump Route
-  metadata persisted across process restart.
+- Appearance, Theme, imported Font, Snippet summary, Password/System Agent
+  Credentials, Group, inherited/direct Hosts, and Jump Route metadata persisted
+  across process restart.
 - Vault Lock removed an active Session Forward listener before returning to the
   PIN gate.
 - PIN, Password, Private Key, Passphrases, Agent Fingerprint, Group, Host,
-  Username, and Route markers were absent from Vault files. Private Key
-  material, Passphrases, the Agent Fingerprint, and the Keyboard-interactive
-  Response were also absent from QA text evidence.
+  Username, Route, Theme source Path, and Snippet Body markers were absent from
+  encrypted Vault files. Private Key material, Passphrases, the Agent
+  Fingerprint, Theme/Font source Paths, and the Keyboard-interactive Response
+  were also absent from QA text evidence.
 - The SQLCipher database did not expose the plaintext SQLite header.
 - Browser error logs were empty.
 
@@ -1073,6 +1189,12 @@ try {
 - ``02a12-generated-key-reimport-passphrase.png``
 - ``02a13-generated-key-reimport-passphrase-retry.png``
 - ``02b-system-agent-connected.png``
+- ``02b3-terminal-theme-picker.png``
+- ``02b4-terminal-font-picker.png``
+- ``02b5-appearance-imported.png``
+- ``02b6-terminal-imported-font.png``
+- ``02b7-snippet-confirmation.png``
+- ``02b8-snippet-terminal-output.png``
 - ``02b2-port-forwarding.png``
 - ``02c-known-hosts.png``
 - ``02c-known-host-forget-confirmation.png``
@@ -1088,6 +1210,8 @@ try {
 - ``06-restart-locked.png``
 - ``07-restart-recovered.png``
 - ``07a-restart-trusted-connection.png``
+- ``07b-restart-appearance.png``
+- ``07c-restart-snippet-summary.png``
 - ``08-changed-host-key.png``
 - ``process-create.json``
 - ``process-restart.json``
@@ -1122,6 +1246,7 @@ try {
 - ``key-export-driver.txt``
 - ``generated-key-reimport-driver.txt``
 - ``known-host-forget-driver.txt``
+- ``appearance-import-driver.txt``
 "@ | Set-Content -Encoding UTF8 -Path (Join-Path $RunDirectory "report.md")
 
   Assert-EvidenceContainsNoSensitiveFixtureValues
@@ -1163,6 +1288,10 @@ finally {
   Remove-Item Env:ANYSSH_WINDOWS_INTERACTIVE_USERNAME -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_INTERACTIVE_RESPONSE -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_INTERACTIVE_MARKER_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_THEME_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_FONT_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_SNIPPET_MARKER_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_SNIPPET_BODY_MARKER -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $VaultRoot -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $WebViewDataRoot -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $PrivateKeyMarkerPath -Force -ErrorAction SilentlyContinue
@@ -1171,4 +1300,6 @@ finally {
   Remove-Item -LiteralPath $GeneratedExportPath -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $InteractiveReadyPath -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $InteractiveMarkerPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $AppearanceFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $SnippetMarkerPath -Force -ErrorAction SilentlyContinue
 }

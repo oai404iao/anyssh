@@ -1,11 +1,12 @@
 #![deny(unsafe_code)]
 
+mod native_font;
 mod native_key_export;
 mod native_known_host;
 mod native_passphrase;
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     path::PathBuf,
     sync::{
         Arc,
@@ -14,14 +15,20 @@ use std::{
 };
 
 use anyssh_app::{
-    ApplicationCore, AuthenticationSource, CredentialKind as StorageCredentialKind,
-    CredentialSummary as StorageCredentialSummary, DatabaseActorConfig,
+    AmbiguousWidth as AppAmbiguousWidth, AppTheme as CoreAppTheme,
+    AppearanceSettings as AppAppearanceSettings, ApplicationCore, AuthenticationSource,
+    CredentialKind as StorageCredentialKind, CredentialSummary as StorageCredentialSummary,
+    DatabaseActorConfig, FONT_ASSET_DIRECTORY_NAME, FontAssetFormat as AppFontAssetFormat,
+    FontAssetSummary as AppFontAssetSummary, FontSourceKind as AppFontSourceKind,
     GroupSummary as StorageGroupSummary, HostSummary as StorageHostSummary,
     JumpRouteSummary as StorageJumpRouteSummary, KnownHostSummary as StorageKnownHostSummary,
     Override as StorageOverride, PrivateKeyExportSummary as AppPrivateKeyExportSummary,
     PrivateKeyGenerationAlgorithm as AppPrivateKeyGenerationAlgorithm,
-    PrivateKeyPublicSummary as AppPrivateKeyPublicSummary, SshHopRequest, SshSessionRequest,
-    VaultState as StorageVaultState, VaultStatus as StorageVaultStatus,
+    PrivateKeyPublicSummary as AppPrivateKeyPublicSummary, SnippetDraft as AppSnippetDraft,
+    SnippetSummary as AppSnippetSummary, SshHopRequest, SshSessionRequest,
+    SystemFontSummary as AppSystemFontSummary, TerminalPalette as AppTerminalPalette,
+    TerminalThemeSummary as AppTerminalThemeSummary, VaultState as StorageVaultState,
+    VaultStatus as StorageVaultStatus,
 };
 use anyssh_domain::{SshEndpoint, TerminalSize};
 use anyssh_ssh::{
@@ -38,6 +45,7 @@ use tauri_plugin_dialog::{DialogExt, FilePath};
 use tokio::sync::RwLock;
 use zeroize::Zeroizing;
 
+use crate::native_font::NativeFontProtocol;
 use crate::native_key_export::{NativePrivateKeyExportPassphrasePrompt, NativeVaultStepUpPrompt};
 use crate::native_known_host::NativeKnownHostForgetPrompt;
 use crate::native_passphrase::NativePrivateKeyPassphrasePrompt;
@@ -94,6 +102,313 @@ impl From<StorageVaultStatus> for VaultStatus {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct VaultPinRequest {
     pin: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum AppTheme {
+    System,
+    Dark,
+    Light,
+}
+
+impl From<AppTheme> for CoreAppTheme {
+    fn from(value: AppTheme) -> Self {
+        match value {
+            AppTheme::System => Self::System,
+            AppTheme::Dark => Self::Dark,
+            AppTheme::Light => Self::Light,
+        }
+    }
+}
+
+impl From<CoreAppTheme> for AppTheme {
+    fn from(value: CoreAppTheme) -> Self {
+        match value {
+            CoreAppTheme::System => Self::System,
+            CoreAppTheme::Dark => Self::Dark,
+            CoreAppTheme::Light => Self::Light,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum FontSourceKind {
+    Bundled,
+    System,
+    Imported,
+}
+
+impl From<FontSourceKind> for AppFontSourceKind {
+    fn from(value: FontSourceKind) -> Self {
+        match value {
+            FontSourceKind::Bundled => Self::Bundled,
+            FontSourceKind::System => Self::System,
+            FontSourceKind::Imported => Self::Imported,
+        }
+    }
+}
+
+impl From<AppFontSourceKind> for FontSourceKind {
+    fn from(value: AppFontSourceKind) -> Self {
+        match value {
+            AppFontSourceKind::Bundled => Self::Bundled,
+            AppFontSourceKind::System => Self::System,
+            AppFontSourceKind::Imported => Self::Imported,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum AmbiguousWidth {
+    Narrow,
+    Wide,
+}
+
+impl From<AmbiguousWidth> for AppAmbiguousWidth {
+    fn from(value: AmbiguousWidth) -> Self {
+        match value {
+            AmbiguousWidth::Narrow => Self::Narrow,
+            AmbiguousWidth::Wide => Self::Wide,
+        }
+    }
+}
+
+impl From<AppAmbiguousWidth> for AmbiguousWidth {
+    fn from(value: AppAmbiguousWidth) -> Self {
+        match value {
+            AppAmbiguousWidth::Narrow => Self::Narrow,
+            AppAmbiguousWidth::Wide => Self::Wide,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AppearanceSettings {
+    app_theme: AppTheme,
+    terminal_theme_id: String,
+    font_source_kind: FontSourceKind,
+    font_id: Option<String>,
+    font_family: String,
+    font_size: u16,
+    line_height_millis: u16,
+    ligatures_enabled: bool,
+    ambiguous_width: AmbiguousWidth,
+}
+
+impl TryFrom<AppearanceSettings> for AppAppearanceSettings {
+    type Error = String;
+
+    fn try_from(settings: AppearanceSettings) -> Result<Self, Self::Error> {
+        AppAppearanceSettings::new(
+            settings.app_theme.into(),
+            settings.terminal_theme_id,
+            settings.font_source_kind.into(),
+            settings.font_id,
+            settings.font_family,
+            settings.font_size,
+            settings.line_height_millis,
+            settings.ligatures_enabled,
+            settings.ambiguous_width.into(),
+        )
+        .map_err(|error| error.to_string())
+    }
+}
+
+impl From<AppAppearanceSettings> for AppearanceSettings {
+    fn from(settings: AppAppearanceSettings) -> Self {
+        Self {
+            app_theme: settings.app_theme().into(),
+            terminal_theme_id: settings.terminal_theme_id().to_owned(),
+            font_source_kind: settings.font_source_kind().into(),
+            font_id: settings.font_id().map(str::to_owned),
+            font_family: settings.font_family().to_owned(),
+            font_size: settings.font_size(),
+            line_height_millis: settings.line_height_millis(),
+            ligatures_enabled: settings.ligatures_enabled(),
+            ambiguous_width: settings.ambiguous_width().into(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateTerminalThemeRequest {
+    label: String,
+    palette: AppTerminalPalette,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TerminalThemeSummary {
+    id: String,
+    label: String,
+    schema_version: u16,
+    palette: AppTerminalPalette,
+}
+
+impl From<AppTerminalThemeSummary> for TerminalThemeSummary {
+    fn from(theme: AppTerminalThemeSummary) -> Self {
+        Self {
+            id: theme.id().to_owned(),
+            label: theme.label().to_owned(),
+            schema_version: theme.schema_version(),
+            palette: theme.palette().clone(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeleteTerminalThemeRequest {
+    theme_id: String,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum FontAssetFormat {
+    Ttf,
+    Otf,
+    Ttc,
+    Woff2,
+}
+
+impl From<AppFontAssetFormat> for FontAssetFormat {
+    fn from(value: AppFontAssetFormat) -> Self {
+        match value {
+            AppFontAssetFormat::Ttf => Self::Ttf,
+            AppFontAssetFormat::Otf => Self::Otf,
+            AppFontAssetFormat::Ttc => Self::Ttc,
+            AppFontAssetFormat::Woff2 => Self::Woff2,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FontAssetSummary {
+    id: String,
+    family: String,
+    style: String,
+    format: FontAssetFormat,
+    sha256_hex: String,
+    size_bytes: u64,
+}
+
+impl From<AppFontAssetSummary> for FontAssetSummary {
+    fn from(font: AppFontAssetSummary) -> Self {
+        Self {
+            id: font.id().to_owned(),
+            family: font.family().to_owned(),
+            style: font.style().to_owned(),
+            format: font.format().into(),
+            sha256_hex: font.sha256_hex().to_owned(),
+            size_bytes: font.size_bytes(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemFontSummary {
+    family: String,
+    style: String,
+    monospaced: bool,
+}
+
+impl From<AppSystemFontSummary> for SystemFontSummary {
+    fn from(font: AppSystemFontSummary) -> Self {
+        Self {
+            family: font.family().to_owned(),
+            style: font.style().to_owned(),
+            monospaced: font.monospaced(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeleteFontAssetRequest {
+    font_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SnippetSummary {
+    id: String,
+    label: String,
+    variables: Vec<String>,
+    line_count: u32,
+    updated_at: i64,
+}
+
+impl From<AppSnippetSummary> for SnippetSummary {
+    fn from(snippet: AppSnippetSummary) -> Self {
+        Self {
+            id: snippet.id().to_owned(),
+            label: snippet.label().to_owned(),
+            variables: snippet.variables().to_vec(),
+            line_count: snippet.line_count(),
+            updated_at: snippet.updated_at(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SnippetDraft {
+    summary: SnippetSummary,
+    body: String,
+}
+
+impl From<AppSnippetDraft> for SnippetDraft {
+    fn from(snippet: AppSnippetDraft) -> Self {
+        let summary = SnippetSummary {
+            id: snippet.summary().id().to_owned(),
+            label: snippet.summary().label().to_owned(),
+            variables: snippet.summary().variables().to_vec(),
+            line_count: snippet.summary().line_count(),
+            updated_at: snippet.summary().updated_at(),
+        };
+        Self {
+            summary,
+            body: snippet.into_body().to_string(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateSnippetRequest {
+    label: String,
+    body: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UpdateSnippetRequest {
+    snippet_id: String,
+    label: String,
+    body: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SnippetIdRequest {
+    snippet_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RunSnippetRequest {
+    session_id: String,
+    snippet_id: String,
+    variables: BTreeMap<String, String>,
+    append_enter: bool,
+    confirmed_multiline: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -822,11 +1137,233 @@ async fn vault_unlock(
 async fn vault_lock(
     core: State<'_, ApplicationCore>,
     sessions: State<'_, SessionRegistry>,
+    font_protocol: State<'_, NativeFontProtocol>,
 ) -> Result<VaultStatus, String> {
     sessions.disconnect_all().await;
+    font_protocol.clear();
     core.lock_vault()
         .await
         .map(VaultStatus::from)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn appearance_get(core: State<'_, ApplicationCore>) -> Result<AppearanceSettings, String> {
+    core.get_appearance_settings()
+        .await
+        .map(AppearanceSettings::from)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn appearance_update(
+    request: AppearanceSettings,
+    core: State<'_, ApplicationCore>,
+) -> Result<AppearanceSettings, String> {
+    core.update_appearance_settings(request.try_into()?)
+        .await
+        .map(AppearanceSettings::from)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn terminal_theme_create(
+    request: CreateTerminalThemeRequest,
+    core: State<'_, ApplicationCore>,
+) -> Result<TerminalThemeSummary, String> {
+    core.create_terminal_theme(request.label, request.palette)
+        .await
+        .map(TerminalThemeSummary::from)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn terminal_theme_import(
+    app: AppHandle,
+    core: State<'_, ApplicationCore>,
+) -> Result<Option<TerminalThemeSummary>, String> {
+    if !cfg!(any(target_os = "linux", windows)) {
+        return Err("Terminal Theme import is not supported on this platform yet".to_owned());
+    }
+    let selected = app
+        .dialog()
+        .file()
+        .set_title("Import AnySSH Terminal Theme")
+        .add_filter("AnySSH Terminal Theme", &["json"])
+        .blocking_pick_file();
+    let Some(path) = selected_native_file_path(selected, "Terminal Theme")? else {
+        return Ok(None);
+    };
+    core.import_terminal_theme_from_path(path)
+        .await
+        .map(|theme| Some(TerminalThemeSummary::from(theme)))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn terminal_theme_list(
+    core: State<'_, ApplicationCore>,
+) -> Result<Vec<TerminalThemeSummary>, String> {
+    core.list_terminal_themes()
+        .await
+        .map(|themes| themes.into_iter().map(TerminalThemeSummary::from).collect())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn terminal_theme_delete(
+    request: DeleteTerminalThemeRequest,
+    core: State<'_, ApplicationCore>,
+) -> Result<bool, String> {
+    core.delete_terminal_theme(request.theme_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn font_asset_list(
+    core: State<'_, ApplicationCore>,
+    font_protocol: State<'_, NativeFontProtocol>,
+) -> Result<Vec<FontAssetSummary>, String> {
+    match core.list_font_assets().await {
+        Ok(fonts) => {
+            font_protocol.replace_registered(&fonts);
+            Ok(fonts.into_iter().map(FontAssetSummary::from).collect())
+        }
+        Err(error) => {
+            font_protocol.clear();
+            Err(error.to_string())
+        }
+    }
+}
+
+#[tauri::command]
+async fn font_asset_import(
+    app: AppHandle,
+    core: State<'_, ApplicationCore>,
+    font_protocol: State<'_, NativeFontProtocol>,
+) -> Result<Option<FontAssetSummary>, String> {
+    if !cfg!(any(target_os = "linux", windows)) {
+        return Err("custom Font import is not supported on this platform yet".to_owned());
+    }
+    let selected = app
+        .dialog()
+        .file()
+        .set_title("Import Terminal Font")
+        .add_filter("Terminal Font", &["ttf", "otf", "ttc", "woff2"])
+        .blocking_pick_file();
+    let Some(path) = selected_native_file_path(selected, "Font")? else {
+        return Ok(None);
+    };
+    core.import_font_asset_from_path(path)
+        .await
+        .map(|font| {
+            font_protocol.register(&font);
+            Some(FontAssetSummary::from(font))
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn font_asset_delete(
+    request: DeleteFontAssetRequest,
+    core: State<'_, ApplicationCore>,
+    font_protocol: State<'_, NativeFontProtocol>,
+) -> Result<bool, String> {
+    let font_id = request.font_id;
+    let deleted = core
+        .delete_font_asset(font_id.clone())
+        .await
+        .map_err(|error| error.to_string())?;
+    font_protocol.unregister(&font_id);
+    Ok(deleted)
+}
+
+#[tauri::command]
+async fn font_system_list(
+    core: State<'_, ApplicationCore>,
+) -> Result<Vec<SystemFontSummary>, String> {
+    core.list_system_fonts()
+        .await
+        .map(|fonts| fonts.into_iter().map(SystemFontSummary::from).collect())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn snippet_create(
+    request: CreateSnippetRequest,
+    core: State<'_, ApplicationCore>,
+) -> Result<SnippetSummary, String> {
+    core.create_snippet(request.label, Zeroizing::new(request.body))
+        .await
+        .map(SnippetSummary::from)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn snippet_update(
+    request: UpdateSnippetRequest,
+    core: State<'_, ApplicationCore>,
+) -> Result<SnippetSummary, String> {
+    core.update_snippet(
+        request.snippet_id,
+        request.label,
+        Zeroizing::new(request.body),
+    )
+    .await
+    .map(SnippetSummary::from)
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn snippet_list(core: State<'_, ApplicationCore>) -> Result<Vec<SnippetSummary>, String> {
+    core.list_snippets()
+        .await
+        .map(|snippets| snippets.into_iter().map(SnippetSummary::from).collect())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn snippet_get(
+    request: SnippetIdRequest,
+    core: State<'_, ApplicationCore>,
+) -> Result<SnippetDraft, String> {
+    core.get_snippet(request.snippet_id)
+        .await
+        .map(SnippetDraft::from)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn snippet_delete(
+    request: SnippetIdRequest,
+    core: State<'_, ApplicationCore>,
+) -> Result<bool, String> {
+    core.delete_snippet(request.snippet_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn snippet_run(
+    request: RunSnippetRequest,
+    core: State<'_, ApplicationCore>,
+    registry: State<'_, SessionRegistry>,
+) -> Result<(), String> {
+    let control = registry.get(&request.session_id).await?;
+    let input = core
+        .prepare_snippet_input(
+            request.snippet_id,
+            request.variables,
+            request.append_enter,
+            request.confirmed_multiline,
+        )
+        .await
+        .map_err(|error| error.to_string())?
+        .into_input();
+    control
+        .send_input(input.as_bytes().to_vec())
+        .await
         .map_err(|error| error.to_string())
 }
 
@@ -1010,6 +1547,19 @@ fn selected_private_key_path(
             selected
                 .into_path()
                 .map_err(|_| "selected private key cannot be read on this platform".to_owned())
+        })
+        .transpose()
+}
+
+fn selected_native_file_path(
+    selected: Option<FilePath>,
+    kind: &str,
+) -> Result<Option<std::path::PathBuf>, String> {
+    selected
+        .map(|selected| {
+            selected
+                .into_path()
+                .map_err(|_| format!("selected {kind} cannot be read on this platform"))
         })
         .transpose()
 }
@@ -1516,11 +2066,19 @@ async fn ssh_disconnect(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let font_protocol = NativeFontProtocol::default();
+    let protocol_handler = font_protocol.clone();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .register_uri_scheme_protocol("anyssh-font", move |_context, request| {
+            protocol_handler.respond(request)
+        })
         .manage(SessionRegistry::default())
+        .manage(font_protocol)
         .setup(|app| {
             let vault_root = configured_vault_root(app.path().app_data_dir()?.join("vault"))?;
+            app.state::<NativeFontProtocol>()
+                .initialize(vault_root.join(FONT_ASSET_DIRECTORY_NAME))?;
             let core = ApplicationCore::spawn(vault_root, DatabaseActorConfig::phase0_default())?;
             app.manage(core);
             Ok(())
@@ -1531,6 +2089,22 @@ pub fn run() {
             vault_create,
             vault_unlock,
             vault_lock,
+            appearance_get,
+            appearance_update,
+            terminal_theme_create,
+            terminal_theme_import,
+            terminal_theme_list,
+            terminal_theme_delete,
+            font_asset_list,
+            font_asset_import,
+            font_asset_delete,
+            font_system_list,
+            snippet_create,
+            snippet_update,
+            snippet_list,
+            snippet_get,
+            snippet_delete,
+            snippet_run,
             credential_create_password,
             credential_update_password,
             credential_import_private_key,
@@ -2022,6 +2596,108 @@ mod tests {
     }
 
     #[test]
+    fn appearance_theme_and_snippet_ipc_reject_executable_or_path_fields() {
+        let appearance: AppearanceSettings = serde_json::from_value(serde_json::json!({
+            "appTheme": "dark",
+            "terminalThemeId": "builtin:obsidian",
+            "fontSourceKind": "bundled",
+            "fontId": "builtin:anyssh-nerd-mono",
+            "fontFamily": "AnySSH Nerd Mono",
+            "fontSize": 13,
+            "lineHeightMillis": 1420,
+            "ligaturesEnabled": false,
+            "ambiguousWidth": "narrow"
+        }))
+        .expect("typed Appearance settings");
+        assert_eq!(appearance.font_family, "AnySSH Nerd Mono");
+
+        for forbidden in ["css", "script", "url", "path", "fontBytes"] {
+            let mut value = serde_json::json!({
+                "appTheme": "dark",
+                "terminalThemeId": "builtin:obsidian",
+                "fontSourceKind": "bundled",
+                "fontId": "builtin:anyssh-nerd-mono",
+                "fontFamily": "AnySSH Nerd Mono",
+                "fontSize": 13,
+                "lineHeightMillis": 1420,
+                "ligaturesEnabled": false,
+                "ambiguousWidth": "narrow"
+            });
+            value[forbidden] = serde_json::json!("forbidden");
+            assert!(
+                serde_json::from_value::<AppearanceSettings>(value).is_err(),
+                "{forbidden} must be rejected"
+            );
+        }
+
+        let font = serde_json::to_value(FontAssetSummary {
+            id: "font-test".to_owned(),
+            family: "QA Mono".to_owned(),
+            style: "Regular".to_owned(),
+            format: FontAssetFormat::Ttf,
+            sha256_hex: "a".repeat(64),
+            size_bytes: 4096,
+        })
+        .expect("Font metadata");
+        assert_eq!(font["family"], "QA Mono");
+        assert!(font.get("sha256Hex").is_some());
+        assert!(font.get("path").is_none());
+        assert!(font.get("fontBytes").is_none());
+
+        let run: RunSnippetRequest = serde_json::from_value(serde_json::json!({
+            "sessionId": "ssh-1",
+            "snippetId": "snippet-1",
+            "variables": {"host": "server.example"},
+            "appendEnter": true,
+            "confirmedMultiline": false
+        }))
+        .expect("ID-only Snippet run");
+        assert_eq!(run.session_id, "ssh-1");
+        assert_eq!(run.snippet_id, "snippet-1");
+
+        for forbidden in [
+            "body",
+            "command",
+            "shell",
+            "workingDirectory",
+            "environment",
+            "credentialId",
+            "path",
+        ] {
+            let mut value = serde_json::json!({
+                "sessionId": "ssh-1",
+                "snippetId": "snippet-1",
+                "variables": {"host": "server.example"},
+                "appendEnter": true,
+                "confirmedMultiline": false
+            });
+            value[forbidden] = serde_json::json!("forbidden");
+            assert!(
+                serde_json::from_value::<RunSnippetRequest>(value).is_err(),
+                "{forbidden} must be rejected"
+            );
+        }
+
+        let create: CreateSnippetRequest = serde_json::from_value(serde_json::json!({
+            "label": "Deploy",
+            "body": "echo {{target}}"
+        }))
+        .expect("explicit Snippet editor body");
+        assert_eq!(create.body, "echo {{target}}");
+        for forbidden in ["path", "credentialId", "secret", "localShell"] {
+            let mut value = serde_json::json!({
+                "label": "Deploy",
+                "body": "echo {{target}}"
+            });
+            value[forbidden] = serde_json::json!("forbidden");
+            assert!(
+                serde_json::from_value::<CreateSnippetRequest>(value).is_err(),
+                "{forbidden} must be rejected"
+            );
+        }
+    }
+
+    #[test]
     fn private_key_picker_cancellation_returns_no_path() {
         assert_eq!(
             selected_private_key_path(None).expect("cancelled selection"),
@@ -2029,6 +2705,10 @@ mod tests {
         );
         assert_eq!(
             selected_private_key_export_path(None).expect("cancelled export selection"),
+            None
+        );
+        assert_eq!(
+            selected_native_file_path(None, "Font").expect("cancelled Font selection"),
             None
         );
         assert_eq!(

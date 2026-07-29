@@ -98,6 +98,7 @@ Font Binary 位于 Vault Root 下的应用管理 `font-assets/`，文件名只�
 - 保存 SHA-256，读取时校验大小与 Digest。
 - Unix 使用私有目录与普通只读文件权限；Windows 拒绝 Reparse Point。
 - 删除选中 Font 时先原子回退 Bundled Font，再清理 Asset。
+- Repository List 清理过期 Staging、损坏 Metadata 和无引用 Managed Asset。
 
 最多保存 32 个 Imported Font。System Font 只返回 Family/Style Metadata，不复制。
 
@@ -154,7 +155,10 @@ Terminal 只在首次 Mount 时创建。Appearance 变化通过 `terminal.option
 并 Ack Output，不因 Theme/Font 切换重建。
 
 Custom Font 使用受限 `anyssh-font://<font-id>` Protocol 注册 `@font-face`。
-Protocol 只接受规范 Opaque ID，不接受 Path、Query、Traversal 或任意 MIME。
+Protocol 只接受规范 Opaque ID、受控 Format 和 SHA-256 Digest，不接受 Path、
+Query、Traversal 或任意 MIME；此外必须命中当前进程由已解锁 Repository List
+建立的 Live Registration。删除、Integrity Reconciliation 或 Vault Lock 会立即
+移除 Registration，因此即使磁盘清理失败，旧 URL 也 Fail Closed。
 
 ## 5. Snippet 执行
 
@@ -211,8 +215,8 @@ WebView 不可提交：
 ## 7. Vault Lock 与失败处理
 
 - Vault Lock 清空 Snippet Draft、Variable Form、Pending Multi-line Confirmation。
-- Appearance 与已加载 Font 可继续显示，因为它们不是 Secret；Lock Gate 不允许
-  再查询或修改 Repository。
+- Appearance 与浏览器已加载的 Font 可继续显示，因为它们不是 Secret；Lock 会
+  清空 Font Protocol Live Registration，Lock Gate 不允许再查询或修改 Repository。
 - Migration、Theme Import 或 Font Import 失败不改变当前 Appearance。
 - Font Asset 与 DB Metadata 使用 Staging File + Transaction/Compensation：
   DB Commit 失败删除 Staging；最终 Rename 失败回滚 Metadata；启动时清理过期
@@ -235,5 +239,6 @@ WebView 不可提交：
   Multi-line Confirmation、Stale Session 和 Vault Lock。
 - Mounted Multi Tab Theme/Font Update 不影响 Output Ack 或 Scrollback。
 - Browser Desktop/Mobile/Compact Screenshot 和 Empty Error Log。
-- X11/Wayland/Windows 真实 Font Import 与 SSH Snippet Marker。
+- Linux X11 与 Windows 真实 Font Import/Protocol；Wayland no-`DISPLAY`
+  Appearance/Mounted Terminal/IME/Snippet Marker。
 - Linux/Android/Windows Build 和同 Commit CI。

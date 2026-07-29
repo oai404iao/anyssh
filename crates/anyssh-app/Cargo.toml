@@ -9,10 +9,16 @@ license.workspace = true
 anyssh-domain.workspace = true
 anyssh-ssh.workspace = true
 anyssh-storage.workspace = true
+brotli-decompressor.workspace = true
+fontdb.workspace = true
 rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
 ssh-key.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+wuff.workspace = true
 zeroize.workspace = true
 
 [target.'cfg(unix)'.dependencies]

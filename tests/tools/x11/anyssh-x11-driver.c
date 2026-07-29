@@ -255,6 +255,15 @@ static void type_character(Display *display, char character) {
     case '\'':
       send_key(display, XK_apostrophe, 0);
       break;
+    case '{':
+      send_key(display, XK_bracketleft, 1);
+      break;
+    case '}':
+      send_key(display, XK_bracketright, 1);
+      break;
+    case '\n':
+      send_key(display, XK_Return, 0);
+      break;
     default:
       fprintf(stderr, "Unsupported character: 0x%02x\n",
               (unsigned char)character);

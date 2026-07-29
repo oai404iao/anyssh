@@ -3,7 +3,8 @@ param(
     "PrivateKey",
     "KnownHostForget",
     "KeyExport",
-    "GeneratedReimport"
+    "GeneratedReimport",
+    "AppearanceImport"
   )]
   [string]$Mode = "PrivateKey"
 )
@@ -60,6 +61,19 @@ if ($Mode -eq "KeyExport") {
   )) {
     if ([string]::IsNullOrWhiteSpace([string]$RequiredValue)) {
       throw "Windows native Key Export automation is missing a required input."
+    }
+  }
+}
+
+if ($Mode -eq "AppearanceImport") {
+  $ThemePath = $env:ANYSSH_WINDOWS_THEME_PATH
+  $FontPath = $env:ANYSSH_WINDOWS_FONT_PATH
+  foreach ($RequiredValue in @(
+    $ThemePath,
+    $FontPath
+  )) {
+    if ([string]::IsNullOrWhiteSpace([string]$RequiredValue)) {
+      throw "Windows native Appearance dialog automation is missing a required input."
     }
   }
 }
@@ -325,6 +339,53 @@ if ($Mode -eq "KnownHostForget") {
   }
   "PASS" | Set-Content -Encoding ASCII -Path (
     Join-Path $RunDirectory "known-host-forget-driver.txt"
+  )
+  exit 0
+}
+
+if ($Mode -eq "AppearanceImport") {
+  $ThemeDialog = [AnySshNativeDialogDriver]::WaitForWindow(
+    $AppProcessId,
+    "Import AnySSH Terminal Theme",
+    60000
+  )
+  if ($ThemeDialog -eq [IntPtr]::Zero) {
+    throw "The native Windows Terminal Theme picker did not appear."
+  }
+  [AnySshNativeDialogDriver]::CaptureWindow(
+    $ThemeDialog,
+    (Join-Path $RunDirectory "02b3-terminal-theme-picker.png")
+  )
+  [AnySshNativeDialogDriver]::ChooseFile($ThemeDialog, $ThemePath)
+  if (-not [AnySshNativeDialogDriver]::WaitForWindowToClose(
+      $ThemeDialog,
+      30000
+    )) {
+    throw "The native Windows Terminal Theme picker did not close."
+  }
+
+  $FontDialog = [AnySshNativeDialogDriver]::WaitForWindow(
+    $AppProcessId,
+    "Import Terminal Font",
+    60000
+  )
+  if ($FontDialog -eq [IntPtr]::Zero) {
+    throw "The native Windows Terminal Font picker did not appear."
+  }
+  [AnySshNativeDialogDriver]::CaptureWindow(
+    $FontDialog,
+    (Join-Path $RunDirectory "02b4-terminal-font-picker.png")
+  )
+  [AnySshNativeDialogDriver]::ChooseFile($FontDialog, $FontPath)
+  if (-not [AnySshNativeDialogDriver]::WaitForWindowToClose(
+      $FontDialog,
+      30000
+    )) {
+    throw "The native Windows Terminal Font picker did not close."
+  }
+
+  "PASS" | Set-Content -Encoding ASCII -Path (
+    Join-Path $RunDirectory "appearance-import-driver.txt"
   )
   exit 0
 }

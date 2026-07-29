@@ -65,11 +65,24 @@ Theme Script、本地 Shell、WebView Path 或 Secret 插值。
   `6dd5cd13e85d4b746bb3b7f60d8783e2b75d8eec` 的 GitHub Actions Run
   `30427696136` 九个 Job 全部通过；ADR-0019 已接受，ExecPlan 0009 已完成。
 - [x] 2026-07-29：创建 Proposed ADR-0020、Design 和本 ExecPlan。
-- [ ] 完成 Milestone 1：Schema v8 与 Rust Repository。
-- [ ] 完成 Milestone 2：Appearance 与 Mounted Terminal Runtime。
-- [ ] 完成 Milestone 3：System/Imported Font。
-- [ ] 完成 Milestone 4：Snippet Product Workflow。
+- [x] 2026-07-29：完成 Milestone 1：Schema v8、v7 -> v8 Migration、
+  Appearance/Theme/Font/Snippet Repository、Snippet Body Record AEAD 和 DB
+  Actor/ApplicationCore Typed API。
+- [x] 2026-07-29：完成 Milestone 2：App Light/Dark/System、Built-in/Custom
+  Terminal Theme、Desktop/Mobile Appearance Workspace，以及 Mounted xterm.js
+  原地 Theme/Font/Size/Line-height/Ligature/Ambiguous Width 更新。
+- [x] 2026-07-29：完成 Milestone 3：有界 System Font Catalog、Linux/Windows
+  Native Picker、TTF/OTF/TTC/WOFF2 Parse、SHA-256 Managed Asset、受限
+  `anyssh-font` Protocol、Integrity/Fallback、Live Registration 和 Orphan Cleanup。
+- [x] 2026-07-29：完成 Milestone 4：Snippet Summary-only List、显式 Edit、
+  Literal `{{variable}}`、Insert/Run、Multi-line Preview/Confirmation 和真实 SSH
+  Marker。
 - [ ] 完成 Milestone 5：Native QA、CI 与治理。
+- [x] 2026-07-29：Frontend/Vitest/Playwright/Browser QA、Rust Workspace、
+  OpenSSH Smoke、Linux X11、Wayland/IBus、Linux Container 和 Android ARM64
+  Container Build 已通过。
+- [ ] Windows Native Picker/WebView2/Restart Evidence 与同 Commit GitHub Actions
+  尚待 authoritative Windows Runner 验证。
 
 ## Milestones
 
@@ -170,6 +183,18 @@ git diff --check
   `key` 重建 xterm，否则会破坏 Multi Tab Scrollback 和 Ack。
 - 2026-07-29：Bundled Nerd Font 已具备 OFL License，Noto Emoji 也已进入
   Frontend Dependency；v1 可以先以这两项作为跨平台 Fallback。
+- 2026-07-29：`woff2` 0.3.0 与固定 Rust 1.93.1/当前依赖图不兼容；改用
+  `wuff` 0.2.8，并给 Brotli 输出提供固定 64 MiB 上限的 Allocator。
+- 2026-07-29：xterm Unicode Grapheme Addon 没有公开 Ambiguous Width Setter；
+  当前只在 `TerminalPane` 的单一适配函数中访问 pinned 0.4.0 Provider，等待上游
+  Public API 后替换。
+- 2026-07-29：Nested Weston Kiosk 下 GTK Portal File Chooser 没有可自动化的
+  Accept 控件；Wayland QA 因而验证 no-`DISPLAY` Appearance Workspace、Mounted
+  Terminal、Snippet 和 IBus，Linux Native Picker/Managed Font 由同一代码路径的
+  X11 QA 覆盖。
+- 2026-07-29：仅校验 Opaque ID/Digest 仍可能让已删除但残留的 Asset 被猜测 URL
+  访问；Protocol 必须额外要求当前进程中的 Live DB Registration，Vault Lock
+  清空 Registry，Repository List 同时清理无引用 Managed Asset。
 
 ## Decision Log
 
@@ -179,6 +204,13 @@ git diff --check
 - 2026-07-29：Imported Font Binary 不是 Secret，不存 SQLCipher BLOB；使用
   Rust-owned App Asset Store、Opaque ID 和 Digest，Path 不进入 WebView。
 - 2026-07-29：v1 Appearance 是 Vault-wide，不增加 Group/Host 三态继承。
+- 2026-07-29：两个 Embedded Family 相同的 Imported Font 使用
+  `AnySSH Imported {font_id}` 作为独立 CSS Family，避免 `@font-face` 冲突。
+- 2026-07-29：Theme/Font Picker 成功后立即选中并应用；普通 IPC 仍只返回
+  Metadata，Source Path 和 Binary 不进入 WebView。
+- 2026-07-29：受限 Font Protocol 只服务当前 Vault Repository 已注册的
+  `id + format + digest`；删除、Integrity Reconciliation 或 Vault Lock 后立即
+  Fail Closed。
 
 ## Outcomes & Retrospective
 

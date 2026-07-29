@@ -76,6 +76,14 @@ const dynamicForwardMarker = requiredEnvironment(
 const remoteForwardMarker = requiredEnvironment(
   "ANYSSH_WINDOWS_REMOTE_FORWARD_MARKER",
 );
+const themeFixturePath = requiredEnvironment("ANYSSH_WINDOWS_THEME_PATH");
+const fontFixturePath = requiredEnvironment("ANYSSH_WINDOWS_FONT_PATH");
+const snippetMarkerPath = requiredEnvironment(
+  "ANYSSH_WINDOWS_SNIPPET_MARKER_PATH",
+);
+const snippetBodyMarker = requiredEnvironment(
+  "ANYSSH_WINDOWS_SNIPPET_BODY_MARKER",
+);
 const consoleEntries = [];
 const browserErrors = [];
 let browser;
@@ -257,6 +265,7 @@ async function createVaultAndRepository(targetPage) {
     "02b-system-agent-connected.png",
     "02b-system-agent-connected.txt",
   );
+  await verifyAppearanceAndSnippets(targetPage);
   const forwardPorts = await verifyPortForwarding(targetPage);
   await targetPage.getByRole("button", { name: "Disconnect" }).click();
   await assert(
@@ -427,6 +436,49 @@ async function unlockRestartedVault(targetPage) {
       targetPage.locator(".resource-card").filter({ hasText: label }),
     ).toContainText("Private Key");
   }
+
+  await targetPage.locator(".primary-nav .nav-item").nth(7).click();
+  await assert(targetPage.getByLabel("App theme")).toHaveValue("light");
+  const restartedTheme = targetPage.getByLabel("Terminal theme");
+  const restartedFont = targetPage.getByLabel("Font", { exact: true });
+  await assert(restartedTheme.locator("option:checked")).toContainText(
+    "Windows Aurora",
+  );
+  await assert(restartedFont.locator("option:checked")).toContainText(
+    "imported",
+  );
+  const restartedFontId = await restartedFont.inputValue();
+  await assert
+    .poll(() =>
+      targetPage.evaluate(
+        (family) =>
+          Array.from(globalThis.document.fonts).some(
+            (face) => face.family === family && face.status === "loaded",
+          ),
+        `AnySSH Imported ${restartedFontId}`,
+      ),
+    )
+    .toBe(true);
+  await assert(targetPage.locator("body")).not.toContainText(themeFixturePath);
+  await assert(targetPage.locator("body")).not.toContainText(fontFixturePath);
+  await capture(
+    targetPage,
+    "07b-restart-appearance.png",
+    "07b-restart-appearance.txt",
+  );
+
+  await targetPage.locator(".primary-nav .nav-item").nth(6).click();
+  const restartedSnippet = targetPage
+    .locator(".resource-card")
+    .filter({ hasText: "Windows QA snippet" });
+  await assert(restartedSnippet).toContainText("2 lines");
+  await assert(restartedSnippet).toContainText("{{marker}}");
+  await assert(restartedSnippet).not.toContainText(snippetBodyMarker);
+  await capture(
+    targetPage,
+    "07c-restart-snippet-summary.png",
+    "07c-restart-snippet-summary.txt",
+  );
 
   await targetPage.locator(".primary-nav .nav-item").nth(1).click();
   await assert(
@@ -793,6 +845,146 @@ async function createPrivateKeyHostAndConnect(
   await assert(
     targetPage.getByText("The SSH session has ended."),
   ).toBeVisible();
+}
+
+async function verifyAppearanceAndSnippets(targetPage) {
+  const terminalMount = targetPage
+    .locator(".terminal-tab-panel:not([hidden]) .terminal-mount")
+    .first();
+  const mountIdentity = `windows-mounted-${Date.now()}`;
+  await terminalMount.evaluate((element, identity) => {
+    element.setAttribute("data-windows-mount-identity", identity);
+  }, mountIdentity);
+
+  await targetPage.locator(".primary-nav .nav-item").nth(7).click();
+  const appearanceDriver = runNativeDialogDriver("AppearanceImport");
+  await targetPage.getByRole("button", { name: "Import Theme" }).click();
+  const terminalTheme = targetPage.getByLabel("Terminal theme");
+  await assert(terminalTheme).toContainText("Windows Aurora");
+  await targetPage.getByRole("button", { name: "Import Font" }).click();
+  await appearanceDriver;
+
+  const fontSelect = targetPage.getByLabel("Font", { exact: true });
+  await assert(fontSelect).toContainText("imported");
+  const themeOption = terminalTheme
+    .locator("option")
+    .filter({ hasText: "Windows Aurora" });
+  const fontOption = fontSelect
+    .locator("option")
+    .filter({ hasText: "imported" })
+    .first();
+  const themeId = await themeOption.getAttribute("value");
+  const fontId = await fontOption.getAttribute("value");
+  if (!themeId || !fontId) {
+    throw new Error("The imported Windows Appearance resources had no IDs.");
+  }
+
+  await targetPage.getByLabel("App theme").selectOption("light");
+  await terminalTheme.selectOption(themeId);
+  await fontSelect.selectOption(fontId);
+  await targetPage.getByLabel("Font size").fill("15");
+  await targetPage.getByLabel("Line height").selectOption("1600");
+  await targetPage.getByLabel("Programming ligatures").check();
+  await targetPage
+    .getByLabel("East Asian ambiguous width")
+    .selectOption("wide");
+  await targetPage.getByRole("button", { name: "Apply appearance" }).click();
+  await assert(targetPage.locator("html")).toHaveAttribute(
+    "data-app-theme",
+    "light",
+  );
+  await assert(targetPage.locator('input[type="file"]')).toHaveCount(0);
+  await assert(targetPage.locator("body")).not.toContainText(themeFixturePath);
+  await assert(targetPage.locator("body")).not.toContainText(fontFixturePath);
+
+  const importedFontFamily = `AnySSH Imported ${fontId}`;
+  await assert
+    .poll(() =>
+      targetPage.evaluate(
+        (family) =>
+          Array.from(globalThis.document.fonts).some(
+            (face) => face.family === family && face.status === "loaded",
+          ),
+        importedFontFamily,
+      ),
+    )
+    .toBe(true);
+  await capture(
+    targetPage,
+    "02b5-appearance-imported.png",
+    "02b5-appearance-imported.txt",
+  );
+
+  await targetPage.locator(".primary-nav .nav-item").nth(0).click();
+  await assert(
+    targetPage.locator(`[data-windows-mount-identity="${mountIdentity}"]`),
+  ).toHaveCount(1);
+  await capture(
+    targetPage,
+    "02b6-terminal-imported-font.png",
+    "02b6-terminal-imported-font.txt",
+  );
+
+  await targetPage.locator(".primary-nav .nav-item").nth(6).click();
+  await targetPage.getByRole("button", { name: "New Snippet" }).click();
+  const editor = targetPage.getByRole("dialog", { name: "New Snippet" });
+  await editor.getByLabel("Label").fill("Windows QA snippet");
+  await editor
+    .getByLabel("Snippet command template")
+    .fill(
+      `echo ${snippetBodyMarker}_ONE > "{{marker}}"\n` +
+        `echo ${snippetBodyMarker}_TWO >> "{{marker}}"`,
+    );
+  await editor.getByRole("button", { name: "Save Snippet" }).click();
+  const snippetCard = targetPage
+    .locator(".resource-card")
+    .filter({ hasText: "Windows QA snippet" });
+  await assert(snippetCard).toContainText("2 lines");
+  await assert(snippetCard).toContainText("{{marker}}");
+  await assert(snippetCard).not.toContainText(snippetBodyMarker);
+  await snippetCard.getByRole("button", { name: "Run" }).click();
+
+  const runner = targetPage.getByRole("dialog", {
+    name: "Windows QA snippet",
+  });
+  await runner.getByLabel("marker").fill(snippetMarkerPath);
+  await assert(runner.getByLabel("Rendered Snippet preview")).toHaveValue(
+    new RegExp(snippetBodyMarker, "u"),
+  );
+  await capture(
+    targetPage,
+    "02b7-snippet-confirmation.png",
+    "02b7-snippet-confirmation.txt",
+  );
+  await runner
+    .getByLabel(
+      "I reviewed every line and want to send this multi-line command.",
+    )
+    .check();
+  await runner.getByRole("button", { name: "Run in Session" }).click();
+  await assert
+    .poll(async () => {
+      const first = await fileContains(
+        snippetMarkerPath,
+        `${snippetBodyMarker}_ONE`,
+      );
+      const second = await fileContains(
+        snippetMarkerPath,
+        `${snippetBodyMarker}_TWO`,
+      );
+      return first && second;
+    })
+    .toBe(true);
+
+  await targetPage.locator(".primary-nav .nav-item").nth(0).click();
+  await assert(
+    targetPage.locator(`[data-windows-mount-identity="${mountIdentity}"]`),
+  ).toHaveCount(1);
+  await capture(
+    targetPage,
+    "02b8-snippet-terminal-output.png",
+    "02b8-snippet-terminal-output.txt",
+  );
 }
 
 async function verifyKnownHostForgetAndRetrust(targetPage) {

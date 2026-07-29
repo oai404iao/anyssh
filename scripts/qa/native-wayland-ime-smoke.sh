@@ -98,6 +98,8 @@ TAB_CLOSE_FORWARD_PORT=18085
 LOCAL_FORWARD_MARKER="wayland-local-$RANDOM-$RANDOM"
 DYNAMIC_FORWARD_MARKER="wayland-dynamic-$RANDOM-$RANDOM"
 REMOTE_FORWARD_MARKER="wayland-remote-$RANDOM-$RANDOM"
+SNIPPET_MARKER="anyssh-wayland-snippet-$RANDOM-$RANDOM"
+SNIPPET_BODY_MARKER="wayland-snippet-body-$RANDOM-$RANDOM"
 FORWARD_SERVER_PID=""
 
 cleanup() {
@@ -136,6 +138,7 @@ for command in \
   curl \
   dbus-run-session \
   docker \
+  find \
   grep \
   ibus \
   ibus-daemon \
@@ -418,6 +421,22 @@ fi
 
 sleep 1
 "$DRIVER" probe "$RUN_DIR/02-wayland-ready.bmp" >/dev/null
+"$DRIVER" click 100 427
+sleep 2
+"$DRIVER" click 540 318
+"$DRIVER" down
+"$DRIVER" down
+"$DRIVER" tab
+"$DRIVER" down
+"$DRIVER" tab
+sleep 1
+"$DRIVER" click 550 790
+sleep 3
+"$DRIVER" probe "$RUN_DIR/02a-appearance-settings.bmp" >/dev/null
+"$DRIVER" click 100 106
+sleep 2
+"$DRIVER" probe "$RUN_DIR/02b-terminal-appearance.bmp" >/dev/null
+
 "$DRIVER" click 1100 440
 sleep 0.5
 "$DRIVER" type "anyssh-test"
@@ -647,12 +666,56 @@ for marker in \
   "$LOCAL_FORWARD_MARKER" \
   "$DYNAMIC_FORWARD_MARKER" \
   "$REMOTE_FORWARD_MARKER"; do
-  if grep -R -a -F "$marker" "$VAULT_ROOT" >/dev/null 2>&1 \
+  if grep -R -a -F --exclude-dir=font-assets \
+    "$marker" "$VAULT_ROOT" >/dev/null 2>&1 \
     || grep -a -F "$marker" "$RUN_DIR/app.log" >/dev/null 2>&1; then
     echo "A Wayland Port Forward payload leaked into Vault or app logs." >&2
     exit 1
   fi
 done
+
+set_ibus_engine "xkb:us::eng"
+"$DRIVER" click 100 382
+sleep 2
+"$DRIVER" click 1188 148
+sleep 1
+"$DRIVER" type "Wayland remote Snippet"
+"$DRIVER" tab
+"$DRIVER" type \
+  "touch /tmp/$SNIPPET_MARKER; printf $SNIPPET_BODY_MARKER"
+"$DRIVER" tab
+"$DRIVER" tab
+"$DRIVER" enter
+sleep 3
+"$DRIVER" probe "$RUN_DIR/04b-snippet-summary.bmp" >/dev/null
+"$DRIVER" click 1111 326
+sleep 2
+"$DRIVER" probe "$RUN_DIR/04c-snippet-preview.bmp" >/dev/null
+"$DRIVER" click 700 494
+
+SNIPPET_SUCCEEDED=0
+for _ in $(seq 1 40); do
+  if docker exec "$CONTAINER_NAME" \
+    test -f "/tmp/$SNIPPET_MARKER" >/dev/null 2>&1; then
+    SNIPPET_SUCCEEDED=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$SNIPPET_SUCCEEDED" -ne 1 ]]; then
+  echo "The confirmed Wayland Snippet did not reach the selected SSH PTY." >&2
+  "$DRIVER" probe "$RUN_DIR/failed-wayland-snippet.bmp" >/dev/null || true
+  exit 1
+fi
+"$DRIVER" click 100 106
+sleep 1
+"$DRIVER" probe "$RUN_DIR/04d-snippet-terminal-output.bmp" >/dev/null
+if grep -R -a -F --exclude-dir=font-assets \
+  "$SNIPPET_BODY_MARKER" "$VAULT_ROOT" >/dev/null 2>&1 \
+  || grep -a -F "$SNIPPET_MARKER" "$RUN_DIR/app.log" >/dev/null 2>&1; then
+  echo "Wayland Snippet Body or variable value leaked into Vault plaintext or app log." >&2
+  exit 1
+fi
 
 "$DRIVER" click 1117 44
 sleep 1
@@ -756,7 +819,8 @@ if [[ "$INTERACTIVE_SUCCEEDED" -ne 1 ]]; then
   tail -n 120 "$RUN_DIR/app.log" >&2
   exit 1
 fi
-if grep -R -a -F "$INTERACTIVE_RESPONSE" "$VAULT_ROOT" >/dev/null 2>&1 \
+if grep -R -a -F --exclude-dir=font-assets \
+  "$INTERACTIVE_RESPONSE" "$VAULT_ROOT" >/dev/null 2>&1 \
   || grep -a -F "$INTERACTIVE_RESPONSE" "$RUN_DIR/app.log" >/dev/null 2>&1; then
   echo "The Keyboard-interactive response leaked into Wayland evidence or Vault files." >&2
   exit 1
@@ -835,6 +899,10 @@ cat >"$RUN_DIR/report.md" <<EOF
 - WebKitGTK rendered the native Tauri application on a real Wayland socket.
 - XTest input entered Weston and reached the native Wayland WebView.
 - Native Wayland input created an encrypted SQLCipher Vault.
+- The Appearance workspace rendered App Theme, Terminal Theme, Font, size,
+  line-height, ligature, and ambiguous-width controls. Returning to Terminal
+  preserved the mounted xterm.js instance, which then completed IME and SSH
+  input while the Tauri application remained Wayland-only.
 - IBus switched from the US keyboard engine to \`libpinyin\`.
 - The xterm.js composition path committed \`中文\` through WebKitGTK, Tauri IPC,
   the Rust SSH core, and the Docker OpenSSH shell.
@@ -846,6 +914,8 @@ cat >"$RUN_DIR/report.md" <<EOF
   payload markers stayed absent from Vault, logs, and evidence.
 - Disconnect removed both local listeners and the server-side Remote
   registration.
+- A Record-AEAD Snippet kept its Body out of list UI and created the requested
+  marker only in the selected live SSH PTY.
 - Disconnect returned the application to the disconnected state.
 - A second native Wayland connection used durable Trust without another Host
   Key prompt.
@@ -861,9 +931,14 @@ cat >"$RUN_DIR/report.md" <<EOF
 
 - \`01-vault-create.bmp\`
 - \`02-wayland-ready.bmp\`
+- \`02a-appearance-settings.bmp\`
+- \`02b-terminal-appearance.bmp\`
 - \`03-host-key-dialog.bmp\`
 - \`04-terminal-ime-command.bmp\`
 - \`04a-port-forwarding.bmp\`
+- \`04b-snippet-summary.bmp\`
+- \`04c-snippet-preview.bmp\`
+- \`04d-snippet-terminal-output.bmp\`
 - \`05-disconnected.bmp\`
 - \`06-durable-tofu-reconnect.bmp\`
 - \`06a-multi-tab-interactive-host-key.bmp\`

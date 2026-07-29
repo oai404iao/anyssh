@@ -470,6 +470,118 @@ test("blocks a changed Known Host without an accept action", async ({
   ).toBeVisible();
 });
 
+test("updates mounted Terminal appearance and imports metadata-only resources", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.locator(".terminal-mount").evaluate((element) => {
+    (
+      window as Window & { __anysshTerminalMount?: Element }
+    ).__anysshTerminalMount = element;
+  });
+
+  await page.getByRole("button", { name: "Appearance Aa" }).click();
+  await page.getByRole("button", { name: "Import Theme" }).click();
+  await expect(
+    page.getByText("Browser QA Midnight", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Import Font" }).click();
+  await expect(
+    page.getByText("Browser QA Mono", { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('input[type="file"]')).toHaveCount(0);
+
+  await page.getByLabel("App theme").selectOption("light");
+  await page
+    .getByLabel("Terminal theme")
+    .selectOption({ label: "Browser QA Midnight · custom" });
+  await page
+    .getByLabel("Terminal font", { exact: true })
+    .selectOption({ label: "Browser QA Mono Regular · imported" });
+  await page.getByLabel("Terminal font size").fill("16");
+  await page.getByLabel("Terminal line height").selectOption("1600");
+  await page.getByLabel("Programming ligatures").check();
+  await page.getByLabel("East Asian ambiguous width").selectOption("wide");
+  await page.getByRole("button", { name: "Apply appearance" }).click();
+
+  await expect(page.locator("html")).toHaveAttribute("data-app-theme", "light");
+  await page.getByRole("button", { name: /^Terminal \d+$/ }).click();
+  const terminalStayedMounted = await page
+    .locator(".terminal-mount")
+    .evaluate((element) => {
+      return (
+        (window as Window & { __anysshTerminalMount?: Element })
+          .__anysshTerminalMount === element
+      );
+    });
+  expect(terminalStayedMounted).toBe(true);
+  await expect(page.locator(".terminal-surface")).toHaveCSS(
+    "--terminal-background",
+    "#101426",
+  );
+
+  await page.getByRole("button", { name: "Appearance Aa" }).click();
+  const importedFont = page
+    .locator(".appearance-asset-list > div")
+    .filter({ hasText: "Browser QA Mono" });
+  await importedFont.getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByLabel("Terminal font", { exact: true })).toHaveValue(
+    "bundled:anyssh-nerd-mono",
+  );
+  await expect(page.getByLabel("App theme")).toHaveValue("light");
+});
+
+test("creates and runs variable-aware Snippets with multi-line confirmation", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: /^Snippets \d+$/ }).click();
+  await page.getByRole("button", { name: "New Snippet" }).click();
+  const editor = page.getByRole("dialog", { name: "New Snippet" });
+  await editor.getByLabel("Label").fill("QA multi-line");
+  await editor
+    .getByLabel("Snippet command template")
+    .fill("echo {{target}}\nprintf qa-finished");
+  await editor.getByRole("button", { name: "Save Snippet" }).click();
+  const snippet = page
+    .locator(".snippet-card")
+    .filter({ hasText: "QA multi-line" });
+  await expect(snippet).toContainText("2 lines");
+  await expect(snippet).toContainText("{{target}}");
+  await expect(page.getByText("printf qa-finished")).toHaveCount(0);
+  await expect(snippet.getByRole("button", { name: "Run" })).toBeDisabled();
+
+  await page.getByRole("button", { name: /^Terminal \d+$/ }).click();
+  await page.getByLabel("Password", { exact: true }).fill("fixture");
+  await page.getByRole("button", { name: "Connect" }).click();
+  await page
+    .getByRole("dialog", { name: "Verify server identity" })
+    .getByRole("button", { name: "Trust and continue" })
+    .click();
+  await expect(page.getByText("Interactive shell is active.")).toBeVisible();
+
+  await page.getByRole("button", { name: /^Snippets \d+$/ }).click();
+  await snippet.getByRole("button", { name: "Run" }).click();
+  const runner = page.getByRole("dialog", { name: "QA multi-line" });
+  await runner.getByLabel("target").fill("qa-marker");
+  await expect(runner.getByLabel("Rendered Snippet preview")).toHaveValue(
+    "echo qa-marker\nprintf qa-finished",
+  );
+  await expect(
+    runner.getByRole("button", { name: "Run in Session" }),
+  ).toBeDisabled();
+  await runner
+    .getByLabel(
+      "I reviewed every line and want to send this multi-line command.",
+    )
+    .check();
+  await runner.getByRole("button", { name: "Run in Session" }).click();
+
+  await page.getByRole("button", { name: /^Terminal \d+$/ }).click();
+  await expect(page.locator(".xterm-rows")).toContainText("echo qa-marker");
+  await expect(page.locator(".xterm-rows")).toContainText("printf qa-finished");
+});
+
 test("manages Groups, Credentials, Hosts, and ordered Jump Routes", async ({
   page,
 }) => {

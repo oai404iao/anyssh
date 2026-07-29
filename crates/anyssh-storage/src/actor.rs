@@ -12,14 +12,17 @@ use tokio::sync::{mpsc, oneshot};
 use zeroize::Zeroizing;
 
 use crate::{
-    CredentialSecret, CredentialSummary, GroupSummary, HostSummary, JumpRouteSummary,
-    KnownHostSummary, LocalVault, Override, ResolvedCredential, ResolvedHostConnectionPlan,
-    ResolvedKnownHostPolicy, StorageError, VaultPresence,
+    AppearanceSettings, CredentialSecret, CredentialSummary, FontAssetSummary, GroupSummary,
+    HostSummary, JumpRouteSummary, KnownHostSummary, LocalVault, Override, ResolvedCredential,
+    ResolvedHostConnectionPlan, ResolvedKnownHostPolicy, SnippetDraft, SnippetSummary,
+    StorageError, TerminalPalette, TerminalThemeSummary, VaultPresence,
     credential::{CredentialRecord, generate_credential_id},
+    current_unix_millis,
     group::generate_group_id,
     host::generate_host_id,
     jump_route::generate_jump_route_id,
     known_host::{generate_known_host_id, validate_known_host_key},
+    snippet::SnippetRecord,
 };
 
 pub const DEFAULT_DATABASE_COMMAND_QUEUE_CAPACITY: usize = 16;
@@ -157,6 +160,105 @@ impl DatabaseActorHandle {
 
     pub async fn verify_pin(&self, pin: Zeroizing<String>) -> Result<bool, DatabaseActorError> {
         self.request(|response| DatabaseCommand::VerifyPin { pin, response })
+            .await
+    }
+
+    pub async fn get_appearance_settings(&self) -> Result<AppearanceSettings, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::GetAppearanceSettings { response })
+            .await
+    }
+
+    pub async fn update_appearance_settings(
+        &self,
+        settings: AppearanceSettings,
+    ) -> Result<AppearanceSettings, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::UpdateAppearanceSettings { settings, response })
+            .await
+    }
+
+    pub async fn create_terminal_theme(
+        &self,
+        label: String,
+        palette: TerminalPalette,
+    ) -> Result<TerminalThemeSummary, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::CreateTerminalTheme {
+            label,
+            palette: Box::new(palette),
+            response,
+        })
+        .await
+    }
+
+    pub async fn list_terminal_themes(
+        &self,
+    ) -> Result<Vec<TerminalThemeSummary>, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::ListTerminalThemes { response })
+            .await
+    }
+
+    pub async fn delete_terminal_theme(&self, id: String) -> Result<bool, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::DeleteTerminalTheme { id, response })
+            .await
+    }
+
+    pub async fn register_font_asset(
+        &self,
+        font: FontAssetSummary,
+    ) -> Result<FontAssetSummary, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::RegisterFontAsset { font, response })
+            .await
+    }
+
+    pub async fn list_font_assets(&self) -> Result<Vec<FontAssetSummary>, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::ListFontAssets { response })
+            .await
+    }
+
+    pub async fn delete_font_asset(&self, id: String) -> Result<bool, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::DeleteFontAsset { id, response })
+            .await
+    }
+
+    pub async fn create_snippet(
+        &self,
+        label: String,
+        body: Zeroizing<String>,
+    ) -> Result<SnippetSummary, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::CreateSnippet {
+            label,
+            body,
+            response,
+        })
+        .await
+    }
+
+    pub async fn update_snippet(
+        &self,
+        id: String,
+        label: String,
+        body: Zeroizing<String>,
+    ) -> Result<SnippetSummary, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::UpdateSnippet {
+            id,
+            label,
+            body,
+            response,
+        })
+        .await
+    }
+
+    pub async fn list_snippets(&self) -> Result<Vec<SnippetSummary>, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::ListSnippets { response })
+            .await
+    }
+
+    pub async fn get_snippet(&self, id: String) -> Result<SnippetDraft, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::GetSnippet { id, response })
+            .await
+    }
+
+    pub async fn delete_snippet(&self, id: String) -> Result<bool, DatabaseActorError> {
+        self.request(|response| DatabaseCommand::DeleteSnippet { id, response })
             .await
     }
 
@@ -509,6 +611,16 @@ type ResolvedHostConnectionPlanResponse =
     oneshot::Sender<Result<ResolvedHostConnectionPlan, DatabaseActorError>>;
 type DeleteResponse = oneshot::Sender<Result<bool, DatabaseActorError>>;
 type PinVerificationResponse = oneshot::Sender<Result<bool, DatabaseActorError>>;
+type AppearanceSettingsResponse = oneshot::Sender<Result<AppearanceSettings, DatabaseActorError>>;
+type TerminalThemeSummaryResponse =
+    oneshot::Sender<Result<TerminalThemeSummary, DatabaseActorError>>;
+type TerminalThemeListResponse =
+    oneshot::Sender<Result<Vec<TerminalThemeSummary>, DatabaseActorError>>;
+type FontAssetSummaryResponse = oneshot::Sender<Result<FontAssetSummary, DatabaseActorError>>;
+type FontAssetListResponse = oneshot::Sender<Result<Vec<FontAssetSummary>, DatabaseActorError>>;
+type SnippetSummaryResponse = oneshot::Sender<Result<SnippetSummary, DatabaseActorError>>;
+type SnippetListResponse = oneshot::Sender<Result<Vec<SnippetSummary>, DatabaseActorError>>;
+type SnippetDraftResponse = oneshot::Sender<Result<SnippetDraft, DatabaseActorError>>;
 type EmptyResponse = oneshot::Sender<Result<(), DatabaseActorError>>;
 
 enum DatabaseCommand {
@@ -529,6 +641,58 @@ enum DatabaseCommand {
     VerifyPin {
         pin: Zeroizing<String>,
         response: PinVerificationResponse,
+    },
+    GetAppearanceSettings {
+        response: AppearanceSettingsResponse,
+    },
+    UpdateAppearanceSettings {
+        settings: AppearanceSettings,
+        response: AppearanceSettingsResponse,
+    },
+    CreateTerminalTheme {
+        label: String,
+        palette: Box<TerminalPalette>,
+        response: TerminalThemeSummaryResponse,
+    },
+    ListTerminalThemes {
+        response: TerminalThemeListResponse,
+    },
+    DeleteTerminalTheme {
+        id: String,
+        response: DeleteResponse,
+    },
+    RegisterFontAsset {
+        font: FontAssetSummary,
+        response: FontAssetSummaryResponse,
+    },
+    ListFontAssets {
+        response: FontAssetListResponse,
+    },
+    DeleteFontAsset {
+        id: String,
+        response: DeleteResponse,
+    },
+    CreateSnippet {
+        label: String,
+        body: Zeroizing<String>,
+        response: SnippetSummaryResponse,
+    },
+    UpdateSnippet {
+        id: String,
+        label: String,
+        body: Zeroizing<String>,
+        response: SnippetSummaryResponse,
+    },
+    ListSnippets {
+        response: SnippetListResponse,
+    },
+    GetSnippet {
+        id: String,
+        response: SnippetDraftResponse,
+    },
+    DeleteSnippet {
+        id: String,
+        response: DeleteResponse,
     },
     CreateCredential {
         label: String,
@@ -711,6 +875,133 @@ impl DatabaseActorState {
             .as_ref()
             .ok_or(DatabaseActorError::VaultLocked)?
             .verify_pin(&self.root, pin.as_str())
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn get_appearance_settings(&self) -> Result<AppearanceSettings, DatabaseActorError> {
+        self.unlocked
+            .as_ref()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .get_appearance_settings()
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn update_appearance_settings(
+        &mut self,
+        settings: AppearanceSettings,
+    ) -> Result<AppearanceSettings, DatabaseActorError> {
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .update_appearance_settings(&settings)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn create_terminal_theme(
+        &mut self,
+        label: String,
+        palette: TerminalPalette,
+    ) -> Result<TerminalThemeSummary, DatabaseActorError> {
+        let theme = TerminalThemeSummary::generate(label, palette)?;
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .create_terminal_theme(&theme)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn list_terminal_themes(&self) -> Result<Vec<TerminalThemeSummary>, DatabaseActorError> {
+        self.unlocked
+            .as_ref()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .list_terminal_themes()
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn delete_terminal_theme(&mut self, id: &str) -> Result<bool, DatabaseActorError> {
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .delete_terminal_theme(id)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn register_font_asset(
+        &mut self,
+        font: FontAssetSummary,
+    ) -> Result<FontAssetSummary, DatabaseActorError> {
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .register_font_asset(&font)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn list_font_assets(&self) -> Result<Vec<FontAssetSummary>, DatabaseActorError> {
+        self.unlocked
+            .as_ref()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .list_font_assets()
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn delete_font_asset(&mut self, id: &str) -> Result<bool, DatabaseActorError> {
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .delete_font_asset(id)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn create_snippet(
+        &mut self,
+        label: String,
+        body: Zeroizing<String>,
+    ) -> Result<SnippetSummary, DatabaseActorError> {
+        let now = current_unix_millis()?;
+        let record = SnippetRecord::generate(label, body, now)?;
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .create_snippet(&record)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn update_snippet(
+        &mut self,
+        id: String,
+        label: String,
+        body: Zeroizing<String>,
+    ) -> Result<SnippetSummary, DatabaseActorError> {
+        let record = SnippetRecord::new(id, label, body, 0, current_unix_millis()?)?;
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .update_snippet(&record)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn list_snippets(&self) -> Result<Vec<SnippetSummary>, DatabaseActorError> {
+        self.unlocked
+            .as_ref()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .list_snippets()
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn get_snippet(&self, id: &str) -> Result<SnippetDraft, DatabaseActorError> {
+        self.unlocked
+            .as_ref()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .get_snippet(id)
+            .map_err(DatabaseActorError::from)
+    }
+
+    fn delete_snippet(&mut self, id: &str) -> Result<bool, DatabaseActorError> {
+        self.unlocked
+            .as_mut()
+            .ok_or(DatabaseActorError::VaultLocked)?
+            .delete_snippet(id)
             .map_err(DatabaseActorError::from)
     }
 
@@ -1037,6 +1328,58 @@ fn run_database_actor(
             DatabaseCommand::VerifyPin { pin, response } => {
                 let _ = response.send(state.verify_pin(pin));
             }
+            DatabaseCommand::GetAppearanceSettings { response } => {
+                let _ = response.send(state.get_appearance_settings());
+            }
+            DatabaseCommand::UpdateAppearanceSettings { settings, response } => {
+                let _ = response.send(state.update_appearance_settings(settings));
+            }
+            DatabaseCommand::CreateTerminalTheme {
+                label,
+                palette,
+                response,
+            } => {
+                let _ = response.send(state.create_terminal_theme(label, *palette));
+            }
+            DatabaseCommand::ListTerminalThemes { response } => {
+                let _ = response.send(state.list_terminal_themes());
+            }
+            DatabaseCommand::DeleteTerminalTheme { id, response } => {
+                let _ = response.send(state.delete_terminal_theme(&id));
+            }
+            DatabaseCommand::RegisterFontAsset { font, response } => {
+                let _ = response.send(state.register_font_asset(font));
+            }
+            DatabaseCommand::ListFontAssets { response } => {
+                let _ = response.send(state.list_font_assets());
+            }
+            DatabaseCommand::DeleteFontAsset { id, response } => {
+                let _ = response.send(state.delete_font_asset(&id));
+            }
+            DatabaseCommand::CreateSnippet {
+                label,
+                body,
+                response,
+            } => {
+                let _ = response.send(state.create_snippet(label, body));
+            }
+            DatabaseCommand::UpdateSnippet {
+                id,
+                label,
+                body,
+                response,
+            } => {
+                let _ = response.send(state.update_snippet(id, label, body));
+            }
+            DatabaseCommand::ListSnippets { response } => {
+                let _ = response.send(state.list_snippets());
+            }
+            DatabaseCommand::GetSnippet { id, response } => {
+                let _ = response.send(state.get_snippet(&id));
+            }
+            DatabaseCommand::DeleteSnippet { id, response } => {
+                let _ = response.send(state.delete_snippet(&id));
+            }
             DatabaseCommand::CreateCredential {
                 label,
                 username,
@@ -1218,6 +1561,32 @@ mod tests {
         }
     }
 
+    fn terminal_palette() -> TerminalPalette {
+        TerminalPalette {
+            background: "#090d16".to_owned(),
+            foreground: "#c8d0df".to_owned(),
+            cursor: "#6be6d2".to_owned(),
+            cursor_accent: "#090d16".to_owned(),
+            selection_background: "#294a50".to_owned(),
+            black: "#11151f".to_owned(),
+            red: "#ff7888".to_owned(),
+            green: "#6be6d2".to_owned(),
+            yellow: "#ffc66d".to_owned(),
+            blue: "#7aa2f7".to_owned(),
+            magenta: "#b29cff".to_owned(),
+            cyan: "#6be6d2".to_owned(),
+            white: "#c8d0df".to_owned(),
+            bright_black: "#667188".to_owned(),
+            bright_red: "#ff9aa6".to_owned(),
+            bright_green: "#93f2e2".to_owned(),
+            bright_yellow: "#ffdb9e".to_owned(),
+            bright_blue: "#a5c2ff".to_owned(),
+            bright_magenta: "#c9bdff".to_owned(),
+            bright_cyan: "#9af4e5".to_owned(),
+            bright_white: "#f1f5ff".to_owned(),
+        }
+    }
+
     #[tokio::test]
     async fn actor_owns_and_serializes_the_vault_lifecycle() {
         let directory = tempdir().expect("tempdir");
@@ -1299,6 +1668,117 @@ mod tests {
             Err(DatabaseActorError::Unavailable)
         ));
         assert_eq!(LocalVault::presence(&root), VaultPresence::Locked);
+    }
+
+    #[tokio::test]
+    async fn actor_serializes_appearance_font_theme_and_snippet_commands() {
+        let directory = tempdir().expect("tempdir");
+        let actor = DatabaseActorHandle::spawn(directory.path().join("vault"), test_config(8))
+            .expect("start actor");
+        actor
+            .create(Zeroizing::new("123456".to_owned()))
+            .await
+            .expect("create vault");
+
+        assert_eq!(
+            actor
+                .get_appearance_settings()
+                .await
+                .expect("default Appearance"),
+            AppearanceSettings::defaults()
+        );
+        let theme = actor
+            .create_terminal_theme("Actor theme".to_owned(), terminal_palette())
+            .await
+            .expect("create Theme");
+        assert_eq!(
+            actor
+                .list_terminal_themes()
+                .await
+                .expect("list Themes")
+                .as_slice(),
+            std::slice::from_ref(&theme)
+        );
+
+        let font = FontAssetSummary::new(
+            "font-actor".to_owned(),
+            "Actor Mono".to_owned(),
+            "Regular".to_owned(),
+            crate::FontAssetFormat::Ttf,
+            "b".repeat(64),
+            1_024,
+            1,
+        )
+        .expect("Font Asset");
+        actor
+            .register_font_asset(font.clone())
+            .await
+            .expect("register Font");
+        let settings = AppearanceSettings::new(
+            crate::AppTheme::System,
+            theme.id().to_owned(),
+            crate::FontSourceKind::Imported,
+            Some(font.id().to_owned()),
+            font.family().to_owned(),
+            16,
+            1_500,
+            true,
+            crate::AmbiguousWidth::Wide,
+        )
+        .expect("Appearance");
+        assert_eq!(
+            actor
+                .update_appearance_settings(settings.clone())
+                .await
+                .expect("update Appearance"),
+            settings
+        );
+
+        let snippet = actor
+            .create_snippet(
+                "Actor marker".to_owned(),
+                Zeroizing::new("echo {{marker}}".to_owned()),
+            )
+            .await
+            .expect("create Snippet");
+        assert_eq!(snippet.variables(), ["marker"]);
+        assert_eq!(
+            actor
+                .list_snippets()
+                .await
+                .expect("list Snippets")
+                .as_slice(),
+            std::slice::from_ref(&snippet)
+        );
+        assert_eq!(
+            actor
+                .get_snippet(snippet.id().to_owned())
+                .await
+                .expect("get Snippet")
+                .body(),
+            "echo {{marker}}"
+        );
+        actor
+            .update_snippet(
+                snippet.id().to_owned(),
+                "Actor marker updated".to_owned(),
+                Zeroizing::new("printf '%s' {{marker}}".to_owned()),
+            )
+            .await
+            .expect("update Snippet");
+        assert!(
+            actor
+                .delete_snippet(snippet.id().to_owned())
+                .await
+                .expect("delete Snippet")
+        );
+
+        actor.lock().await.expect("lock");
+        assert!(matches!(
+            actor.list_snippets().await,
+            Err(DatabaseActorError::VaultLocked)
+        ));
+        actor.shutdown().await.expect("shutdown");
     }
 
     #[tokio::test]
