@@ -812,8 +812,6 @@ function Assert-EvidenceContainsNoSensitiveFixtureValues {
     $script:WrongPrivateKeyPassphrase,
     $script:ExportPassphrase,
     $script:WrongExportPassphrase,
-    "246810",
-    "000000",
     $script:EncryptedKeyPath,
     $GeneratedExportPath,
     $script:InteractiveResponse,
@@ -823,13 +821,30 @@ function Assert-EvidenceContainsNoSensitiveFixtureValues {
     $script:RemoteForwardMarker,
     "BEGIN OPENSSH PRIVATE KEY"
   )
+  $TextOnlyNeedles = @(
+    "246810",
+    "000000"
+  )
+  $TextExtensions = @(
+    ".json",
+    ".log",
+    ".md",
+    ".txt"
+  )
   foreach ($File in Get-ChildItem -LiteralPath $RunDirectory -Recurse -File) {
     $Text = [System.Text.Encoding]::UTF8.GetString(
       [System.IO.File]::ReadAllBytes($File.FullName)
     )
     foreach ($Needle in $Needles) {
       if ($Text.Contains($Needle)) {
-        throw "A Windows sensitive fixture value leaked into QA evidence."
+        throw "A Windows sensitive fixture value leaked into QA evidence file '$($File.Name)'."
+      }
+    }
+    if ($TextExtensions -contains $File.Extension.ToLowerInvariant()) {
+      foreach ($Needle in $TextOnlyNeedles) {
+        if ($Text.Contains($Needle)) {
+          throw "A Windows PIN fixture leaked into QA text evidence file '$($File.Name)'."
+        }
       }
     }
   }

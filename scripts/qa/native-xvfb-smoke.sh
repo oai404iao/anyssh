@@ -471,18 +471,27 @@ ANYSSH_X11_WINDOW_MATCH="Confirm AnySSH PIN" \
   "$DRIVER" probe "$RUN_DIR/10d-private-key-export-pin.bmp" >/dev/null
 "$DRIVER" type "000000"
 "$DRIVER" enter
-sleep 2
-if ! ANYSSH_X11_WINDOW_MATCH="Confirm AnySSH PIN" \
-  "$DRIVER" probe "$RUN_DIR/10e-private-key-export-pin-retry.bmp" >/dev/null 2>&1; then
+sleep 0.5
+STEP_UP_RETRY_READY=0
+for _ in $(seq 1 160); do
+  if ANYSSH_X11_WINDOW_MATCH="Confirm AnySSH PIN" \
+    "$DRIVER" probe >/dev/null 2>&1; then
+    STEP_UP_RETRY_READY=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$STEP_UP_RETRY_READY" -ne 1 ]]; then
   echo "The native Vault step-up retry prompt did not appear." >&2
   exit 1
 fi
+ANYSSH_X11_WINDOW_MATCH="Confirm AnySSH PIN" \
+  "$DRIVER" probe "$RUN_DIR/10e-private-key-export-pin-retry.bmp" >/dev/null
 "$DRIVER" type "246810"
 "$DRIVER" enter
-sleep 2
 
 EXPORT_PASSPHRASE_READY=0
-for _ in $(seq 1 40); do
+for _ in $(seq 1 160); do
   if ANYSSH_X11_WINDOW_MATCH="Encrypt exported private key" \
     "$DRIVER" probe >/dev/null 2>&1; then
     EXPORT_PASSPHRASE_READY=1
@@ -500,12 +509,22 @@ ANYSSH_X11_WINDOW_MATCH="Encrypt exported private key" \
 "$DRIVER" tab
 "$DRIVER" type "$WRONG_GENERATED_EXPORT_PASSPHRASE"
 "$DRIVER" enter
-sleep 2
-if ! ANYSSH_X11_WINDOW_MATCH="Encrypt exported private key" \
-  "$DRIVER" probe "$RUN_DIR/10g-private-key-export-passphrase-retry.bmp" >/dev/null 2>&1; then
+sleep 0.5
+EXPORT_PASSPHRASE_RETRY_READY=0
+for _ in $(seq 1 80); do
+  if ANYSSH_X11_WINDOW_MATCH="Encrypt exported private key" \
+    "$DRIVER" probe >/dev/null 2>&1; then
+    EXPORT_PASSPHRASE_RETRY_READY=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$EXPORT_PASSPHRASE_RETRY_READY" -ne 1 ]]; then
   echo "The native export Passphrase retry prompt did not appear." >&2
   exit 1
 fi
+ANYSSH_X11_WINDOW_MATCH="Encrypt exported private key" \
+  "$DRIVER" probe "$RUN_DIR/10g-private-key-export-passphrase-retry.bmp" >/dev/null
 "$DRIVER" type "$GENERATED_EXPORT_PASSPHRASE"
 "$DRIVER" tab
 "$DRIVER" type "$GENERATED_EXPORT_PASSPHRASE"

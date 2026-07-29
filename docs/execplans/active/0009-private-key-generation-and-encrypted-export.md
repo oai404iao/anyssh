@@ -108,6 +108,12 @@
   `30425670349` 完成；Frontend、Browser E2E、OpenSSH、agent-browser、
   Rust、Linux Container 和 Android Build 通过，Windows/Linux Native QA
   暴露自动化兼容问题并已修复，等待新 Commit 同 Commit CI。
+- [x] 2026-07-29：修复 Commit
+  `27af156e233c772f8d000359fcef3b60a17b0ded` 的 Run `30426639654`
+  证明 Windows Generation、PIN/Passphrase、ACL、Junction/ADS、
+  Export/Reimport、OpenSSH Marker、重启与 Changed-Key 全部执行成功；Job
+  仅因短 PIN 在 PNG 压缩字节中的假阳性 Secret Scan 失败。Linux X11 已进入
+  Step-up，但共享 Runner 的 Argon2 Retry 超过固定等待。两项 QA 判定已修复。
 - [ ] 运行同 Commit GitHub Actions，检查全部 Artifact 和 Windows/Linux/
   Android Build Hash。
 
@@ -236,6 +242,12 @@ git diff --check
   `$ErrorActionPreference = "Stop"` 下会把 `cargo test 2>&1 | Tee-Object`
   的正常编译 stderr 变成终止性 `NativeCommandError`；QA 改为
   `Start-Process` 分离重定向 stdout/stderr，并只按 Process Exit Code 判定。
+- 2026-07-29：六位 PIN 直接扫描 PNG Binary 会命中压缩数据中的偶然
+  `000000` Byte Sequence。长 Secret/Path 继续扫描全部 Evidence；短 PIN 改为
+  只扫描 `.txt/.log/.json/.md`，Native Prompt Screenshot 由人工确认 Masked。
+- 2026-07-29：Windows Runner 的 Vault PIN Argon2 Step-up 已证明可能超过两秒；
+  X11 错误/正确 PIN 和 Passphrase Retry 改为有界 Poll，而不是固定 Sleep 后
+  单次探测。
 
 ## Decision Log
 
