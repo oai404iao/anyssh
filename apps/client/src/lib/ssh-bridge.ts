@@ -21,6 +21,25 @@ export interface ConnectSavedHostRequest {
   rows: number;
 }
 
+export type SshPortForwardKind = "local" | "remote" | "dynamic";
+
+export interface StartSshPortForwardRequest {
+  kind: SshPortForwardKind;
+  bindHost: string;
+  bindPort: number;
+  destinationHost?: string;
+  destinationPort?: number;
+}
+
+export interface SshPortForwardSummary {
+  id: string;
+  kind: SshPortForwardKind;
+  bindHost: string;
+  boundPort: number;
+  destinationHost?: string;
+  destinationPort?: number;
+}
+
 export interface JumpHostRequest {
   host: string;
   port: number;
@@ -105,10 +124,12 @@ interface PreviewSession {
   changedHostKey: HostKeyChangedEvent | null;
   authenticationChallenge: AuthenticationChallengeEvent | null;
   connected: boolean;
+  portForwards: Map<string, SshPortForwardSummary>;
 }
 
 const previewSessions = new Map<string, PreviewSession>();
 let nextPreviewId = 1;
+let nextPreviewForwardId = 1;
 let nextHostKeyRequestId = 1;
 let nextAuthenticationRequestId = 1;
 const encoder = new TextEncoder();
@@ -235,6 +256,37 @@ export async function resizeSsh(
   await invoke("ssh_resize", { sessionId, columns, rows });
 }
 
+export async function startSshPortForward(
+  sessionId: string,
+  request: StartSshPortForwardRequest,
+): Promise<SshPortForwardSummary> {
+  if (!isNativeRuntime) {
+    return startPreviewPortForward(sessionId, request);
+  }
+
+  return invoke<SshPortForwardSummary>("ssh_forward_start", {
+    request: { sessionId, ...request },
+  });
+}
+
+export async function stopSshPortForward(
+  sessionId: string,
+  forwardId: string,
+): Promise<void> {
+  if (!isNativeRuntime) {
+    const session = previewSessions.get(sessionId);
+    if (!session) {
+      throw new Error("SSH session is already closed.");
+    }
+    session.portForwards.delete(forwardId);
+    return;
+  }
+
+  await invoke("ssh_forward_stop", {
+    request: { sessionId, forwardId },
+  });
+}
+
 export async function disconnectSsh(sessionId: string): Promise<void> {
   if (!isNativeRuntime) {
     const session = previewSessions.get(sessionId);
@@ -266,6 +318,7 @@ function connectPreview(
     changedHostKey,
     authenticationChallenge,
     connected: false,
+    portForwards: new Map(),
   });
 
   queueMicrotask(() => callbacks.onEvent({ type: "connecting" }));
@@ -278,6 +331,74 @@ function connectPreview(
   );
 
   return Promise.resolve(sessionId);
+}
+
+function startPreviewPortForward(
+  sessionId: string,
+  request: StartSshPortForwardRequest,
+): SshPortForwardSummary {
+  const session = previewSessions.get(sessionId);
+  if (!session?.connected) {
+    throw new Error("SSH session is already closed.");
+  }
+  if (!["local", "remote", "dynamic"].includes(request.kind)) {
+    throw new Error("Port forward request is invalid.");
+  }
+  const bindHost = normalizePreviewLoopback(request.bindHost);
+  if (
+    !Number.isInteger(request.bindPort) ||
+    request.bindPort < 0 ||
+    request.bindPort > 65_535
+  ) {
+    throw new Error("Port forward request is invalid.");
+  }
+  const dynamic = request.kind === "dynamic";
+  const destinationHost = request.destinationHost?.trim();
+  const destinationPort = request.destinationPort;
+  if (
+    dynamic
+      ? destinationHost !== undefined || destinationPort !== undefined
+      : !destinationHost ||
+        destinationHost.length > 255 ||
+        /\s/u.test(destinationHost) ||
+        Array.from(destinationHost).some((character) => {
+          const codePoint = character.codePointAt(0) ?? 0;
+          return codePoint <= 0x1f || codePoint === 0x7f;
+        }) ||
+        !Number.isInteger(destinationPort) ||
+        (destinationPort ?? 0) < 1 ||
+        (destinationPort ?? 0) > 65_535
+  ) {
+    throw new Error("Port forward destination is invalid.");
+  }
+  if (session.portForwards.size >= 16) {
+    throw new Error("Maximum active port forwards reached.");
+  }
+
+  const sequence = nextPreviewForwardId++;
+  const summary: SshPortForwardSummary = {
+    id: `preview-forward-${sequence}`,
+    kind: request.kind,
+    bindHost,
+    boundPort:
+      request.bindPort === 0 ? 40_000 + (sequence % 20_000) : request.bindPort,
+    ...(dynamic
+      ? {}
+      : {
+          destinationHost,
+          destinationPort,
+        }),
+  };
+  session.portForwards.set(summary.id, summary);
+  return summary;
+}
+
+function normalizePreviewLoopback(value: string): string {
+  const normalized = value.trim();
+  if (normalized === "127.0.0.1" || normalized === "::1") {
+    return normalized;
+  }
+  throw new Error("Port forward bind address must be loopback.");
 }
 
 function respondPreviewAuthentication(

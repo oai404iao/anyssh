@@ -89,6 +89,16 @@ WAYLAND_SOCKET="wayland-anyssh"
 SESSION_GROUP=""
 XVFB_PID=""
 INTERACTIVE_RESPONSE="otp-$RANDOM-$RANDOM"
+FORWARD_ECHO_PORT=8080
+LOCAL_FORWARD_PORT=18080
+DYNAMIC_FORWARD_PORT=18081
+REMOTE_FORWARD_PORT=18082
+REMOTE_DESTINATION_PORT=18083
+TAB_CLOSE_FORWARD_PORT=18085
+LOCAL_FORWARD_MARKER="wayland-local-$RANDOM-$RANDOM"
+DYNAMIC_FORWARD_MARKER="wayland-dynamic-$RANDOM-$RANDOM"
+REMOTE_FORWARD_MARKER="wayland-remote-$RANDOM-$RANDOM"
+FORWARD_SERVER_PID=""
 
 cleanup() {
   if [[ -n "$SESSION_GROUP" ]]; then
@@ -100,6 +110,10 @@ cleanup() {
     kill -TERM "$XVFB_PID" >/dev/null 2>&1 || true
     wait "$XVFB_PID" >/dev/null 2>&1 || true
   fi
+  if [[ -n "$FORWARD_SERVER_PID" ]]; then
+    kill "$FORWARD_SERVER_PID" >/dev/null 2>&1 || true
+    wait "$FORWARD_SERVER_PID" >/dev/null 2>&1 || true
+  fi
   docker rm -f "$CONTAINER_NAME" "$PAM_CONTAINER_NAME" >/dev/null 2>&1 || true
   rm -rf \
     "$RUN_DIR/xdg-cache" \
@@ -109,6 +123,12 @@ cleanup() {
   rm -f "$RUN_DIR/app.pid" "$RUN_DIR/dbus-address"
 }
 trap cleanup EXIT
+
+scroll_connection_panel_top() {
+  "$DRIVER" click 1240 250
+  "$DRIVER" scroll-up 24
+  sleep 0.5
+}
 
 for command in \
   cargo \
@@ -121,6 +141,7 @@ for command in \
   ibus-daemon \
   od \
   pkg-config \
+  python3 \
   setsid \
   ss \
   timeout \
@@ -153,6 +174,16 @@ if ss -ltn 2>/dev/null | grep -Eq '127\.0\.0\.1:(1420|2222|2223)[[:space:]]'; th
   echo "Port 1420, 2222, or 2223 is already in use by another process." >&2
   exit 1
 fi
+for port in \
+  "$LOCAL_FORWARD_PORT" \
+  "$DYNAMIC_FORWARD_PORT" \
+  "$REMOTE_DESTINATION_PORT" \
+  "$TAB_CLOSE_FORWARD_PORT"; do
+  if ss -ltn 2>/dev/null | grep -Eq "127\\.0\\.0\\.1:${port}[[:space:]]"; then
+    echo "Port $port is already in use; it is reserved by this smoke test." >&2
+    exit 1
+  fi
+done
 
 mkdir -p \
   "$RUN_DIR/xdg-cache" \
@@ -199,14 +230,23 @@ docker run \
   --env "ANYSSH_OTP_TOKEN=$INTERACTIVE_RESPONSE" \
   "$PAM_IMAGE_NAME" >/dev/null
 
+docker exec -d "$CONTAINER_NAME" \
+  sh -c "exec nc -lk -p $FORWARD_ECHO_PORT -e /bin/cat"
+
 for _ in $(seq 1 100); do
-  if tcp_port_ready 2222 && tcp_port_ready 2223; then
+  if tcp_port_ready 2222 \
+    && tcp_port_ready 2223 \
+    && docker exec "$CONTAINER_NAME" \
+      nc -z -w 1 127.0.0.1 "$FORWARD_ECHO_PORT" >/dev/null 2>&1; then
     break
   fi
   sleep 0.1
 done
 
-if ! tcp_port_ready 2222 || ! tcp_port_ready 2223; then
+if ! tcp_port_ready 2222 \
+  || ! tcp_port_ready 2223 \
+  || ! docker exec "$CONTAINER_NAME" \
+    nc -z -w 1 127.0.0.1 "$FORWARD_ECHO_PORT" >/dev/null 2>&1; then
   echo "OpenSSH fixture did not become ready." >&2
   docker logs "$CONTAINER_NAME" >&2 || true
   docker logs "$PAM_CONTAINER_NAME" >&2 || true
@@ -440,9 +480,190 @@ fi
 } >"$RUN_DIR/remote-ime-path.txt"
 
 "$DRIVER" probe "$RUN_DIR/04-terminal-ime-command.bmp" >/dev/null
+
+"$DRIVER" click 1200 704
+"$DRIVER" ctrl-a
+"$DRIVER" type "$LOCAL_FORWARD_PORT"
+"$DRIVER" click 1060 775
+"$DRIVER" ctrl-a
+"$DRIVER" type "127.0.0.1"
+"$DRIVER" click 1200 775
+"$DRIVER" ctrl-a
+"$DRIVER" type "$FORWARD_ECHO_PORT"
+"$DRIVER" tab
+"$DRIVER" enter
+sleep 1
+for _ in $(seq 1 5); do
+  "$DRIVER" shift-tab
+done
+"$DRIVER" down
+"$DRIVER" down
+"$DRIVER" tab
+"$DRIVER" tab
+"$DRIVER" ctrl-a
+"$DRIVER" type "$DYNAMIC_FORWARD_PORT"
+"$DRIVER" tab
+"$DRIVER" enter
+sleep 1
+"$DRIVER" shift-tab
+"$DRIVER" shift-tab
+"$DRIVER" shift-tab
+"$DRIVER" up
+"$DRIVER" tab
+"$DRIVER" tab
+"$DRIVER" ctrl-a
+"$DRIVER" type "$REMOTE_FORWARD_PORT"
+"$DRIVER" tab
+"$DRIVER" tab
+"$DRIVER" ctrl-a
+"$DRIVER" type "$REMOTE_DESTINATION_PORT"
+"$DRIVER" tab
+"$DRIVER" enter
+sleep 2
+"$DRIVER" probe "$RUN_DIR/04a-port-forwarding.bmp" >/dev/null
+
+for port in "$LOCAL_FORWARD_PORT" "$DYNAMIC_FORWARD_PORT"; do
+  if ! ss -ltn 2>/dev/null |
+    grep -Eq "127\\.0\\.0\\.1:${port}[[:space:]]"; then
+    echo "The Wayland Forward listener on port $port was not created." >&2
+    exit 1
+  fi
+done
+if ! docker exec "$CONTAINER_NAME" \
+  nc -z -w 1 127.0.0.1 "$REMOTE_FORWARD_PORT" >/dev/null 2>&1; then
+  echo "The Wayland Remote Forward was not registered." >&2
+  exit 1
+fi
+
+python3 - "$LOCAL_FORWARD_PORT" "$LOCAL_FORWARD_MARKER" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+payload = (sys.argv[2] + "\n").encode()
+with socket.create_connection(("127.0.0.1", port), timeout=5) as stream:
+    stream.sendall(payload)
+    stream.shutdown(socket.SHUT_WR)
+    echoed = b""
+    while True:
+        chunk = stream.recv(65536)
+        if not chunk:
+            break
+        echoed += chunk
+if echoed != payload:
+    raise SystemExit("Wayland Local Forward payload mismatch")
+PY
+
+python3 - \
+  "$DYNAMIC_FORWARD_PORT" \
+  "$FORWARD_ECHO_PORT" \
+  "$DYNAMIC_FORWARD_MARKER" <<'PY'
+import socket
+import sys
+
+proxy_port = int(sys.argv[1])
+destination_port = int(sys.argv[2])
+payload = (sys.argv[3] + "\n").encode()
+with socket.create_connection(("127.0.0.1", proxy_port), timeout=5) as stream:
+    stream.sendall(b"\x05\x01\x00")
+    if stream.recv(2) != b"\x05\x00":
+        raise SystemExit("Wayland SOCKS5 method negotiation failed")
+    stream.sendall(
+        b"\x05\x01\x00\x01\x7f\x00\x00\x01"
+        + destination_port.to_bytes(2, "big")
+    )
+    reply = b""
+    while len(reply) < 10:
+        chunk = stream.recv(10 - len(reply))
+        if not chunk:
+            raise SystemExit("Wayland SOCKS5 reply was truncated")
+        reply += chunk
+    if reply[1] != 0:
+        raise SystemExit("Wayland SOCKS5 CONNECT was rejected")
+    stream.sendall(payload)
+    stream.shutdown(socket.SHUT_WR)
+    echoed = b""
+    while True:
+        chunk = stream.recv(65536)
+        if not chunk:
+            break
+        echoed += chunk
+if echoed != payload:
+    raise SystemExit("Wayland Dynamic Forward payload mismatch")
+PY
+
+python3 - \
+  "$REMOTE_DESTINATION_PORT" \
+  "$REMOTE_FORWARD_MARKER" \
+  >"$RUN_DIR/remote-forward-server.log" 2>&1 <<'PY' &
+import socket
+import sys
+
+port = int(sys.argv[1])
+expected = (sys.argv[2] + "\n").encode()
+with socket.socket() as listener:
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", port))
+    listener.listen(1)
+    connection, _ = listener.accept()
+    with connection:
+        received = b""
+        while not received.endswith(b"\n") and len(received) < 4096:
+            chunk = connection.recv(4096)
+            if not chunk:
+                break
+            received += chunk
+        if received != expected:
+            raise SystemExit("Wayland Remote Forward payload mismatch")
+        connection.sendall(b"ANYSSH_WAYLAND_REMOTE_OK\n")
+PY
+FORWARD_SERVER_PID=$!
+for _ in $(seq 1 50); do
+  if ss -ltn 2>/dev/null |
+    grep -Eq "127\\.0\\.0\\.1:${REMOTE_DESTINATION_PORT}[[:space:]]"; then
+    break
+  fi
+  sleep 0.1
+done
+REMOTE_FORWARD_RESPONSE="$(
+  printf '%s\n' "$REMOTE_FORWARD_MARKER" |
+    docker exec -i "$CONTAINER_NAME" \
+      nc -w 5 127.0.0.1 "$REMOTE_FORWARD_PORT" || true
+)"
+if [[ "$REMOTE_FORWARD_RESPONSE" != "ANYSSH_WAYLAND_REMOTE_OK" ]]; then
+  echo "The Wayland Remote Forward did not reach the local destination." >&2
+  exit 1
+fi
+wait "$FORWARD_SERVER_PID"
+FORWARD_SERVER_PID=""
+
+for marker in \
+  "$LOCAL_FORWARD_MARKER" \
+  "$DYNAMIC_FORWARD_MARKER" \
+  "$REMOTE_FORWARD_MARKER"; do
+  if grep -R -a -F "$marker" "$VAULT_ROOT" >/dev/null 2>&1 \
+    || grep -a -F "$marker" "$RUN_DIR/app.log" >/dev/null 2>&1; then
+    echo "A Wayland Port Forward payload leaked into Vault or app logs." >&2
+    exit 1
+  fi
+done
+
 "$DRIVER" click 1117 44
 sleep 1
 "$DRIVER" probe "$RUN_DIR/05-disconnected.bmp" >/dev/null
+for port in "$LOCAL_FORWARD_PORT" "$DYNAMIC_FORWARD_PORT"; do
+  if ss -ltn 2>/dev/null |
+    grep -Eq "127\\.0\\.0\\.1:${port}[[:space:]]"; then
+    echo "Wayland Disconnect left Forward port $port open." >&2
+    exit 1
+  fi
+done
+if docker exec "$CONTAINER_NAME" \
+  nc -z -w 1 127.0.0.1 "$REMOTE_FORWARD_PORT" >/dev/null 2>&1; then
+  echo "Wayland Disconnect left the Remote Forward registered." >&2
+  exit 1
+fi
+scroll_connection_panel_top
 
 docker exec "$CONTAINER_NAME" rm -f /tmp/anyssh-wayland-trusted-ok
 set_ibus_engine "xkb:us::eng"
@@ -534,9 +755,27 @@ if grep -R -a -F "$INTERACTIVE_RESPONSE" "$VAULT_ROOT" >/dev/null 2>&1 \
   echo "The Keyboard-interactive response leaked into Wayland evidence or Vault files." >&2
   exit 1
 fi
+"$DRIVER" click 1200 740
+"$DRIVER" ctrl-a
+"$DRIVER" type "$TAB_CLOSE_FORWARD_PORT"
+"$DRIVER" tab
+"$DRIVER" tab
+"$DRIVER" tab
+"$DRIVER" enter
+sleep 1
+if ! ss -ltn 2>/dev/null |
+  grep -Eq "127\\.0\\.0\\.1:${TAB_CLOSE_FORWARD_PORT}[[:space:]]"; then
+  echo "The interactive Wayland Tab did not start its Local Forward." >&2
+  exit 1
+fi
 "$DRIVER" probe "$RUN_DIR/06c-multi-tab-interactive-connected.bmp" >/dev/null
 "$DRIVER" click 648 128
 sleep 1
+if ss -ltn 2>/dev/null |
+  grep -Eq "127\\.0\\.0\\.1:${TAB_CLOSE_FORWARD_PORT}[[:space:]]"; then
+  echo "Closing the interactive Wayland Tab left its Forward listener open." >&2
+  exit 1
+fi
 "$DRIVER" click 500 260
 sleep 0.5
 "$DRIVER" type " touch /tmp/anyssh-wayland-tab-after-close-ok"
@@ -565,6 +804,15 @@ if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
   echo "The AnySSH process exited unexpectedly." >&2
   exit 1
 fi
+for marker in \
+  "$LOCAL_FORWARD_MARKER" \
+  "$DYNAMIC_FORWARD_MARKER" \
+  "$REMOTE_FORWARD_MARKER"; do
+  if grep -R -a -F "$marker" "$RUN_DIR" >/dev/null 2>&1; then
+    echo "A Wayland Port Forward payload leaked into evidence." >&2
+    exit 1
+  fi
+done
 
 cat >"$RUN_DIR/report.md" <<EOF
 # AnySSH native Wayland and IME smoke report
@@ -587,14 +835,19 @@ cat >"$RUN_DIR/report.md" <<EOF
 - A remote file under \`/tmp/anyssh-ime-中文*\` and its recorded UTF-8 bytes proved
   that the committed text reached SSH. The suffix may vary with the packaged
   libpinyin candidate behavior used by the automation environment.
+- The Wayland-native Forward UI started real Local, unauthenticated Dynamic
+  SOCKS5, and Remote Loopback Forwards. External clients crossed russh while
+  payload markers stayed absent from Vault, logs, and evidence.
+- Disconnect removed both local listeners and the server-side Remote
+  registration.
 - Disconnect returned the application to the disconnected state.
 - A second native Wayland connection used durable Trust without another Host
   Key prompt.
 - While the durably trusted Session remained connected, a second Wayland Tab
   completed a masked RFC 4256 Challenge against OpenSSH PAM on a separate
   Endpoint and created \`/tmp/anyssh-wayland-interactive-ok\`.
-- Closing the interactive Tab left the first Session connected and accepting
-  a follow-up command.
+- Closing the interactive Tab removed its Session-scoped Local Forward and left
+  the first Session connected and accepting a follow-up command.
 - The session-bound response remained absent from Vault files and
   \`app.log\`.
 
@@ -604,6 +857,7 @@ cat >"$RUN_DIR/report.md" <<EOF
 - \`02-wayland-ready.bmp\`
 - \`03-host-key-dialog.bmp\`
 - \`04-terminal-ime-command.bmp\`
+- \`04a-port-forwarding.bmp\`
 - \`05-disconnected.bmp\`
 - \`06-durable-tofu-reconnect.bmp\`
 - \`06a-multi-tab-interactive-host-key.bmp\`

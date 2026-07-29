@@ -1,7 +1,8 @@
 # SSH Port Forwarding v1
 
-> 状态：设计中；等待 ExecPlan 0008 实现与验证
-> 日期：2026-07-28
+> 状态：实现中；Rust Core、Tauri/React、OpenSSH、Browser、X11 与 Wayland
+> 已验证，等待 Windows/Container/同 Commit CI
+> 日期：2026-07-29
 
 本文定义 Session-scoped Local、Remote 和 Dynamic TCP Forwarding。长期决策见
 Proposed ADR-0018。
@@ -40,7 +41,7 @@ Open/Forward Registration 必须由 Target Session Task 编排，不能把 Handl
 
 ```text
 SessionControl
-  -> bounded SessionCommand
+  -> bounded TerminalCommand + ForwardCommand
     -> Target Session Task owns russh Handle
        |- PTY Channel
        |- Forward Registry (max 16)
@@ -77,15 +78,16 @@ pub struct ForwardSummary {
 ```
 
 Forward ID 由 Rust 生成并只在当前 Session 内有效。Start/Stop 使用 oneshot
-Response；Long-running Failure 发送 metadata-only Forward Event，不包含 Payload
-或 SOCKS Request。
+Response。v1 不发送逐 Connection Event；Connection Failure 只关闭该 Stream，
+Session Closed 清空全部 Active Metadata，不把 SOCKS Destination 或 Payload
+放入 Event。
 
 ## Session Command 与 Cancellation
 
-`SessionCommand` 增加：
+Runtime 使用两条独立有界 Queue：
 
-- `StartForward { request, response }`
-- `StopForward { forward_id, response }`
+- `TerminalCommand::{Input, Resize}`。
+- `ForwardCommand::{Start, Stop}`，均带 oneshot Response。
 
 每个 Forward Entry 持有：
 
@@ -95,7 +97,9 @@ Response；Long-running Failure 发送 metadata-only Forward Event，不包含 P
 - 必要的 Accept Sender。
 
 Session Cancellation 先阻止新 Connection，再取消 Listener/Remote Registration，
-最后等待或中止 Connection Task。`cancel_tcpip_forward` 失败不能阻止本地 Cleanup。
+最后等待或中止 Connection Task。Stop 对合法但已不存在的 Forward ID 幂等成功。
+`cancel_tcpip_forward` 失败时本地 Connection 立即取消，但保留一个已取消 Entry
+供重试和 Session Cleanup；后到 Channel 一律拒绝。
 
 ## Local Forward
 
@@ -130,12 +134,14 @@ Payload。
    `tcpip_forward(bind_host, bind_port)`。
 2. Port 0 时保存 Server 返回的实际 Port。
 3. `ClientHandler::server_channel_open_forwarded_tcpip` 把 Channel、Connected/
-   Originator Metadata 和 Reply Handle 发送到有界 Queue；Queue 满时 Drop/Reject。
+   Originator Metadata 和 Reply Handle 发送到有界 Queue；Queue 满时显式
+   `ResourceShortage` Reject，Queue Closed/非 Target Handler 显式
+   `AdministrativelyProhibited` Reject。
 4. Session Task 查找匹配 Active Registration，并尝试连接本地 Destination。
 5. Local Connect 成功后 Accept Remote Channel，并启动 Copy；失败、超时、已停止
    或超限时 Reject。
-6. Stop 调用 `cancel_tcpip_forward` 并立即从 Active Registry 移除，后到 Channel
-   一律拒绝。
+6. Stop 先逻辑取消 Entry，再调用 `cancel_tcpip_forward`；成功后移除。失败时保留
+   已取消 Cleanup Entry，后到 Channel 一律拒绝。
 
 ## Backpressure 与资源上限
 
@@ -145,7 +151,8 @@ Payload。
 - SOCKS Handshake、SSH Channel Open 和 Local Destination Connect 使用 Timeout。
 - 使用 `copy_bidirectional`/Async Stream Backpressure，不建立全量 Payload
   Buffer。
-- Forward Event 不逐连接输出字节数；v1 只报告 Started、Stopped 和 Error。
+- 不逐连接输出字节数或目标；v1 只通过 Start/Stop Response 和 Session Lifecycle
+  更新 UI。
 
 ## Tauri 与 Frontend
 

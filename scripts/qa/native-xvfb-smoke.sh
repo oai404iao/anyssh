@@ -12,9 +12,20 @@ PRIVATE_KEY_FIXTURE="/tmp/000-anyssh-native-import-key"
 PRIVATE_KEY_PASSPHRASE="native-key-passphrase"
 WRONG_PRIVATE_KEY_PASSPHRASE="wrong-key-passphrase"
 INTERACTIVE_RESPONSE="otp-$RANDOM-$RANDOM"
+FORWARD_ECHO_PORT=8080
+LOCAL_FORWARD_PORT=18080
+DYNAMIC_FORWARD_PORT=18081
+REMOTE_FORWARD_PORT=18082
+REMOTE_DESTINATION_PORT=18083
+VAULT_LOCK_FORWARD_PORT=18084
+TAB_CLOSE_FORWARD_PORT=18085
+LOCAL_FORWARD_MARKER="local-forward-$RANDOM-$RANDOM"
+DYNAMIC_FORWARD_MARKER="dynamic-forward-$RANDOM-$RANDOM"
+REMOTE_FORWARD_MARKER="remote-forward-$RANDOM-$RANDOM"
 APP_GROUP=""
 XVFB_PID=""
 AGENT_PID=""
+FORWARD_SERVER_PID=""
 AGENT_SOCKET=""
 AGENT_FINGERPRINT=""
 
@@ -32,6 +43,10 @@ cleanup() {
     kill "$AGENT_PID" >/dev/null 2>&1 || true
     wait "$AGENT_PID" >/dev/null 2>&1 || true
   fi
+  if [[ -n "$FORWARD_SERVER_PID" ]]; then
+    kill "$FORWARD_SERVER_PID" >/dev/null 2>&1 || true
+    wait "$FORWARD_SERVER_PID" >/dev/null 2>&1 || true
+  fi
   docker rm -f "$CONTAINER_NAME" "$PAM_CONTAINER_NAME" >/dev/null 2>&1 || true
   rm -f "$PRIVATE_KEY_FIXTURE" "$PRIVATE_KEY_FIXTURE.pub"
   if [[ -n "$AGENT_SOCKET" ]]; then
@@ -40,6 +55,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
+scroll_connection_panel_top() {
+  "$DRIVER" click 1240 250
+  "$DRIVER" scroll-up 24
+  sleep 0.5
+}
+
 for command in \
   cc \
   dbus-run-session \
@@ -47,6 +68,7 @@ for command in \
   grep \
   pkg-config \
   pnpm \
+  python3 \
   setsid \
   ss \
   ssh-add \
@@ -73,6 +95,17 @@ if ss -ltn 2>/dev/null | grep -Eq '127\.0\.0\.1:2223[[:space:]]'; then
   echo "Port 2223 is already in use; it is reserved by this smoke test." >&2
   exit 1
 fi
+for port in \
+  "$LOCAL_FORWARD_PORT" \
+  "$DYNAMIC_FORWARD_PORT" \
+  "$REMOTE_DESTINATION_PORT" \
+  "$VAULT_LOCK_FORWARD_PORT" \
+  "$TAB_CLOSE_FORWARD_PORT"; do
+  if ss -ltn 2>/dev/null | grep -Eq "127\\.0\\.0\\.1:${port}[[:space:]]"; then
+    echo "Port $port is already in use; it is reserved by this smoke test." >&2
+    exit 1
+  fi
+done
 
 mkdir -p "$RUN_DIR"
 mkdir -p "$RUN_DIR/xdg-cache" "$RUN_DIR/xdg-config" "$RUN_DIR/xdg-data"
@@ -139,6 +172,9 @@ docker run \
   --env "ANYSSH_OTP_TOKEN=$INTERACTIVE_RESPONSE" \
   "$PAM_IMAGE_NAME" >/dev/null
 
+docker exec -d "$CONTAINER_NAME" \
+  sh -c "exec nc -lk -p $FORWARD_ECHO_PORT -e /bin/cat"
+
 docker exec "$CONTAINER_NAME" \
   sh -c 'mkdir -p /home/anyssh/.ssh && chmod 700 /home/anyssh/.ssh'
 docker cp \
@@ -156,14 +192,18 @@ ssh-keygen \
 
 for _ in $(seq 1 50); do
   if ssh-keyscan -p 2222 127.0.0.1 >/dev/null 2>&1 \
-    && ssh-keyscan -p 2223 127.0.0.1 >/dev/null 2>&1; then
+    && ssh-keyscan -p 2223 127.0.0.1 >/dev/null 2>&1 \
+    && docker exec "$CONTAINER_NAME" \
+      nc -z -w 1 127.0.0.1 "$FORWARD_ECHO_PORT" >/dev/null 2>&1; then
     break
   fi
   sleep 0.1
 done
 
 if ! ssh-keyscan -p 2222 127.0.0.1 >/dev/null 2>&1 \
-  || ! ssh-keyscan -p 2223 127.0.0.1 >/dev/null 2>&1; then
+  || ! ssh-keyscan -p 2223 127.0.0.1 >/dev/null 2>&1 \
+  || ! docker exec "$CONTAINER_NAME" \
+    nc -z -w 1 127.0.0.1 "$FORWARD_ECHO_PORT" >/dev/null 2>&1; then
   echo "OpenSSH fixture did not become ready." >&2
   exit 1
 fi
@@ -377,6 +417,7 @@ done
 
 "$DRIVER" click 100 106
 sleep 1
+scroll_connection_panel_top
 "$DRIVER" click 1100 440
 sleep 0.25
 "$DRIVER" type "anyssh-test"
@@ -432,9 +473,196 @@ if [[ "$LARGE_OUTPUT_SUCCEEDED" -ne 1 ]]; then
 fi
 
 "$DRIVER" probe "$RUN_DIR/14-command-succeeded.bmp" >/dev/null
+
+# Configure the visible Local form, then Tab from Destination port to Start.
+"$DRIVER" click 1200 704
+"$DRIVER" ctrl-a
+"$DRIVER" type "$LOCAL_FORWARD_PORT"
+"$DRIVER" click 1060 775
+"$DRIVER" ctrl-a
+"$DRIVER" type "127.0.0.1"
+"$DRIVER" click 1200 775
+"$DRIVER" ctrl-a
+"$DRIVER" type "$FORWARD_ECHO_PORT"
+"$DRIVER" tab
+"$DRIVER" enter
+sleep 1
+
+# Rewind to Kind, switch Local -> Dynamic, then set the Dynamic bind port.
+for _ in $(seq 1 5); do
+  "$DRIVER" shift-tab
+done
+"$DRIVER" down
+"$DRIVER" down
+"$DRIVER" tab
+"$DRIVER" tab
+"$DRIVER" ctrl-a
+"$DRIVER" type "$DYNAMIC_FORWARD_PORT"
+"$DRIVER" tab
+"$DRIVER" enter
+sleep 1
+
+# Rewind to Kind, switch Dynamic -> Remote, and configure the local destination.
+"$DRIVER" shift-tab
+"$DRIVER" shift-tab
+"$DRIVER" shift-tab
+"$DRIVER" up
+"$DRIVER" tab
+"$DRIVER" tab
+"$DRIVER" ctrl-a
+"$DRIVER" type "$REMOTE_FORWARD_PORT"
+"$DRIVER" tab
+"$DRIVER" tab
+"$DRIVER" ctrl-a
+"$DRIVER" type "$REMOTE_DESTINATION_PORT"
+"$DRIVER" tab
+"$DRIVER" enter
+sleep 2
+"$DRIVER" probe "$RUN_DIR/14a-port-forwarding.bmp" >/dev/null
+
+for port in "$LOCAL_FORWARD_PORT" "$DYNAMIC_FORWARD_PORT"; do
+  if ! ss -ltn 2>/dev/null |
+    grep -Eq "127\\.0\\.0\\.1:${port}[[:space:]]"; then
+    echo "The native Forward listener on port $port was not created." >&2
+    "$DRIVER" probe "$RUN_DIR/failed-port-forward-listener.bmp" >/dev/null || true
+    exit 1
+  fi
+done
+if ! docker exec "$CONTAINER_NAME" \
+  nc -z -w 1 127.0.0.1 "$REMOTE_FORWARD_PORT" >/dev/null 2>&1; then
+  echo "The Remote Forward listener was not registered on the SSH Server." >&2
+  exit 1
+fi
+
+python3 - "$LOCAL_FORWARD_PORT" "$LOCAL_FORWARD_MARKER" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+payload = (sys.argv[2] + "\n").encode()
+with socket.create_connection(("127.0.0.1", port), timeout=5) as stream:
+    stream.sendall(payload)
+    stream.shutdown(socket.SHUT_WR)
+    echoed = b""
+    while True:
+        chunk = stream.recv(65536)
+        if not chunk:
+            break
+        echoed += chunk
+if echoed != payload:
+    raise SystemExit("Local Forward payload mismatch")
+PY
+
+python3 - \
+  "$DYNAMIC_FORWARD_PORT" \
+  "$FORWARD_ECHO_PORT" \
+  "$DYNAMIC_FORWARD_MARKER" <<'PY'
+import socket
+import sys
+
+proxy_port = int(sys.argv[1])
+destination_port = int(sys.argv[2])
+payload = (sys.argv[3] + "\n").encode()
+with socket.create_connection(("127.0.0.1", proxy_port), timeout=5) as stream:
+    stream.sendall(b"\x05\x01\x00")
+    if stream.recv(2) != b"\x05\x00":
+        raise SystemExit("SOCKS5 method negotiation failed")
+    stream.sendall(
+        b"\x05\x01\x00\x01\x7f\x00\x00\x01"
+        + destination_port.to_bytes(2, "big")
+    )
+    reply = b""
+    while len(reply) < 10:
+        chunk = stream.recv(10 - len(reply))
+        if not chunk:
+            raise SystemExit("SOCKS5 CONNECT reply was truncated")
+        reply += chunk
+    if reply[1] != 0:
+        raise SystemExit("SOCKS5 CONNECT was rejected")
+    stream.sendall(payload)
+    stream.shutdown(socket.SHUT_WR)
+    echoed = b""
+    while True:
+        chunk = stream.recv(65536)
+        if not chunk:
+            break
+        echoed += chunk
+if echoed != payload:
+    raise SystemExit("Dynamic Forward payload mismatch")
+PY
+
+python3 - \
+  "$REMOTE_DESTINATION_PORT" \
+  "$REMOTE_FORWARD_MARKER" \
+  >"$RUN_DIR/remote-forward-server.log" 2>&1 <<'PY' &
+import socket
+import sys
+
+port = int(sys.argv[1])
+expected = (sys.argv[2] + "\n").encode()
+with socket.socket() as listener:
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", port))
+    listener.listen(1)
+    connection, _ = listener.accept()
+    with connection:
+        received = b""
+        while not received.endswith(b"\n") and len(received) < 4096:
+            chunk = connection.recv(4096)
+            if not chunk:
+                break
+            received += chunk
+        if received != expected:
+            raise SystemExit("Remote Forward payload mismatch")
+        connection.sendall(b"ANYSSH_REMOTE_FORWARD_OK\n")
+PY
+FORWARD_SERVER_PID=$!
+for _ in $(seq 1 50); do
+  if ss -ltn 2>/dev/null |
+    grep -Eq "127\\.0\\.0\\.1:${REMOTE_DESTINATION_PORT}[[:space:]]"; then
+    break
+  fi
+  sleep 0.1
+done
+REMOTE_FORWARD_RESPONSE="$(
+  printf '%s\n' "$REMOTE_FORWARD_MARKER" |
+    docker exec -i "$CONTAINER_NAME" \
+      nc -w 5 127.0.0.1 "$REMOTE_FORWARD_PORT" || true
+)"
+if [[ "$REMOTE_FORWARD_RESPONSE" != "ANYSSH_REMOTE_FORWARD_OK" ]]; then
+  echo "The native Remote Forward did not reach the local destination." >&2
+  exit 1
+fi
+wait "$FORWARD_SERVER_PID"
+FORWARD_SERVER_PID=""
+
+for marker in \
+  "$LOCAL_FORWARD_MARKER" \
+  "$DYNAMIC_FORWARD_MARKER" \
+  "$REMOTE_FORWARD_MARKER"; do
+  if grep -R -a -F "$marker" "$VAULT_ROOT" >/dev/null 2>&1 \
+    || grep -a -F "$marker" "$RUN_DIR/native.log" >/dev/null 2>&1; then
+    echo "A Port Forward payload marker leaked into Vault or native logs." >&2
+    exit 1
+  fi
+done
+
 "$DRIVER" click 1117 44
 sleep 1
 "$DRIVER" probe "$RUN_DIR/15-disconnected.bmp" >/dev/null
+for port in "$LOCAL_FORWARD_PORT" "$DYNAMIC_FORWARD_PORT"; do
+  if ss -ltn 2>/dev/null |
+    grep -Eq "127\\.0\\.0\\.1:${port}[[:space:]]"; then
+    echo "Disconnect left the native Forward listener on port $port open." >&2
+    exit 1
+  fi
+done
+if docker exec "$CONTAINER_NAME" \
+  nc -z -w 1 127.0.0.1 "$REMOTE_FORWARD_PORT" >/dev/null 2>&1; then
+  echo "Disconnect left the Remote Forward registration open." >&2
+  exit 1
+fi
+scroll_connection_panel_top
 
 docker exec "$CONTAINER_NAME" rm -f /tmp/anyssh-native-trusted-ok
 TRUSTED_RECONNECT_SUCCEEDED=0
@@ -477,6 +705,7 @@ docker exec "$CONTAINER_NAME" rm -f \
   /tmp/anyssh-native-tab-after-close-ok
 "$DRIVER" click 912 128
 sleep 1
+scroll_connection_panel_top
 "$DRIVER" click 1100 220
 sleep 0.5
 "$DRIVER" ctrl-a
@@ -505,6 +734,24 @@ done
 if [[ "$TAB_TWO_CONNECTED" -ne 1 ]]; then
   echo "The second native Session Tab did not connect independently." >&2
   "$DRIVER" probe "$RUN_DIR/failed-multi-tab-connect.bmp" >/dev/null || true
+  exit 1
+fi
+
+"$DRIVER" click 1200 704
+"$DRIVER" ctrl-a
+"$DRIVER" type "$TAB_CLOSE_FORWARD_PORT"
+"$DRIVER" click 1060 775
+"$DRIVER" ctrl-a
+"$DRIVER" type "127.0.0.1"
+"$DRIVER" click 1200 775
+"$DRIVER" ctrl-a
+"$DRIVER" type "$FORWARD_ECHO_PORT"
+"$DRIVER" tab
+"$DRIVER" enter
+sleep 1
+if ! ss -ltn 2>/dev/null |
+  grep -Eq "127\\.0\\.0\\.1:${TAB_CLOSE_FORWARD_PORT}[[:space:]]"; then
+  echo "The second Tab did not start its Session-scoped Local Forward." >&2
   exit 1
 fi
 "$DRIVER" probe "$RUN_DIR/16a-multi-tab-connected.bmp" >/dev/null
@@ -537,6 +784,11 @@ fi
 
 "$DRIVER" click 648 128
 sleep 1
+if ss -ltn 2>/dev/null |
+  grep -Eq "127\\.0\\.0\\.1:${TAB_CLOSE_FORWARD_PORT}[[:space:]]"; then
+  echo "Closing the second Tab left its Local Forward listener open." >&2
+  exit 1
+fi
 "$DRIVER" click 500 280
 sleep 0.5
 "$DRIVER" type " touch /tmp/anyssh-native-tab-after-close-ok"
@@ -605,6 +857,7 @@ sleep 2
 
 "$DRIVER" click 100 106
 sleep 1
+scroll_connection_panel_top
 "$DRIVER" click 1100 440
 "$DRIVER" type "anyssh-test"
 "$DRIVER" click 1100 495
@@ -658,6 +911,7 @@ if ! ssh-keyscan -p 2222 127.0.0.1 >/dev/null 2>&1; then
   exit 1
 fi
 docker exec "$CONTAINER_NAME" rm -f /tmp/anyssh-native-rotation-bypass
+scroll_connection_panel_top
 "$DRIVER" click 1100 495
 sleep 2
 "$DRIVER" probe "$RUN_DIR/21-changed-host-key.bmp" >/dev/null
@@ -673,6 +927,7 @@ fi
 "$DRIVER" click 455 590
 sleep 1
 
+scroll_connection_panel_top
 "$DRIVER" click 1100 440
 "$DRIVER" shift-tab
 "$DRIVER" shift-tab
@@ -721,6 +976,7 @@ fi
 docker exec "$PAM_CONTAINER_NAME" rm -f /tmp/anyssh-native-interactive-lock-ok
 "$DRIVER" click 912 128
 sleep 1
+scroll_connection_panel_top
 "$DRIVER" click 1100 220
 sleep 0.5
 "$DRIVER" ctrl-a
@@ -761,10 +1017,29 @@ if [[ "$LOCK_COMPANION_CONNECTED" -ne 1 ]]; then
   "$DRIVER" probe "$RUN_DIR/failed-multi-tab-vault-lock.bmp" >/dev/null || true
   exit 1
 fi
+
+"$DRIVER" click 1200 740
+"$DRIVER" ctrl-a
+"$DRIVER" type "$VAULT_LOCK_FORWARD_PORT"
+"$DRIVER" tab
+"$DRIVER" tab
+"$DRIVER" tab
+"$DRIVER" enter
+sleep 1
+if ! ss -ltn 2>/dev/null |
+  grep -Eq "127\\.0\\.0\\.1:${VAULT_LOCK_FORWARD_PORT}[[:space:]]"; then
+  echo "The Keyboard-interactive Tab did not start its Local Forward." >&2
+  exit 1
+fi
 "$DRIVER" probe "$RUN_DIR/25a-multi-tab-before-vault-lock.bmp" >/dev/null
 "$DRIVER" click 1208 44
 sleep 1
 "$DRIVER" probe "$RUN_DIR/26-vault-locked-after-session.bmp" >/dev/null
+if ss -ltn 2>/dev/null |
+  grep -Eq "127\\.0\\.0\\.1:${VAULT_LOCK_FORWARD_PORT}[[:space:]]"; then
+  echo "Vault Lock left a Session Forward listener open." >&2
+  exit 1
+fi
 if grep -R -a -F "$INTERACTIVE_RESPONSE" "$VAULT_ROOT" >/dev/null 2>&1 \
   || grep -a -F "$INTERACTIVE_RESPONSE" "$RUN_DIR/native.log" >/dev/null 2>&1; then
   echo "The repeated Keyboard-interactive response leaked during Vault lock." >&2
@@ -775,6 +1050,15 @@ if ! kill -0 "$APP_GROUP" >/dev/null 2>&1; then
   echo "The native process exited unexpectedly." >&2
   exit 1
 fi
+for marker in \
+  "$LOCAL_FORWARD_MARKER" \
+  "$DYNAMIC_FORWARD_MARKER" \
+  "$REMOTE_FORWARD_MARKER"; do
+  if grep -R -a -F "$marker" "$RUN_DIR" >/dev/null 2>&1; then
+    echo "A Port Forward payload marker leaked into native evidence." >&2
+    exit 1
+  fi
+done
 
 cat >"$RUN_DIR/report.md" <<EOF
 # AnySSH native Xvfb smoke report
@@ -810,12 +1094,18 @@ cat >"$RUN_DIR/report.md" <<EOF
 - X11 keyboard events reached xterm.js and created \`/tmp/anyssh-native-ok\` remotely.
 - A 4 MiB terminal stream drained through Tauri/xterm acknowledgement backpressure and
   created \`/tmp/anyssh-native-large-ok\` after the output completed.
+- The real native UI started Local, unauthenticated Dynamic SOCKS5, and Remote
+  Loopback Forwards. External TCP clients crossed the owning russh Session in
+  both directions while payload markers stayed absent from IPC logs, Vault, and
+  evidence.
+- Disconnect removed the Local/Dynamic listeners and Remote registration.
 - Disconnect returned the UI to the disconnected state.
 - A second connection to the same Endpoint used durable Trust without another
   Host Key prompt.
 - Two native Session Tabs connected independently. The first Tab drained a
   4 MiB stream while inactive, and closing the second Tab left the first
-  Session connected and accepting a follow-up command.
+  Session connected and accepting a follow-up command. Closing the second Tab
+  also removed its Session-scoped Local Forward.
 - Known Hosts displayed metadata-only Trust, required a native GTK confirmation
   to forget it, and the next connection required TOFU again.
 - Rotating the same OpenSSH Endpoint produced a hard-block dialog and no remote
@@ -826,7 +1116,8 @@ cat >"$RUN_DIR/report.md" <<EOF
   \`/tmp/anyssh-native-interactive-ok\`, and remained absent from Vault files
   and the native log.
 - A second Keyboard-interactive Tab connected concurrently, then Lock Vault
-  drained both Sessions, removed their Tabs, and returned to the PIN gate.
+  drained both Sessions, removed their Tabs and active Forward listener, and
+  returned to the PIN gate.
 
 ## Evidence
 
@@ -844,6 +1135,7 @@ cat >"$RUN_DIR/report.md" <<EOF
 - \`12-password-entered.bmp\`
 - \`13-host-key-dialog.bmp\`
 - \`14-command-succeeded.bmp\`
+- \`14a-port-forwarding.bmp\`
 - \`15-disconnected.bmp\`
 - \`16-durable-tofu-reconnect.bmp\`
 - \`16a-multi-tab-connected.bmp\`

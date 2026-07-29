@@ -160,14 +160,16 @@
   Linux/Android/Windows Build Hash、Error Log、Vault Header 和 Secret Scan
   已人工检查。
 - ADR-0017 已接受，Multi Tab Terminal and Session Lifecycle ExecPlan 已完成。
-- Proposed ADR-0018、SSH Port Forwarding Design 和 ExecPlan 0008 已创建。下一步
-  是在当前 Rust Session 内实现 Loopback-only Local/Remote/Dynamic Forward，
-  Payload 不进入 WebView。
+- Proposed ADR-0018、SSH Port Forwarding Design 和 ExecPlan 0008 已进入最终
+  验证。Rust Session Runtime、Local/Remote/Dynamic、SOCKS5、Metadata-only
+  Tauri/React UI、Browser Preview 和真实 OpenSSH Direct/Jump Protocol 已实现；
+  X11/Wayland Native 已通过真实三类 Forward、Tab Close/Disconnect/Vault Lock
+  Cleanup 和 Payload Scan。Windows Native、Container 与同 Commit CI 待核验。
 - CI 工作流。
 
 当前仓库尚未完成：
 
-- SSH Local/Remote/Dynamic Forwarding 和后续 Key 管理。
+- SSH Port Forwarding 最终 Windows/CI 验证，以及后续 Key 管理。
 - OpenSSH `known_hosts` 导入/导出。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
 - Android Runtime、Content URI、软键盘与生命周期验证。

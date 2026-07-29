@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { access, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { createConnection, createServer } from "node:net";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -39,6 +41,15 @@ const interactiveResponse = requiredEnvironment(
 );
 const interactiveMarkerPath = requiredEnvironment(
   "ANYSSH_WINDOWS_INTERACTIVE_MARKER_PATH",
+);
+const localForwardMarker = requiredEnvironment(
+  "ANYSSH_WINDOWS_LOCAL_FORWARD_MARKER",
+);
+const dynamicForwardMarker = requiredEnvironment(
+  "ANYSSH_WINDOWS_DYNAMIC_FORWARD_MARKER",
+);
+const remoteForwardMarker = requiredEnvironment(
+  "ANYSSH_WINDOWS_REMOTE_FORWARD_MARKER",
 );
 const consoleEntries = [];
 const browserErrors = [];
@@ -220,10 +231,13 @@ async function createVaultAndRepository(targetPage) {
     "02b-system-agent-connected.png",
     "02b-system-agent-connected.txt",
   );
+  const forwardPorts = await verifyPortForwarding(targetPage);
   await targetPage.getByRole("button", { name: "Disconnect" }).click();
   await assert(
     targetPage.getByText("The SSH session has ended."),
   ).toBeVisible();
+  await assertPortClosed(forwardPorts.local);
+  await assertPortClosed(forwardPorts.remote);
   await verifyKnownHostForgetAndRetrust(targetPage);
   await verifyKeyboardInteractive(targetPage);
 
@@ -301,10 +315,28 @@ async function createVaultAndRepository(targetPage) {
     "03-repository-created.txt",
   );
 
+  const vaultLockAgentHost = targetPage
+    .locator(".resource-card")
+    .filter({ hasText: "Windows QA agent host" });
+  await vaultLockAgentHost.getByRole("button", { name: "Open" }).click();
+  await targetPage.getByRole("button", { name: "Connect saved Host" }).click();
+  await assert(
+    targetPage.getByText("Interactive shell is active."),
+  ).toBeVisible();
+  const vaultLockForwardPort = await startLocalForwardMetadata(
+    targetPage,
+    Number(sshPort),
+  );
+  await capture(
+    targetPage,
+    "03a-vault-lock-forwarding.png",
+    "03a-vault-lock-forwarding.txt",
+  );
   await targetPage.getByRole("button", { name: "Lock Vault" }).click();
   await assert(
     targetPage.getByRole("heading", { name: "Unlock AnySSH" }),
   ).toBeVisible();
+  await assertPortClosed(vaultLockForwardPort);
   await targetPage.getByLabel("PIN", { exact: true }).fill(wrongPin);
   await targetPage.getByRole("button", { name: "Unlock" }).click();
   await assert(targetPage.getByRole("alert")).toBeVisible();
@@ -596,6 +628,120 @@ async function verifyKnownHostForgetAndRetrust(targetPage) {
   ).toBeVisible();
 }
 
+async function verifyPortForwarding(targetPage) {
+  const echoServer = await startEchoServer();
+  const forwarding = targetPage.getByRole("region", {
+    name: "Port forwarding",
+  });
+  try {
+    await forwarding
+      .getByRole("combobox", { name: "Port forward type" })
+      .selectOption("local");
+    await forwarding
+      .getByRole("spinbutton", { name: "Forward bind number" })
+      .fill("0");
+    await forwarding
+      .getByRole("textbox", { name: "Port forward destination host" })
+      .fill("127.0.0.1");
+    await forwarding
+      .getByRole("spinbutton", { name: "Forward destination number" })
+      .fill(String(echoServer.port));
+    await forwarding.getByRole("button", { name: "Start forward" }).click();
+    const stopLocal = forwarding.getByRole("button", {
+      name: /^Stop local forward on port \d+$/,
+    });
+    await assert(stopLocal).toBeVisible();
+    const localPort = await portFromStopButton(stopLocal);
+
+    await forwarding
+      .getByRole("combobox", { name: "Port forward type" })
+      .selectOption("dynamic");
+    await forwarding
+      .getByRole("spinbutton", { name: "Forward bind number" })
+      .fill("0");
+    await forwarding.getByRole("button", { name: "Start forward" }).click();
+    const stopDynamic = forwarding.getByRole("button", {
+      name: /^Stop dynamic forward on port \d+$/,
+    });
+    await assert(stopDynamic).toBeVisible();
+    const dynamicPort = await portFromStopButton(stopDynamic);
+
+    await forwarding
+      .getByRole("combobox", { name: "Port forward type" })
+      .selectOption("remote");
+    await forwarding
+      .getByRole("spinbutton", { name: "Forward bind number" })
+      .fill("0");
+    await forwarding
+      .getByRole("textbox", { name: "Port forward destination host" })
+      .fill("127.0.0.1");
+    await forwarding
+      .getByRole("spinbutton", { name: "Forward destination number" })
+      .fill(String(echoServer.port));
+    await forwarding.getByRole("button", { name: "Start forward" }).click();
+    const stopRemote = forwarding.getByRole("button", {
+      name: /^Stop remote forward on port \d+$/,
+    });
+    await assert(stopRemote).toBeVisible();
+    const remotePort = await portFromStopButton(stopRemote);
+
+    await assert(forwarding).toContainText("3/16");
+    await tcpRoundTrip(localPort, `${localForwardMarker}\n`);
+    await socks5RoundTrip(
+      dynamicPort,
+      echoServer.port,
+      `${dynamicForwardMarker}\n`,
+    );
+    await tcpRoundTrip(remotePort, `${remoteForwardMarker}\n`);
+    await stopRemote.scrollIntoViewIfNeeded();
+    await capture(
+      targetPage,
+      "02b2-port-forwarding.png",
+      "02b2-port-forwarding.txt",
+    );
+    for (const marker of [
+      localForwardMarker,
+      dynamicForwardMarker,
+      remoteForwardMarker,
+    ]) {
+      await assert(targetPage.getByText(marker, { exact: true })).toHaveCount(
+        0,
+      );
+    }
+
+    await stopDynamic.click();
+    await assert(stopDynamic).toHaveCount(0);
+    await assertPortClosed(dynamicPort);
+    return { local: localPort, remote: remotePort };
+  } finally {
+    await echoServer.close();
+  }
+}
+
+async function startLocalForwardMetadata(targetPage, destinationPort) {
+  const forwarding = targetPage.getByRole("region", {
+    name: "Port forwarding",
+  });
+  await forwarding
+    .getByRole("combobox", { name: "Port forward type" })
+    .selectOption("local");
+  await forwarding
+    .getByRole("spinbutton", { name: "Forward bind number" })
+    .fill("0");
+  await forwarding
+    .getByRole("textbox", { name: "Port forward destination host" })
+    .fill("127.0.0.1");
+  await forwarding
+    .getByRole("spinbutton", { name: "Forward destination number" })
+    .fill(String(destinationPort));
+  await forwarding.getByRole("button", { name: "Start forward" }).click();
+  const stop = forwarding.getByRole("button", {
+    name: /^Stop local forward on port \d+$/,
+  });
+  await assert(stop).toBeVisible();
+  return portFromStopButton(stop);
+}
+
 async function verifyKeyboardInteractive(targetPage) {
   await targetPage.getByRole("button", { name: "New session tab" }).click();
   const connectionForm = targetPage.locator(".connection-panel form");
@@ -652,6 +798,10 @@ async function verifyKeyboardInteractive(targetPage) {
   await terminalInput.pressSequentially("windows-interactive-command");
   await terminalInput.press("Enter");
   await assert.poll(() => fileExists(interactiveMarkerPath)).toBe(true);
+  const interactiveForwardPort = await startLocalForwardMetadata(
+    targetPage,
+    Number(sshPort),
+  );
   await capture(
     targetPage,
     "02e-interactive-connected.png",
@@ -661,6 +811,7 @@ async function verifyKeyboardInteractive(targetPage) {
   await targetPage
     .getByRole("button", { name: "Close Windows QA interactive tab" })
     .click();
+  await assertPortClosed(interactiveForwardPort);
   await assert(
     targetPage.getByRole("heading", {
       level: 1,
@@ -793,6 +944,132 @@ async function clearPasswordInputs(targetPage) {
     .all()) {
     await input.fill("").catch(() => {});
   }
+}
+
+async function startEchoServer() {
+  const sockets = new Set();
+  const server = createServer({ allowHalfOpen: true }, (socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    socket.setTimeout(10_000, () =>
+      socket.destroy(new Error("Windows Forward echo socket timed out")),
+    );
+    socket.on("data", (chunk) => socket.write(chunk));
+    socket.on("end", () => socket.end());
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Windows Forward echo server did not expose a TCP port");
+  }
+  return {
+    port: address.port,
+    close: () =>
+      new Promise((resolve, reject) => {
+        for (const socket of sockets) {
+          socket.destroy();
+        }
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),
+  };
+}
+
+async function portFromStopButton(button) {
+  const label = await button.getAttribute("aria-label");
+  const match = label?.match(/port (\d+)$/);
+  if (!match) {
+    throw new Error("Active Forward did not expose its assigned port");
+  }
+  return Number(match[1]);
+}
+
+async function connectSocket(port) {
+  const socket = createConnection({ host: "127.0.0.1", port });
+  socket.setTimeout(10_000, () =>
+    socket.destroy(new Error("Windows Forward socket timed out")),
+  );
+  await once(socket, "connect");
+  return socket;
+}
+
+async function tcpRoundTrip(port, value) {
+  const socket = await connectSocket(port);
+  const payload = Buffer.from(value);
+  const received = [];
+  socket.on("data", (chunk) => received.push(chunk));
+  socket.end(payload);
+  await once(socket, "close");
+  assert(Buffer.concat(received)).toEqual(payload);
+}
+
+async function socks5RoundTrip(proxyPort, destinationPort, value) {
+  const socket = await connectSocket(proxyPort);
+  socket.write(Buffer.from([5, 1, 0]));
+  assert(await readExactly(socket, 2)).toEqual(Buffer.from([5, 0]));
+  socket.write(
+    Buffer.from([
+      5,
+      1,
+      0,
+      1,
+      127,
+      0,
+      0,
+      1,
+      (destinationPort >> 8) & 0xff,
+      destinationPort & 0xff,
+    ]),
+  );
+  const reply = await readExactly(socket, 10);
+  assert(reply.subarray(0, 2)).toEqual(Buffer.from([5, 0]));
+
+  const payload = Buffer.from(value);
+  const received = [];
+  socket.on("data", (chunk) => received.push(chunk));
+  socket.end(payload);
+  await once(socket, "close");
+  assert(Buffer.concat(received)).toEqual(payload);
+}
+
+async function readExactly(socket, length) {
+  const chunks = [];
+  let remaining = length;
+  while (remaining > 0) {
+    const chunk = socket.read(remaining);
+    if (chunk) {
+      chunks.push(chunk);
+      remaining -= chunk.length;
+      continue;
+    }
+    if (socket.readableEnded) {
+      throw new Error(
+        "Forward socket closed before the protocol reply completed",
+      );
+    }
+    await Promise.race([
+      once(socket, "readable"),
+      once(socket, "end").then(() => {
+        throw new Error(
+          "Forward socket ended before the protocol reply completed",
+        );
+      }),
+    ]);
+  }
+  return Buffer.concat(chunks);
+}
+
+async function assertPortClosed(port) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      const socket = await connectSocket(port);
+      socket.destroy();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } catch {
+      return;
+    }
+  }
+  throw new Error(`Forward listener on 127.0.0.1:${port} remained open`);
 }
 
 async function writeEvidence() {

@@ -49,6 +49,9 @@ $script:WrongPrivateKeyPassphrase = "windows-wrong-key-passphrase"
 $script:InteractivePort = 0
 $script:InteractiveResponse = "otp-$([Guid]::NewGuid().ToString('N'))"
 $script:InteractiveUsername = "windows-interactive-user"
+$script:LocalForwardMarker = "ANYSSH_WINDOWS_LOCAL_FORWARD_PAYLOAD"
+$script:DynamicForwardMarker = "ANYSSH_WINDOWS_DYNAMIC_FORWARD_PAYLOAD"
+$script:RemoteForwardMarker = "ANYSSH_WINDOWS_REMOTE_FORWARD_PAYLOAD"
 
 New-Item -ItemType Directory -Force -Path $RunDirectory | Out-Null
 Remove-Item -LiteralPath $VaultRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -400,7 +403,7 @@ KbdInteractiveAuthentication no
 PermitEmptyPasswords no
 StrictModes no
 AllowUsers $($script:SshUsername)
-AllowTcpForwarding no
+AllowTcpForwarding yes
 AllowAgentForwarding no
 X11Forwarding no
 PrintMotd no
@@ -562,6 +565,9 @@ function Start-NativeStage {
   Remove-Item Env:ANYSSH_WINDOWS_PRIVATE_KEY_MARKER_PATH -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_INTERACTIVE_RESPONSE -ErrorAction SilentlyContinue
   Remove-Item Env:ANYSSH_WINDOWS_INTERACTIVE_MARKER_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_LOCAL_FORWARD_MARKER -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_DYNAMIC_FORWARD_MARKER -ErrorAction SilentlyContinue
+  Remove-Item Env:ANYSSH_WINDOWS_REMOTE_FORWARD_MARKER -ErrorAction SilentlyContinue
 
   $StandardOutput = Join-Path $RunDirectory "app-$Stage.stdout.log"
   $StandardError = Join-Path $RunDirectory "app-$Stage.stderr.log"
@@ -584,6 +590,9 @@ function Start-NativeStage {
   $env:ANYSSH_WINDOWS_INTERACTIVE_USERNAME = $script:InteractiveUsername
   $env:ANYSSH_WINDOWS_INTERACTIVE_RESPONSE = $script:InteractiveResponse
   $env:ANYSSH_WINDOWS_INTERACTIVE_MARKER_PATH = $InteractiveMarkerPath
+  $env:ANYSSH_WINDOWS_LOCAL_FORWARD_MARKER = $script:LocalForwardMarker
+  $env:ANYSSH_WINDOWS_DYNAMIC_FORWARD_MARKER = $script:DynamicForwardMarker
+  $env:ANYSSH_WINDOWS_REMOTE_FORWARD_MARKER = $script:RemoteForwardMarker
 
   $Targets = $null
   $Version = $null
@@ -724,6 +733,9 @@ function Assert-VaultFilesAreEncrypted {
     "windows-user",
     $script:InteractiveUsername,
     $script:InteractiveResponse,
+    $script:LocalForwardMarker,
+    $script:DynamicForwardMarker,
+    $script:RemoteForwardMarker,
     $script:SshUsername,
     $script:AgentFingerprint
   )
@@ -756,6 +768,9 @@ function Assert-EvidenceContainsNoSensitiveFixtureValues {
     $script:WrongPrivateKeyPassphrase,
     $script:InteractiveResponse,
     $script:AgentFingerprint,
+    $script:LocalForwardMarker,
+    $script:DynamicForwardMarker,
+    $script:RemoteForwardMarker,
     "BEGIN OPENSSH PRIVATE KEY"
   )
   foreach ($File in Get-ChildItem -LiteralPath $RunDirectory -Recurse -File) {
@@ -860,12 +875,17 @@ try {
   through Rust; the temporary Private Key file was deleted before AnySSH launched.
 - The real EXE used the Agent Named Pipe to authenticate to a standalone Windows
   OpenSSH Server and created the remote marker ``$SshMarkerPath``.
+- The Agent Session started real Local, unauthenticated Dynamic SOCKS5, and
+  Remote Loopback Forwards through the same russh transport. External TCP
+  clients completed all three paths, Dynamic Stop closed its listener, and
+  Session Disconnect removed the remaining Local and Remote endpoints.
 - The real EXE used Quick Connection against a controlled russh Server,
   displayed a masked Keyboard-interactive Challenge in a second Session Tab,
   and created the marker ``$InteractiveMarkerPath`` while the Agent Session
   remained connected.
-- Closing the Keyboard-interactive Tab left the Agent Tab connected and able to
-  append ``ANYSSH_WINDOWS_AGENT_TAB_SURVIVED`` to its remote marker.
+- Closing the Keyboard-interactive Tab removed its Session-scoped Local Forward,
+  left the Agent Tab connected, and allowed it to append
+  ``ANYSSH_WINDOWS_AGENT_TAB_SURVIVED`` to its remote marker.
 - The Interactive Credential persisted only Label/Username metadata, while the
   session response remained absent from Vault files and QA evidence.
 - The first connection durably persisted TOFU before authentication; a second
@@ -880,6 +900,8 @@ try {
   or Replace action.
 - Password/System Agent Credentials, Group, inherited/direct Hosts, and Jump Route
   metadata persisted across process restart.
+- Vault Lock removed an active Session Forward listener before returning to the
+  PIN gate.
 - PIN, Password, Private Key, Passphrases, Agent Fingerprint, Group, Host,
   Username, and Route markers were absent from Vault files. Private Key
   material, Passphrases, the Agent Fingerprint, and the Keyboard-interactive
@@ -897,6 +919,7 @@ try {
 - ``02a4-private-key-imported.png``
 - ``02a5-private-key-connected.png``
 - ``02b-system-agent-connected.png``
+- ``02b2-port-forwarding.png``
 - ``02c-known-hosts.png``
 - ``02c-known-host-forget-confirmation.png``
 - ``02c2-known-host-forgotten.png``
@@ -905,6 +928,7 @@ try {
 - ``02e-interactive-connected.png``
 - ``02f-agent-tab-after-close.png``
 - ``03-repository-created.png``
+- ``03a-vault-lock-forwarding.png``
 - ``04-vault-wrong-pin.png``
 - ``05-vault-reunlocked.png``
 - ``06-restart-locked.png``

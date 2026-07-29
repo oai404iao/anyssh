@@ -730,7 +730,8 @@ select:focus-visible {
   letter-spacing: 0.03em;
 }
 
-.connection-panel input {
+.connection-panel input,
+.connection-panel select {
   width: 100%;
   height: 40px;
   padding: 0 11px;
@@ -742,6 +743,10 @@ select:focus-visible {
   transition:
     border-color 150ms ease,
     background 150ms ease;
+}
+
+.connection-panel select {
+  padding: 0 28px 0 11px;
 }
 
 .saved-connection-summary {
@@ -778,7 +783,9 @@ select:focus-visible {
 }
 
 .connection-panel input:hover,
-.connection-panel input:focus {
+.connection-panel input:focus,
+.connection-panel select:hover,
+.connection-panel select:focus {
   border-color: rgba(107, 230, 210, 0.33);
   background: rgba(8, 13, 22, 0.8);
 }
@@ -789,7 +796,7 @@ select:focus-visible {
 
 .field-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 72px;
+  grid-template-columns: minmax(0, 1fr) 88px;
   gap: 9px;
 }
 
@@ -862,6 +869,101 @@ select:focus-visible {
   color: #ff9cab;
   background: rgba(255, 124, 141, 0.07);
   font-size: 10px;
+}
+
+.forwarding-panel {
+  display: grid;
+  gap: 13px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.forwarding-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.forwarding-heading h3 {
+  margin: 2px 0 0;
+  color: #cbd4e3;
+  font-size: 13px;
+}
+
+.forwarding-heading > span {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: #718097;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8px;
+}
+
+.forwarding-form {
+  gap: 10px !important;
+}
+
+.forwarding-policy {
+  margin: 0;
+  color: #5f6b80;
+  font-size: 8px;
+  line-height: 1.55;
+}
+
+.forwarding-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.forwarding-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid rgba(107, 230, 210, 0.12);
+  border-radius: 8px;
+  background: rgba(107, 230, 210, 0.035);
+}
+
+.forwarding-list li > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.forwarding-list strong,
+.forwarding-list span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.forwarding-list strong {
+  color: #b9d7d3;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8px;
+}
+
+.forwarding-list span {
+  color: #68758a;
+  font-size: 8px;
+}
+
+.forwarding-list button {
+  flex: 0 0 auto;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: #9ba6b8;
+  background: rgba(255, 255, 255, 0.025);
+  font-size: 8px;
+  cursor: pointer;
 }
 
 .connection-state {

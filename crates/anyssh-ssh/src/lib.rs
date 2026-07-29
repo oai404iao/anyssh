@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
 
+mod forwarding;
+
 use std::{
+    collections::HashMap,
     fmt,
     future::Future,
     sync::{
@@ -13,8 +16,11 @@ use std::{
 use anyssh_domain::{SshEndpoint, TerminalSize};
 use bytes::Bytes;
 use russh::{
-    ChannelMsg, Disconnect, MethodKind,
-    client::{self, AuthResult, Config, Handle, Handler, KeyboardInteractiveAuthResponse},
+    ChannelMsg, ChannelOpenFailure, Disconnect, MethodKind,
+    client::{
+        self, AuthResult, ChannelOpenHandle, Config, Handle, Handler,
+        KeyboardInteractiveAuthResponse,
+    },
     keys::{
         PrivateKeyWithHashAlg,
         agent::{
@@ -27,12 +33,25 @@ use russh::{
 };
 use thiserror::Error;
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
+    io::{AsyncRead, AsyncWrite, AsyncWriteExt, copy_bidirectional},
     net::TcpStream,
-    sync::{Mutex, Notify, mpsc},
+    sync::{Mutex, Notify, mpsc, oneshot},
+    task::{JoinHandle, JoinSet},
 };
 use tracing::{debug, warn};
 use zeroize::Zeroizing;
+
+use forwarding::{
+    ActivePortForward, DirectConnectionProtocol, ForwardDestination,
+    PORT_FORWARD_OPERATION_TIMEOUT, PORT_FORWARD_QUEUE_CAPACITY, PendingDirectConnection,
+    loopback_hosts_match, start_listener_forward, valid_forward_id, write_socks5_failure,
+    write_socks5_success,
+};
+pub use forwarding::{
+    MAX_ACTIVE_PORT_FORWARDS, MAX_FORWARD_HOST_BYTES, MAX_PORT_FORWARD_CONNECTIONS,
+    MAX_PORT_FORWARD_ID_BYTES, PortForwardError, PortForwardKind, PortForwardRequest,
+    PortForwardSummary,
+};
 
 pub const SESSION_EVENT_BUFFER_CAPACITY: usize = 64;
 pub const SESSION_COMMAND_BUFFER_CAPACITY: usize = 64;
@@ -409,9 +428,28 @@ pub enum SessionEvent {
 }
 
 #[derive(Debug)]
-enum SessionCommand {
+enum TerminalCommand {
     Input(Bytes),
     Resize(TerminalSize),
+}
+
+#[derive(Debug)]
+enum ForwardCommand {
+    Start {
+        request: PortForwardRequest,
+        response: oneshot::Sender<Result<PortForwardSummary, PortForwardError>>,
+    },
+    Stop {
+        forward_id: String,
+        response: oneshot::Sender<Result<(), PortForwardError>>,
+    },
+}
+
+struct PendingRemoteConnection {
+    channel: russh::Channel<russh::client::Msg>,
+    connected_address: String,
+    connected_port: u32,
+    reply: ChannelOpenHandle,
 }
 
 #[derive(Debug)]
@@ -473,7 +511,8 @@ impl SessionCancellation {
 }
 
 struct SessionControlInner {
-    commands: mpsc::Sender<SessionCommand>,
+    terminal_commands: mpsc::Sender<TerminalCommand>,
+    forward_commands: mpsc::Sender<ForwardCommand>,
     host_key_decisions: mpsc::Sender<HostKeyDecision>,
     authentication_responses: mpsc::Sender<AuthenticationResponse>,
     pending_host_key_request: Arc<AtomicU64>,
@@ -576,8 +615,8 @@ impl SessionControl {
         }
 
         self.inner
-            .commands
-            .send(SessionCommand::Input(input.into()))
+            .terminal_commands
+            .send(TerminalCommand::Input(input.into()))
             .await
             .map_err(|_| SessionControlError::SessionClosed)
     }
@@ -588,14 +627,78 @@ impl SessionControl {
         }
 
         self.inner
-            .commands
-            .send(SessionCommand::Resize(size))
+            .terminal_commands
+            .send(TerminalCommand::Resize(size))
             .await
             .map_err(|_| SessionControlError::SessionClosed)
     }
 
+    pub async fn start_port_forward(
+        &self,
+        request: PortForwardRequest,
+    ) -> Result<PortForwardSummary, PortForwardError> {
+        if self.inner.cancellation.is_cancelled() {
+            return Err(PortForwardError::SessionClosed);
+        }
+
+        let (response, result) = oneshot::channel();
+        tokio::select! {
+            biased;
+            _ = self.inner.cancellation.cancelled() => {
+                return Err(PortForwardError::SessionClosed);
+            }
+            result = self.inner
+                .forward_commands
+                .send(ForwardCommand::Start { request, response }) => {
+                result.map_err(|_| PortForwardError::SessionClosed)?;
+            }
+        }
+
+        tokio::select! {
+            biased;
+            _ = self.inner.cancellation.cancelled() => Err(PortForwardError::SessionClosed),
+            result = result => result.unwrap_or(Err(PortForwardError::SessionClosed)),
+        }
+    }
+
+    pub async fn stop_port_forward(
+        &self,
+        forward_id: impl Into<String>,
+    ) -> Result<(), PortForwardError> {
+        if self.inner.cancellation.is_cancelled() {
+            return Err(PortForwardError::SessionClosed);
+        }
+
+        let forward_id = forward_id.into();
+        if !valid_forward_id(&forward_id) {
+            return Err(PortForwardError::InvalidRequest);
+        }
+
+        let (response, result) = oneshot::channel();
+        tokio::select! {
+            biased;
+            _ = self.inner.cancellation.cancelled() => {
+                return Err(PortForwardError::SessionClosed);
+            }
+            result = self.inner.forward_commands.send(ForwardCommand::Stop {
+                forward_id,
+                response,
+            }) => {
+                result.map_err(|_| PortForwardError::SessionClosed)?;
+            }
+        }
+
+        tokio::select! {
+            biased;
+            _ = self.inner.cancellation.cancelled() => Err(PortForwardError::SessionClosed),
+            result = result => result.unwrap_or(Err(PortForwardError::SessionClosed)),
+        }
+    }
+
     pub async fn disconnect(&self) -> Result<(), SessionControlError> {
-        if self.inner.commands.is_closed() {
+        if self.inner.cancellation.is_cancelled()
+            || (self.inner.terminal_commands.is_closed() && self.inner.forward_commands.is_closed())
+        {
             return Err(SessionControlError::SessionClosed);
         }
 
@@ -743,7 +846,10 @@ pub fn spawn_jump_password_session(config: JumpPasswordSessionConfig) -> Spawned
 
 pub fn spawn_session(config: SshSessionConfig) -> SpawnedSession {
     let (event_sender, event_receiver) = mpsc::channel(SESSION_EVENT_BUFFER_CAPACITY);
-    let (command_sender, command_receiver) = mpsc::channel(SESSION_COMMAND_BUFFER_CAPACITY);
+    let (terminal_command_sender, terminal_command_receiver) =
+        mpsc::channel(SESSION_COMMAND_BUFFER_CAPACITY);
+    let (forward_command_sender, forward_command_receiver) =
+        mpsc::channel(SESSION_COMMAND_BUFFER_CAPACITY);
     let (host_key_sender, host_key_receiver) = mpsc::channel(HOST_KEY_DECISION_BUFFER);
     let (authentication_sender, authentication_receiver) =
         mpsc::channel(AUTHENTICATION_RESPONSE_BUFFER);
@@ -763,7 +869,8 @@ pub fn spawn_session(config: SshSessionConfig) -> SpawnedSession {
 
     let control = SessionControl {
         inner: Arc::new(SessionControlInner {
-            commands: command_sender,
+            terminal_commands: terminal_command_sender,
+            forward_commands: forward_command_sender,
             host_key_decisions: host_key_sender,
             authentication_responses: authentication_sender,
             pending_host_key_request: pending_host_key_request.clone(),
@@ -776,7 +883,8 @@ pub fn spawn_session(config: SshSessionConfig) -> SpawnedSession {
     tokio::spawn(run_session(
         config,
         event_sender,
-        command_receiver,
+        terminal_command_receiver,
+        forward_command_receiver,
         Arc::new(Mutex::new(host_key_receiver)),
         pending_host_key_request,
         pending_observed_host_key,
@@ -795,7 +903,8 @@ pub fn spawn_session(config: SshSessionConfig) -> SpawnedSession {
 async fn run_session(
     config: SshSessionConfig,
     events: mpsc::Sender<SessionEvent>,
-    mut commands: mpsc::Receiver<SessionCommand>,
+    terminal_commands: mpsc::Receiver<TerminalCommand>,
+    forward_commands: mpsc::Receiver<ForwardCommand>,
     host_key_decisions: Arc<Mutex<mpsc::Receiver<HostKeyDecision>>>,
     pending_host_key_request: Arc<AtomicU64>,
     pending_observed_host_key: Arc<Mutex<Option<ObservedHostKey>>>,
@@ -813,7 +922,8 @@ async fn run_session(
     let result = connect_and_run(
         config,
         &events,
-        &mut commands,
+        terminal_commands,
+        forward_commands,
         host_key_decisions,
         pending_host_key_request,
         pending_observed_host_key,
@@ -855,7 +965,8 @@ async fn run_session(
 async fn connect_and_run(
     config: SshSessionConfig,
     events: &mpsc::Sender<SessionEvent>,
-    commands: &mut mpsc::Receiver<SessionCommand>,
+    terminal_commands: mpsc::Receiver<TerminalCommand>,
+    forward_commands: mpsc::Receiver<ForwardCommand>,
     host_key_decisions: Arc<Mutex<mpsc::Receiver<HostKeyDecision>>>,
     pending_host_key_request: Arc<AtomicU64>,
     pending_observed_host_key: Arc<Mutex<Option<ObservedHostKey>>>,
@@ -882,6 +993,8 @@ async fn connect_and_run(
     }
 
     let client_config = make_client_config();
+    let (forwarded_tcpip_sender, forwarded_tcpip_receiver) =
+        mpsc::channel(PORT_FORWARD_QUEUE_CAPACITY);
     if jump_hosts.is_empty() {
         let target_session = connect_tcp_endpoint(
             &target.endpoint,
@@ -893,6 +1006,7 @@ async fn connect_and_run(
             pending_host_key_request,
             pending_observed_host_key,
             next_host_key_request,
+            Some(forwarded_tcpip_sender),
             cancellation,
             connection_timeout,
         )
@@ -903,7 +1017,9 @@ async fn connect_and_run(
             target,
             terminal_size,
             events,
-            commands,
+            terminal_commands,
+            forward_commands,
+            forwarded_tcpip_receiver,
             authentication_interaction,
             cancellation,
             connection_timeout,
@@ -934,6 +1050,7 @@ async fn connect_and_run(
                     pending_host_key_request.clone(),
                     pending_observed_host_key.clone(),
                     next_host_key_request.clone(),
+                    None,
                     cancellation,
                     connection_timeout,
                 )
@@ -968,6 +1085,7 @@ async fn connect_and_run(
                     pending_host_key_request.clone(),
                     pending_observed_host_key.clone(),
                     next_host_key_request.clone(),
+                    None,
                     cancellation,
                     connection_timeout,
                 )
@@ -1033,6 +1151,7 @@ async fn connect_and_run(
             pending_host_key_request,
             pending_observed_host_key,
             next_host_key_request,
+            Some(forwarded_tcpip_sender),
             cancellation,
             connection_timeout,
         )
@@ -1043,7 +1162,9 @@ async fn connect_and_run(
             target,
             terminal_size,
             events,
-            commands,
+            terminal_commands,
+            forward_commands,
+            forwarded_tcpip_receiver,
             authentication_interaction,
             cancellation,
             connection_timeout,
@@ -1072,6 +1193,7 @@ async fn connect_tcp_endpoint(
     pending_host_key_request: Arc<AtomicU64>,
     pending_observed_host_key: Arc<Mutex<Option<ObservedHostKey>>>,
     next_host_key_request: Arc<AtomicU64>,
+    forwarded_tcpip: Option<mpsc::Sender<PendingRemoteConnection>>,
     cancellation: &SessionCancellation,
     connection_timeout: Duration,
 ) -> Result<Handle<ClientHandler>, SessionError> {
@@ -1112,6 +1234,7 @@ async fn connect_tcp_endpoint(
         pending_host_key_request,
         pending_observed_host_key,
         next_host_key_request,
+        forwarded_tcpip,
         cancellation,
         connection_timeout,
     )
@@ -1130,6 +1253,7 @@ async fn connect_stream_endpoint<R>(
     pending_host_key_request: Arc<AtomicU64>,
     pending_observed_host_key: Arc<Mutex<Option<ObservedHostKey>>>,
     next_host_key_request: Arc<AtomicU64>,
+    forwarded_tcpip: Option<mpsc::Sender<PendingRemoteConnection>>,
     cancellation: &SessionCancellation,
     connection_timeout: Duration,
 ) -> Result<Handle<ClientHandler>, SessionError>
@@ -1149,6 +1273,7 @@ where
         host_key_policy,
         host_key_mismatch: host_key_mismatch.clone(),
         accepted_fingerprint: None,
+        forwarded_tcpip,
     };
 
     let result = await_ssh_operation(
@@ -1185,7 +1310,9 @@ async fn run_target_session(
     config: SshConnectionConfig,
     terminal_size: TerminalSize,
     events: &mpsc::Sender<SessionEvent>,
-    commands: &mut mpsc::Receiver<SessionCommand>,
+    terminal_commands: mpsc::Receiver<TerminalCommand>,
+    forward_commands: mpsc::Receiver<ForwardCommand>,
+    forwarded_tcpip: mpsc::Receiver<PendingRemoteConnection>,
     authentication_interaction: &AuthenticationInteraction,
     cancellation: &SessionCancellation,
     connection_timeout: Duration,
@@ -1212,7 +1339,7 @@ async fn run_target_session(
 
         emit_event(events, cancellation, SessionEvent::Authenticated).await?;
 
-        let mut channel = await_ssh_operation(
+        let channel = await_ssh_operation(
             session.channel_open_session(),
             cancellation,
             connection_timeout,
@@ -1248,12 +1375,26 @@ async fn run_target_session(
 
         emit_event(events, cancellation, SessionEvent::Connected).await?;
 
-        run_shell_loop(
-            &mut channel,
-            events,
-            commands,
+        let shell_events = events.clone();
+        let shell_cancellation = cancellation.clone();
+        let mut shell_task = tokio::spawn(async move {
+            run_shell_loop(
+                channel,
+                shell_events,
+                terminal_commands,
+                shell_cancellation,
+                connection_timeout,
+            )
+            .await
+        });
+
+        run_forwarding_loop(
+            &session,
+            forward_commands,
+            forwarded_tcpip,
             cancellation,
             connection_timeout,
+            &mut shell_task,
         )
         .await
     }
@@ -1742,42 +1883,378 @@ fn sanitize_system_agent_comment(comment: &str) -> String {
     comment[..end].to_owned()
 }
 
-async fn run_shell_loop(
-    channel: &mut russh::Channel<russh::client::Msg>,
-    events: &mpsc::Sender<SessionEvent>,
-    commands: &mut mpsc::Receiver<SessionCommand>,
+async fn run_forwarding_loop(
+    session: &Handle<ClientHandler>,
+    mut commands: mpsc::Receiver<ForwardCommand>,
+    mut forwarded_tcpip: mpsc::Receiver<PendingRemoteConnection>,
     cancellation: &SessionCancellation,
+    operation_timeout: Duration,
+    shell_task: &mut JoinHandle<Result<(), SessionError>>,
+) -> Result<(), SessionError> {
+    let (direct_connections, mut pending_direct_connections) =
+        mpsc::channel(PORT_FORWARD_QUEUE_CAPACITY);
+    let mut forwards = HashMap::<String, ActivePortForward>::new();
+    let mut next_forward_id = 1u64;
+    let mut connection_tasks = JoinSet::new();
+
+    let result = loop {
+        tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => break Err(SessionError::Cancelled),
+            shell_result = &mut *shell_task => {
+                break shell_result.map_err(|_| SessionError::TerminalTaskFailed)?;
+            }
+            command = commands.recv() => {
+                match command {
+                    Some(ForwardCommand::Start { request, response }) => {
+                        let result = start_port_forward(
+                            session,
+                            &mut forwards,
+                            &mut next_forward_id,
+                            request,
+                            direct_connections.clone(),
+                            cancellation,
+                        ).await;
+                        let _ = response.send(result);
+                    }
+                    Some(ForwardCommand::Stop { forward_id, response }) => {
+                        let result = stop_port_forward(
+                            session,
+                            &mut forwards,
+                            &forward_id,
+                            cancellation,
+                        ).await;
+                        let _ = response.send(result);
+                    }
+                    None => break Err(SessionError::Cancelled),
+                }
+            }
+            pending = pending_direct_connections.recv() => {
+                if let Some(pending) = pending {
+                    open_direct_forward_connection(
+                        session,
+                        pending,
+                        cancellation,
+                        operation_timeout,
+                        &mut connection_tasks,
+                    ).await;
+                }
+            }
+            pending = forwarded_tcpip.recv() => {
+                if let Some(pending) = pending {
+                    open_remote_forward_connection(
+                        pending,
+                        &forwards,
+                        cancellation,
+                        &mut connection_tasks,
+                    ).await;
+                }
+            }
+            Some(result) = connection_tasks.join_next(), if !connection_tasks.is_empty() => {
+                if let Err(error) = result {
+                    debug!("port forward connection task ended: {error}");
+                }
+            }
+        }
+    };
+
+    cleanup_port_forwards(session, &mut forwards, &mut connection_tasks).await;
+    if !shell_task.is_finished()
+        && tokio::time::timeout(CHANNEL_CLOSE_TIMEOUT, &mut *shell_task)
+            .await
+            .is_err()
+    {
+        shell_task.abort();
+    }
+    result
+}
+
+async fn start_port_forward(
+    session: &Handle<ClientHandler>,
+    forwards: &mut HashMap<String, ActivePortForward>,
+    next_forward_id: &mut u64,
+    request: PortForwardRequest,
+    direct_connections: mpsc::Sender<PendingDirectConnection>,
+    cancellation: &SessionCancellation,
+) -> Result<PortForwardSummary, PortForwardError> {
+    if cancellation.is_cancelled() {
+        return Err(PortForwardError::SessionClosed);
+    }
+    if forwards.len() >= MAX_ACTIVE_PORT_FORWARDS {
+        return Err(PortForwardError::TooManyForwards);
+    }
+
+    let forward_id = format!("forward-{}", *next_forward_id);
+    *next_forward_id = next_forward_id.saturating_add(1);
+    let active = match request.kind() {
+        PortForwardKind::Local | PortForwardKind::Dynamic => {
+            start_listener_forward(
+                forward_id.clone(),
+                &request,
+                direct_connections,
+                cancellation.clone(),
+            )
+            .await?
+        }
+        PortForwardKind::Remote => {
+            let returned_port = await_port_forward_request(
+                session.tcpip_forward(request.bind_host(), u32::from(request.bind_port())),
+                cancellation,
+            )
+            .await?;
+            let bound_port = if request.bind_port() == 0 {
+                u16::try_from(returned_port).map_err(|_| PortForwardError::RequestDenied)?
+            } else {
+                request.bind_port()
+            };
+            if bound_port == 0 {
+                return Err(PortForwardError::RequestDenied);
+            }
+            let summary = PortForwardSummary::new(forward_id.clone(), &request, bound_port);
+            ActivePortForward::remote(
+                summary,
+                ForwardDestination {
+                    host: request
+                        .destination_host()
+                        .expect("validated Remote destination")
+                        .to_owned(),
+                    port: request
+                        .destination_port()
+                        .expect("validated Remote destination port"),
+                },
+            )
+        }
+    };
+    let summary = active.summary.clone();
+    forwards.insert(forward_id, active);
+    Ok(summary)
+}
+
+async fn stop_port_forward(
+    session: &Handle<ClientHandler>,
+    forwards: &mut HashMap<String, ActivePortForward>,
+    forward_id: &str,
+    cancellation: &SessionCancellation,
+) -> Result<(), PortForwardError> {
+    let Some(mut active) = forwards.remove(forward_id) else {
+        return Ok(());
+    };
+    active.cancel();
+
+    if active.summary.kind() == PortForwardKind::Remote {
+        let result = await_port_forward_request(
+            session.cancel_tcpip_forward(
+                active.summary.bind_host(),
+                u32::from(active.summary.bound_port()),
+            ),
+            cancellation,
+        )
+        .await;
+        if let Err(error) = result {
+            forwards.insert(forward_id.to_owned(), active);
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+async fn await_port_forward_request<T>(
+    future: impl Future<Output = Result<T, russh::Error>>,
+    cancellation: &SessionCancellation,
+) -> Result<T, PortForwardError> {
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(PortForwardError::SessionClosed),
+        result = tokio::time::timeout(PORT_FORWARD_OPERATION_TIMEOUT, future) => {
+            match result {
+                Ok(Ok(value)) => Ok(value),
+                Ok(Err(_)) => Err(PortForwardError::RequestDenied),
+                Err(_) => Err(PortForwardError::OperationTimedOut),
+            }
+        }
+    }
+}
+
+async fn open_direct_forward_connection(
+    session: &Handle<ClientHandler>,
+    mut pending: PendingDirectConnection,
+    session_cancellation: &SessionCancellation,
+    operation_timeout: Duration,
+    connection_tasks: &mut JoinSet<()>,
+) {
+    let channel = tokio::select! {
+        biased;
+        _ = session_cancellation.cancelled() => None,
+        _ = pending.cancellation.cancelled() => None,
+        result = tokio::time::timeout(
+            operation_timeout.min(PORT_FORWARD_OPERATION_TIMEOUT),
+            session.channel_open_direct_tcpip(
+                pending.destination.host.clone(),
+                u32::from(pending.destination.port),
+                pending.originator.ip().to_string(),
+                u32::from(pending.originator.port()),
+            ),
+        ) => result.ok().and_then(Result::ok),
+    };
+    let Some(channel) = channel else {
+        if pending.protocol == DirectConnectionProtocol::Socks5 {
+            let _ = write_socks5_failure(&mut pending.stream).await;
+        }
+        return;
+    };
+
+    if pending.protocol == DirectConnectionProtocol::Socks5
+        && write_socks5_success(&mut pending.stream).await.is_err()
+    {
+        return;
+    }
+    let _ = pending.stream.set_nodelay(true);
+    let mut ssh_stream = channel.into_stream();
+    let mut local_stream = pending.stream;
+    let forward_cancellation = pending.cancellation;
+    let session_cancellation = session_cancellation.clone();
+    let permit = pending.permit;
+    connection_tasks.spawn(async move {
+        let _permit = permit;
+        tokio::select! {
+            biased;
+            _ = session_cancellation.cancelled() => {}
+            _ = forward_cancellation.cancelled() => {}
+            _ = copy_bidirectional(&mut local_stream, &mut ssh_stream) => {}
+        }
+        let _ = local_stream.shutdown().await;
+        let _ = ssh_stream.shutdown().await;
+    });
+}
+
+async fn open_remote_forward_connection(
+    pending: PendingRemoteConnection,
+    forwards: &HashMap<String, ActivePortForward>,
+    session_cancellation: &SessionCancellation,
+    connection_tasks: &mut JoinSet<()>,
+) {
+    let Ok(connected_port) = u16::try_from(pending.connected_port) else {
+        pending
+            .reply
+            .reject(ChannelOpenFailure::AdministrativelyProhibited)
+            .await;
+        return;
+    };
+    let Some(active) = forwards.values().find(|active| {
+        active.summary.kind() == PortForwardKind::Remote
+            && active.summary.bound_port() == connected_port
+            && loopback_hosts_match(active.summary.bind_host(), &pending.connected_address)
+    }) else {
+        pending
+            .reply
+            .reject(ChannelOpenFailure::AdministrativelyProhibited)
+            .await;
+        return;
+    };
+    let Ok(permit) = active.connections.clone().try_acquire_owned() else {
+        pending
+            .reply
+            .reject(ChannelOpenFailure::ResourceShortage)
+            .await;
+        return;
+    };
+    let destination = active
+        .destination
+        .clone()
+        .expect("Remote forward destination");
+    let forward_cancellation = active.cancellation.clone();
+
+    let local_stream = tokio::select! {
+        biased;
+        _ = session_cancellation.cancelled() => None,
+        _ = forward_cancellation.cancelled() => None,
+        result = tokio::time::timeout(
+            PORT_FORWARD_OPERATION_TIMEOUT,
+            TcpStream::connect((destination.host.as_str(), destination.port)),
+        ) => result.ok().and_then(Result::ok),
+    };
+    let Some(mut local_stream) = local_stream else {
+        pending
+            .reply
+            .reject(ChannelOpenFailure::ConnectFailed)
+            .await;
+        return;
+    };
+    let _ = local_stream.set_nodelay(true);
+    pending.reply.accept().await;
+    let mut ssh_stream = pending.channel.into_stream();
+    let session_cancellation = session_cancellation.clone();
+    connection_tasks.spawn(async move {
+        let _permit = permit;
+        tokio::select! {
+            biased;
+            _ = session_cancellation.cancelled() => {}
+            _ = forward_cancellation.cancelled() => {}
+            _ = copy_bidirectional(&mut local_stream, &mut ssh_stream) => {}
+        }
+        let _ = local_stream.shutdown().await;
+        let _ = ssh_stream.shutdown().await;
+    });
+}
+
+async fn cleanup_port_forwards(
+    session: &Handle<ClientHandler>,
+    forwards: &mut HashMap<String, ActivePortForward>,
+    connection_tasks: &mut JoinSet<()>,
+) {
+    for (_, mut active) in forwards.drain() {
+        active.cancel();
+        if active.summary.kind() == PortForwardKind::Remote {
+            let _ = tokio::time::timeout(
+                CHANNEL_CLOSE_TIMEOUT,
+                session.cancel_tcpip_forward(
+                    active.summary.bind_host(),
+                    u32::from(active.summary.bound_port()),
+                ),
+            )
+            .await;
+        }
+    }
+    connection_tasks.abort_all();
+    while connection_tasks.join_next().await.is_some() {}
+}
+
+async fn run_shell_loop(
+    mut channel: russh::Channel<russh::client::Msg>,
+    events: mpsc::Sender<SessionEvent>,
+    mut commands: mpsc::Receiver<TerminalCommand>,
+    cancellation: SessionCancellation,
     operation_timeout: Duration,
 ) -> Result<(), SessionError> {
     loop {
         tokio::select! {
             biased;
             _ = cancellation.cancelled() => {
-                close_channel(channel).await;
+                close_channel(&channel).await;
                 break;
             }
             command = commands.recv() => {
                 match command {
-                    Some(SessionCommand::Input(data)) => {
+                    Some(TerminalCommand::Input(data)) => {
                         await_ssh_operation(
                             channel.data_bytes(data),
-                            cancellation,
+                            &cancellation,
                             operation_timeout,
                             SessionHop::Target,
                             "terminal input",
                         ).await?;
                     }
-                    Some(SessionCommand::Resize(size)) => {
+                    Some(TerminalCommand::Resize(size)) => {
                         await_ssh_operation(
                             channel.window_change(size.columns, size.rows, 0, 0),
-                            cancellation,
+                            &cancellation,
                             operation_timeout,
                             SessionHop::Target,
                             "terminal resize",
                         ).await?;
                     }
                     None => {
-                        close_channel(channel).await;
+                        close_channel(&channel).await;
                         break;
                     }
                 }
@@ -1786,12 +2263,12 @@ async fn run_shell_loop(
                 match message {
                     Some(ChannelMsg::Data { data }) |
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
-                        emit_event(events, cancellation, SessionEvent::Data(data)).await?;
+                        emit_event(&events, &cancellation, SessionEvent::Data(data)).await?;
                     }
                     Some(ChannelMsg::ExitStatus { exit_status }) => {
                         emit_event(
-                            events,
-                            cancellation,
+                            &events,
+                            &cancellation,
                             SessionEvent::ExitStatus(exit_status),
                         ).await?;
                     }
@@ -2025,6 +2502,7 @@ struct ClientHandler {
     host_key_policy: HostKeyPolicy,
     host_key_mismatch: Arc<Mutex<Option<HostKeyMismatch>>>,
     accepted_fingerprint: Option<String>,
+    forwarded_tcpip: Option<mpsc::Sender<PendingRemoteConnection>>,
 }
 
 impl Handler for ClientHandler {
@@ -2131,6 +2609,52 @@ impl Handler for ClientHandler {
 
         Ok(accepted)
     }
+
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: russh::Channel<russh::client::Msg>,
+        connected_address: &str,
+        connected_port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        if self.hop != SessionHop::Target {
+            reply
+                .reject(ChannelOpenFailure::AdministrativelyProhibited)
+                .await;
+            return Ok(());
+        }
+        let Some(forwarded_tcpip) = &self.forwarded_tcpip else {
+            reply
+                .reject(ChannelOpenFailure::AdministrativelyProhibited)
+                .await;
+            return Ok(());
+        };
+        let pending = PendingRemoteConnection {
+            channel,
+            connected_address: connected_address.to_owned(),
+            connected_port,
+            reply,
+        };
+        match forwarded_tcpip.try_send(pending) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(pending)) => {
+                pending
+                    .reply
+                    .reject(ChannelOpenFailure::ResourceShortage)
+                    .await;
+            }
+            Err(mpsc::error::TrySendError::Closed(pending)) => {
+                pending
+                    .reply
+                    .reject(ChannelOpenFailure::AdministrativelyProhibited)
+                    .await;
+            }
+        }
+        Ok(())
+    }
 }
 
 async fn clear_pending_observed_host_key(
@@ -2227,6 +2751,8 @@ enum SessionError {
     InvalidJumpRoute,
     #[error("SSH event receiver closed")]
     EventReceiverClosed,
+    #[error("SSH terminal task failed")]
+    TerminalTaskFailed,
     #[error("SSH session was cancelled")]
     Cancelled,
 }
@@ -2722,13 +3248,15 @@ mod tests {
 
     #[tokio::test]
     async fn host_key_confirmation_requires_the_active_request() {
-        let (command_sender, _command_receiver) = mpsc::channel(1);
+        let (terminal_command_sender, _terminal_command_receiver) = mpsc::channel(1);
+        let (forward_command_sender, _forward_command_receiver) = mpsc::channel(1);
         let (decision_sender, mut decision_receiver) = mpsc::channel(1);
         let (authentication_sender, _authentication_receiver) = mpsc::channel(1);
         let pending = Arc::new(AtomicU64::new(17));
         let control = SessionControl {
             inner: Arc::new(SessionControlInner {
-                commands: command_sender,
+                terminal_commands: terminal_command_sender,
+                forward_commands: forward_command_sender,
                 host_key_decisions: decision_sender,
                 authentication_responses: authentication_sender,
                 pending_host_key_request: pending.clone(),
@@ -2758,13 +3286,15 @@ mod tests {
 
     #[tokio::test]
     async fn authentication_response_requires_the_active_request_and_redacts_debug() {
-        let (command_sender, _command_receiver) = mpsc::channel(1);
+        let (terminal_command_sender, _terminal_command_receiver) = mpsc::channel(1);
+        let (forward_command_sender, _forward_command_receiver) = mpsc::channel(1);
         let (decision_sender, _decision_receiver) = mpsc::channel(1);
         let (authentication_sender, mut authentication_receiver) = mpsc::channel(1);
         let pending_authentication = Arc::new(AtomicU64::new(41));
         let control = SessionControl {
             inner: Arc::new(SessionControlInner {
-                commands: command_sender,
+                terminal_commands: terminal_command_sender,
+                forward_commands: forward_command_sender,
                 host_key_decisions: decision_sender,
                 authentication_responses: authentication_sender,
                 pending_host_key_request: Arc::new(AtomicU64::new(0)),
@@ -2945,7 +3475,8 @@ mod tests {
 
     #[tokio::test]
     async fn observed_host_key_evidence_requires_the_active_request_and_stays_out_of_debug() {
-        let (command_sender, _command_receiver) = mpsc::channel(1);
+        let (terminal_command_sender, _terminal_command_receiver) = mpsc::channel(1);
+        let (forward_command_sender, _forward_command_receiver) = mpsc::channel(1);
         let (decision_sender, _decision_receiver) = mpsc::channel(1);
         let (authentication_sender, _authentication_receiver) = mpsc::channel(1);
         let pending = Arc::new(AtomicU64::new(23));
@@ -2959,7 +3490,8 @@ mod tests {
         };
         let control = SessionControl {
             inner: Arc::new(SessionControlInner {
-                commands: command_sender,
+                terminal_commands: terminal_command_sender,
+                forward_commands: forward_command_sender,
                 host_key_decisions: decision_sender,
                 authentication_responses: authentication_sender,
                 pending_host_key_request: pending,

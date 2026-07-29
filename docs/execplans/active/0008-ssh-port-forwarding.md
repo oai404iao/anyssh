@@ -2,7 +2,7 @@
 
 - 状态：Active
 - 创建日期：2026-07-28
-- 最后更新：2026-07-28
+- 最后更新：2026-07-29
 - 负责人：项目维护者与执行 Agent
 
 ## 目的与用户价值
@@ -72,10 +72,28 @@
 - [x] 2026-07-28：核验固定 russh `0.62.4` 的 Direct/Remote Forward API 和
   不可 Clone Handle 约束。
 - [x] 2026-07-28：创建 Proposed ADR-0018、Design 和本 ExecPlan。
-- [ ] 完成 Milestone 1：Forward Runtime/Core Control。
-- [ ] 完成 Milestone 2：Local 与 Dynamic Forward。
-- [ ] 完成 Milestone 3：Remote Forward。
-- [ ] 完成 Milestone 4：Tauri/React Product UI。
+- [x] 2026-07-29：完成 Milestone 1。`SessionControl` 使用独立有界
+  `TerminalCommand`/`ForwardCommand`，实现 Session-owned Registry、16/64
+  上限、Cancellation、幂等 Stop 和全量 Cleanup。
+- [x] 2026-07-29：完成 Milestone 2。Local 与 Dynamic SOCKS5 支持 Loopback、
+  Port 0、IPv4/IPv6/Domain、`CONNECT`、有界 Handshake、Half-close 和
+  Target-side DNS。
+- [x] 2026-07-29：完成 Milestone 3。Remote 使用
+  `tcpip_forward`/`cancel_tcpip_forward`、Assigned Port、显式 Channel
+  Accept/Reject、Registration Match 和本地 Destination Connect。
+- [x] 2026-07-29：完成 Milestone 4。Tauri IPC 只传 Metadata；React 提供每 Tab
+  Local/Remote/Dynamic Form、Actual Port、Active List 和 Stop；Browser Preview
+  不打开 Listener。
+- [x] 2026-07-29：真实 OpenSSH Protocol Smoke 已覆盖 Direct/Jump Local、
+  Dynamic、Remote、4 MiB Copy、Half-close、16 Forward、64 Connection、
+  Stop/Disconnect Cleanup 和错误 SOCKS Command。
+- [x] 2026-07-29：Frontend 17 个 Vitest 与 11 个 Playwright 通过；Browser
+  agent QA `smoke-1785290802` 通过并人工检查 Desktop/Mobile Forward 截图。
+- [x] 2026-07-29：Linux X11 Native QA `smoke-1785290843-2194048` 与 Wayland
+  Native QA `smoke-1785289772-2158531` 通过真实 Local/Dynamic/Remote Marker、
+  Tab Close/Disconnect/Vault Lock Cleanup 和 Payload Evidence Scan。
+- [x] 2026-07-29：独立 Linux Container Build `build-1785290669-1` 与 Android
+  ARM64 Container Build `build-1785290750-1` 通过。
 - [ ] 完成 Milestone 5：Native QA、全量回归与治理。
 
 ## Milestones
@@ -181,6 +199,13 @@ git diff --check
 - 2026-07-28：russh Remote Forward Handler 提供显式
   `ChannelOpenHandle::accept/reject`。AnySSH 可以先验证 Registration 和本地
   Destination，再接受 Server Channel。
+- 2026-07-29：PTY 与 Forward 共用一个不可 Clone russh Handle，但把
+  Terminal Loop 与 Forward Actor 拆为两个 Task 后，Terminal 输入/输出不会被
+  Listener Accept 阻塞；只有 Channel Open/Registration 在 Forward Actor 内串行。
+- 2026-07-29：OpenSSH Remote Port 0 会返回 Assigned Port；非零请求成功时 russh
+  按协议返回 0，因此 Summary 必须在这两种情况间显式选择。
+- 2026-07-29：原生 1280px WebKitGTK 窗口中的 Connection Panel 需要滚动后才能
+  查看全部 Forward；X11 Driver 增加 Mouse Wheel 命令并以真实输入验证。
 
 ## Decision Log
 
@@ -189,6 +214,13 @@ git diff --check
 - 2026-07-28：v1 Local/Dynamic/Remote Bind 只允许 Loopback。
 - 2026-07-28：Dynamic v1 只支持无认证 SOCKS5 `CONNECT`。
 - 2026-07-28：Forward Payload 保持 Rust-only；Tauri 只传 Metadata 和控制命令。
+- 2026-07-29：Stop 对合法、已不存在的 Forward ID 幂等成功；这使重复 Close、
+  Disconnect 和 Stale UI Cleanup 不需要区分竞态先后。
+- 2026-07-29：v1 不发送逐 Connection Forward Event。Start/Stop Error 通过
+  oneshot 返回，Session Closed 清空全部 UI Metadata；这样 SOCKS Destination
+  和 Payload 不会因诊断事件越过 Rust 边界。
+- 2026-07-29：Remote Cancel 失败时立即取消本地 Connection，但保留一个已取消
+  Registration Entry 供重试/Session Cleanup，再到 Channel 一律拒绝。
 
 ## Outcomes & Retrospective
 

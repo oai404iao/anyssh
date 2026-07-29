@@ -26,6 +26,7 @@ INTERACTIVE_TARGET_ALIAS="ssh-interactive-target"
 INTERACTIVE_PASSWORD_TARGET_ALIAS="ssh-interactive-password-target"
 INTERACTIVE_JUMP_TARGET_ALIAS="ssh-interactive-jump-target"
 INTERACTIVE_JUMP_TWO_TARGET_ALIAS="ssh-interactive-jump-two-target"
+FORWARD_ECHO_PORT=18080
 KEY_PASSPHRASE="anyssh-key-passphrase"
 INTERACTIVE_RESPONSE="otp-$RANDOM-$RANDOM"
 KEY_DIR=""
@@ -308,12 +309,17 @@ install_authorized_keys "$TARGET_CONTAINER"
 install_authorized_keys "$DEEP_TARGET_CONTAINER"
 install_authorized_keys "$INTERACTIVE_TARGET_CONTAINER"
 
+docker exec -d "$TARGET_CONTAINER" \
+  sh -c "exec nc -lk -p $FORWARD_ECHO_PORT -e /bin/cat"
+
 FIXTURES_READY=false
 for _ in $(seq 1 100); do
   if ssh-keyscan -p "$JUMP_PORT" 127.0.0.1 >/dev/null 2>&1 \
     && ssh-keyscan -p "$INTERACTIVE_PORT" 127.0.0.1 >/dev/null 2>&1 \
     && docker exec "$JUMP_CONTAINER" \
       nc -z -w 1 "$TARGET_ALIAS" 22 >/dev/null 2>&1 \
+    && docker exec "$JUMP_CONTAINER" \
+      nc -z -w 1 "$TARGET_ALIAS" "$FORWARD_ECHO_PORT" >/dev/null 2>&1 \
     && docker exec "$JUMP_CONTAINER" \
       nc -z -w 1 "$JUMP_TWO_ALIAS" 22 >/dev/null 2>&1 \
     && docker exec "$JUMP_TWO_CONTAINER" \
@@ -488,6 +494,18 @@ ANYSSH_TEST_JUMP_CONTAINER="$JUMP_CONTAINER" \
 ANYSSH_TEST_JUMP_HOST=127.0.0.1 \
 ANYSSH_TEST_JUMP_PORT="$JUMP_PORT" \
 ANYSSH_TEST_TARGET_HOST="$TARGET_ALIAS" \
+ANYSSH_TEST_FORWARD_ECHO_PORT="$FORWARD_ECHO_PORT" \
+  cargo test \
+    --package anyssh-ssh \
+    --test port_forwarding_smoke \
+    -- \
+    --ignored \
+    --nocapture \
+    --test-threads=1
+
+ANYSSH_TEST_JUMP_HOST=127.0.0.1 \
+ANYSSH_TEST_JUMP_PORT="$JUMP_PORT" \
+ANYSSH_TEST_TARGET_HOST="$TARGET_ALIAS" \
 ANYSSH_TEST_TARGET_IP="$TARGET_INTERNAL_IP" \
 ANYSSH_TEST_TARGET_PORT=22 \
 ANYSSH_TEST_BLACKHOLE_HOST="$BLACKHOLE_ALIAS" \
@@ -501,4 +519,4 @@ ANYSSH_TEST_JUMP_CONTAINER="$JUMP_CONTAINER" \
     --nocapture \
     --test-threads=1
 
-echo "OpenSSH password, Keyboard-interactive/OTP, Private Key, System Agent, Vault Credential ID, saved Host Route, host-key, backpressure, and Jump Host smoke tests passed."
+echo "OpenSSH password, Keyboard-interactive/OTP, Private Key, System Agent, Vault Credential ID, saved Host Route, host-key, backpressure, Jump Host, and Port Forwarding smoke tests passed."

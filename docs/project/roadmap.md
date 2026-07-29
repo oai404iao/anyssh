@@ -22,9 +22,10 @@
 
 ## Phase 1：桌面 MVP
 
-状态：进行中；Group、System Agent、加密 Private Key 原生 Passphrase Prompt
-Known Host Repository/Durable TOFU 和 Keyboard-interactive/OTP 已完成。
-Multi Tab Terminal 与 Session Lifecycle 已完成；SSH Port Forwarding 正在执行。
+状态：进行中；Group、System Agent、加密 Private Key 原生 Passphrase Prompt、
+Known Host Repository/Durable TOFU、Keyboard-interactive/OTP 和 Multi Tab
+Terminal 已完成；SSH Port Forwarding 已完成 Core/UI/OpenSSH/Linux Native，
+等待 Windows/Container/同 Commit CI 后关闭计划。
 
 - Host 与 Group 继承（已完成）。
 - 密码、私钥（含 Linux/Windows 加密 Key Prompt）、系统 Agent（已完成）。
@@ -33,7 +34,7 @@ Multi Tab Terminal 与 Session Lifecycle 已完成；SSH Port Forwarding 正在�
 - Keyboard-interactive/OTP（已完成）。
 - 多 Tab Terminal（已完成）。
 - Jump Host（任意长度 Route 与两跳 Native/Protocol 验证已完成）。
-- Local/Remote/Dynamic Forward（当前活动计划）。
+- Local/Remote/Dynamic Forward（当前活动计划，最终验证中）。
 - Key 管理（Native Import 已完成；生成、Reveal/Export 待实施）。
 - Theme/Font。
 - Snippet。

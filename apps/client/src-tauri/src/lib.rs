@@ -22,8 +22,9 @@ use anyssh_app::{
 };
 use anyssh_domain::{SshEndpoint, TerminalSize};
 use anyssh_ssh::{
-    SessionControl, SessionEvent, SessionHop, SpawnedSession,
-    SystemAgentIdentitySummary as SshSystemAgentIdentitySummary,
+    PortForwardKind as SshPortForwardKind, PortForwardRequest as SshPortForwardRequest,
+    PortForwardSummary as SshPortForwardSummary, SessionControl, SessionEvent, SessionHop,
+    SpawnedSession, SystemAgentIdentitySummary as SshSystemAgentIdentitySummary,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{
@@ -499,6 +500,76 @@ struct ConnectSavedHostRequest {
     host_id: String,
     columns: u32,
     rows: u32,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum PortForwardKind {
+    Local,
+    Remote,
+    Dynamic,
+}
+
+impl From<PortForwardKind> for SshPortForwardKind {
+    fn from(value: PortForwardKind) -> Self {
+        match value {
+            PortForwardKind::Local => Self::Local,
+            PortForwardKind::Remote => Self::Remote,
+            PortForwardKind::Dynamic => Self::Dynamic,
+        }
+    }
+}
+
+impl From<SshPortForwardKind> for PortForwardKind {
+    fn from(value: SshPortForwardKind) -> Self {
+        match value {
+            SshPortForwardKind::Local => Self::Local,
+            SshPortForwardKind::Remote => Self::Remote,
+            SshPortForwardKind::Dynamic => Self::Dynamic,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StartPortForwardRequest {
+    session_id: String,
+    kind: PortForwardKind,
+    bind_host: String,
+    bind_port: u16,
+    destination_host: Option<String>,
+    destination_port: Option<u16>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StopPortForwardRequest {
+    session_id: String,
+    forward_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PortForwardSummary {
+    id: String,
+    kind: PortForwardKind,
+    bind_host: String,
+    bound_port: u16,
+    destination_host: Option<String>,
+    destination_port: Option<u16>,
+}
+
+impl From<SshPortForwardSummary> for PortForwardSummary {
+    fn from(summary: SshPortForwardSummary) -> Self {
+        Self {
+            id: summary.id().to_owned(),
+            kind: summary.kind().into(),
+            bind_host: summary.bind_host().to_owned(),
+            bound_port: summary.bound_port(),
+            destination_host: summary.destination_host().map(str::to_owned),
+            destination_port: summary.destination_port(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -1245,6 +1316,42 @@ async fn ssh_resize(
 }
 
 #[tauri::command]
+async fn ssh_forward_start(
+    request: StartPortForwardRequest,
+    registry: State<'_, SessionRegistry>,
+) -> Result<PortForwardSummary, String> {
+    let forward = SshPortForwardRequest::new(
+        request.kind.into(),
+        request.bind_host,
+        request.bind_port,
+        request.destination_host,
+        request.destination_port,
+    )
+    .map_err(|error| error.to_string())?;
+
+    registry
+        .get(&request.session_id)
+        .await?
+        .start_port_forward(forward)
+        .await
+        .map(PortForwardSummary::from)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn ssh_forward_stop(
+    request: StopPortForwardRequest,
+    registry: State<'_, SessionRegistry>,
+) -> Result<(), String> {
+    registry
+        .get(&request.session_id)
+        .await?
+        .stop_port_forward(request.forward_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn ssh_disconnect(
     session_id: String,
     registry: State<'_, SessionRegistry>,
@@ -1304,6 +1411,8 @@ pub fn run() {
             ssh_ack_output,
             ssh_send,
             ssh_resize,
+            ssh_forward_start,
+            ssh_forward_stop,
             ssh_disconnect
         ])
         .build(tauri::generate_context!())
@@ -1865,6 +1974,53 @@ mod tests {
             }),
         ] {
             assert!(serde_json::from_value::<ConnectSavedHostRequest>(extra).is_err());
+        }
+    }
+
+    #[test]
+    fn port_forward_ipc_is_metadata_only_and_rejects_payload_fields() {
+        let request: StartPortForwardRequest = serde_json::from_value(serde_json::json!({
+            "sessionId": "ssh-1",
+            "kind": "local",
+            "bindHost": "127.0.0.1",
+            "bindPort": 0,
+            "destinationHost": "target.internal",
+            "destinationPort": 8080
+        }))
+        .expect("typed Local forward request");
+        assert_eq!(request.session_id, "ssh-1");
+        assert!(matches!(request.kind, PortForwardKind::Local));
+        assert_eq!(request.destination_host.as_deref(), Some("target.internal"));
+
+        let summary = serde_json::to_value(PortForwardSummary {
+            id: "forward-1".to_owned(),
+            kind: PortForwardKind::Dynamic,
+            bind_host: "127.0.0.1".to_owned(),
+            bound_port: 41080,
+            destination_host: None,
+            destination_port: None,
+        })
+        .expect("forward summary");
+        assert_eq!(summary["kind"], "dynamic");
+        assert_eq!(summary["boundPort"], 41080);
+        assert!(summary.get("payload").is_none());
+        assert!(summary.get("socket").is_none());
+        assert!(summary.get("password").is_none());
+
+        for forbidden in ["payload", "socket", "channel", "socksPassword", "command"] {
+            let mut value = serde_json::json!({
+                "sessionId": "ssh-1",
+                "kind": "local",
+                "bindHost": "127.0.0.1",
+                "bindPort": 0,
+                "destinationHost": "target.internal",
+                "destinationPort": 8080
+            });
+            value[forbidden] = serde_json::json!("forbidden");
+            assert!(
+                serde_json::from_value::<StartPortForwardRequest>(value).is_err(),
+                "{forbidden} must be rejected"
+            );
         }
     }
 

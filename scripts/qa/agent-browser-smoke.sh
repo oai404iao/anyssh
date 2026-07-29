@@ -118,6 +118,36 @@ agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/03-connected-unicode.png"
 
 agent-browser --session "$SESSION" find role button click \
+  --name "Start forward"
+agent-browser --session "$SESSION" select \
+  '[aria-label="Port forward type"]' "dynamic"
+agent-browser --session "$SESSION" find role button click \
+  --name "Start forward"
+agent-browser --session "$SESSION" select \
+  '[aria-label="Port forward type"]' "remote"
+agent-browser --session "$SESSION" find role button click \
+  --name "Start forward"
+agent-browser --session "$SESSION" snapshot -i \
+  >"$OUTPUT_DIR/03a-forwarding-snapshot.txt"
+for kind in local dynamic remote; do
+  if ! grep -F "Stop $kind forward on port" \
+    "$OUTPUT_DIR/03a-forwarding-snapshot.txt" >/dev/null; then
+    echo "The $kind Browser Preview Forward was not active." >&2
+    exit 1
+  fi
+done
+agent-browser --session "$SESSION" scrollintoview \
+  ".forwarding-list li:last-child"
+agent-browser --session "$SESSION" screenshot \
+  "$OUTPUT_DIR/screenshots/03a-forwarding-desktop.png"
+agent-browser --session "$SESSION" set viewport 390 844
+agent-browser --session "$SESSION" scrollintoview \
+  ".forwarding-list li:last-child"
+agent-browser --session "$SESSION" screenshot \
+  "$OUTPUT_DIR/screenshots/03a-forwarding-mobile.png"
+agent-browser --session "$SESSION" set viewport 1440 900
+
+agent-browser --session "$SESSION" find role button click \
   --name "New session tab"
 agent-browser --session "$SESSION" find label "Display name" fill \
   "Browser QA second"
@@ -132,6 +162,24 @@ if ! grep -F "Browser QA second" \
   echo "The second Session Tab was not exposed in the accessibility tree." >&2
   exit 1
 fi
+if grep -F "Stop local forward on port" \
+  "$OUTPUT_DIR/03b-multi-tab-snapshot.txt" >/dev/null \
+  || grep -F "Stop remote forward on port" \
+    "$OUTPUT_DIR/03b-multi-tab-snapshot.txt" >/dev/null; then
+  echo "The first Tab's Forward metadata leaked into the second Tab." >&2
+  exit 1
+fi
+agent-browser --session "$SESSION" select \
+  '[aria-label="Port forward type"]' "dynamic"
+agent-browser --session "$SESSION" find role button click \
+  --name "Start forward"
+agent-browser --session "$SESSION" snapshot -i \
+  >"$OUTPUT_DIR/03b-second-tab-forwarding-snapshot.txt"
+if ! grep -F "Stop dynamic forward on port" \
+  "$OUTPUT_DIR/03b-second-tab-forwarding-snapshot.txt" >/dev/null; then
+  echo "The second Tab did not own its Dynamic Forward metadata." >&2
+  exit 1
+fi
 agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/03b-multi-tab-desktop.png"
 agent-browser --session "$SESSION" set viewport 390 844
@@ -143,6 +191,13 @@ agent-browser --session "$SESSION" find role button click \
 agent-browser --session "$SESSION" wait --text "Interactive shell is active."
 
 REMAINING_SESSION_SNAPSHOT="$(agent-browser --session "$SESSION" snapshot -i)"
+for kind in local dynamic remote; do
+  if ! grep -F "Stop $kind forward on port" \
+    <<<"$REMAINING_SESSION_SNAPSHOT" >/dev/null; then
+    echo "Closing the second Tab affected the first Tab's $kind Forward." >&2
+    exit 1
+  fi
+done
 TERMINAL_REF="$(
   printf '%s\n' "$REMAINING_SESSION_SNAPSHOT" |
     sed -n 's/.*textbox "Terminal input" \[ref=\([^]]*\)\].*/@\1/p' |
@@ -169,6 +224,17 @@ agent-browser --session "$SESSION" snapshot -i >"$OUTPUT_DIR/04-mobile-snapshot.
 agent-browser --session "$SESSION" set viewport 1440 900
 agent-browser --session "$SESSION" find role button click --name "Disconnect"
 agent-browser --session "$SESSION" wait --text "The SSH session has ended."
+agent-browser --session "$SESSION" snapshot -i \
+  >"$OUTPUT_DIR/05-disconnected-snapshot.txt"
+if grep -F "Stop local forward on port" \
+  "$OUTPUT_DIR/05-disconnected-snapshot.txt" >/dev/null \
+  || grep -F "Stop dynamic forward on port" \
+    "$OUTPUT_DIR/05-disconnected-snapshot.txt" >/dev/null \
+  || grep -F "Stop remote forward on port" \
+    "$OUTPUT_DIR/05-disconnected-snapshot.txt" >/dev/null; then
+  echo "Disconnect left Browser Preview Forward metadata active." >&2
+  exit 1
+fi
 agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/05-disconnected.png"
 
@@ -423,6 +489,10 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
   terminal session.
 - Real keyboard events reached xterm.js.
 - Unicode/CJK/Nerd Font preview command rendered.
+- Local, Dynamic SOCKS5, and Remote Forward metadata started with assigned
+  ports at desktop/mobile widths without opening Browser network listeners.
+- Forward metadata stayed isolated by Session Tab; closing the second Tab left
+  the first Tab's three Forwards active, and Disconnect cleared them.
 - Two concurrent Preview Session Tabs rendered at desktop/mobile widths; closing
   the second Tab left the first Terminal connected and accepting input.
 - Compact 1024x768 layout rendered with an icon-only sidebar.
@@ -459,6 +529,8 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
 - \`screenshots/01-initial-desktop.png\`
 - \`screenshots/02-host-key-dialog.png\`
 - \`screenshots/03-connected-unicode.png\`
+- \`screenshots/03a-forwarding-desktop.png\`
+- \`screenshots/03a-forwarding-mobile.png\`
 - \`screenshots/03b-multi-tab-desktop.png\`
 - \`screenshots/03c-multi-tab-mobile.png\`
 - \`screenshots/03d-first-tab-after-close.png\`

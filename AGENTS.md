@@ -234,6 +234,9 @@ Evidence 复制回仓库。
 - 验证 OpenSSH PAM 纯 Keyboard-interactive、Password/Private Key/System Agent
   Partial-success + OTP、错误/正确 Response、Saved Host、Interactive Jump Hop
   和 Response 明文扫描。
+- 验证 Session-scoped Local/Dynamic/Remote Forward：Direct 与 Jump Target-side
+  DNS、SOCKS5 CONNECT、4 MiB/Half-close、16 Forward/64 Connection、
+  Remote Assigned Port、Stop/Disconnect Cleanup 和 Payload 不进入 Evidence。
 - Fixture 凭据只能用于测试，不得替换为真实主机或真实密钥。
 
 ### Vault 检查
@@ -264,6 +267,10 @@ Challenge，并确认 Response 不出现在 Vault 或 Native Log。
 Multi Tab 变更还必须同时连接两个真实 OpenSSH Session，证明 Inactive Tab 能
 排空 4 MiB Output、关闭一个 Tab 后另一个继续接受命令，并在两个 Session
 Connected 时由 Lock Vault 全量清理。
+Port Forwarding 变更还必须通过真实原生 UI 启动 Local、Dynamic SOCKS5 和
+Remote Loopback Forward，由 WebView 外 TCP Client 验证 Payload，确认
+Disconnect、Tab Close 和 Vault Lock 关闭 Listener/Registration，并扫描 Payload
+Marker 不进入 Vault、App Log 或 Evidence。
 
 `pnpm qa:native:windows` 只在 Windows 执行。它必须启动实际构建的 EXE、确认
 标题为 `AnySSH` 的非零窗口句柄，并通过
@@ -282,6 +289,9 @@ russh Server 和真实 EXE/WebView2 完成 Challenge/Response；测试 Response 
 Multi Tab 变更还必须保持一个真实 Agent Session Connected，在第二个 Tab 完成
 Keyboard-interactive Challenge，关闭第二个 Tab 后再次通过第一个 Session 创建
 远端 Marker。
+Port Forwarding 变更还必须在真实 EXE/Agent Session 上验证 Local、Dynamic 和
+Remote Loopback 数据路径，关闭拥有 Forward 的 Tab、Disconnect 或 Lock Vault
+后端口必须不可达，Payload Marker 不得进入 Vault 或文本 Evidence。
 
 `pnpm qa:native:wayland` 必须在 AnySSH 进程没有 `DISPLAY` 的条件下：
 
@@ -293,6 +303,8 @@ Keyboard-interactive Challenge，关闭第二个 Tab 后再次通过第一个 Se
   Challenge，并扫描 Response 不进入 Vault/App Log。
 - 保持第一个 OpenSSH Session Connected，在第二个 Tab 完成 Challenge；关闭
   第二个 Tab 后第一个 Session 必须继续接受远端命令。
+- 通过原生 Wayland UI 启动 Local、Dynamic 和 Remote Loopback Forward，
+  Disconnect/Tab Close 必须清理，Payload Marker 不得进入 Vault/App Log/Evidence。
 
 `pnpm check:android` 必须产出 ARM64 Debug APK，并验证：
 

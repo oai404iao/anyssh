@@ -266,7 +266,7 @@ static int usage(const char *program) {
   fprintf(stderr,
           "usage: %s probe [SCREENSHOT.bmp] | click X Y | type TEXT | "
           "enter | ctrl-a | ctrl-l | backspace | space | tab | shift-tab | "
-          "down | up\n",
+          "down | up | scroll-down [STEPS] | scroll-up [STEPS]\n",
           program);
   return 1;
 }
@@ -326,6 +326,19 @@ int main(int argc, char **argv) {
     send_key(display, XK_Down, 0);
   } else if (argc == 2 && strcmp(argv[1], "up") == 0) {
     send_key(display, XK_Up, 0);
+  } else if ((argc == 2 || argc == 3) &&
+             (strcmp(argv[1], "scroll-down") == 0 ||
+              strcmp(argv[1], "scroll-up") == 0)) {
+    int steps = argc == 3 ? atoi(argv[2]) : 1;
+    int button = strcmp(argv[1], "scroll-down") == 0 ? 5 : 4;
+    if (steps < 1) {
+      steps = 1;
+    }
+    for (int index = 0; index < steps; index++) {
+      XTestFakeButtonEvent(display, button, True, CurrentTime);
+      XTestFakeButtonEvent(display, button, False, CurrentTime);
+    }
+    XFlush(display);
   } else {
     result = usage(argv[0]);
   }

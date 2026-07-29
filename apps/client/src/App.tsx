@@ -22,10 +22,14 @@ import {
   respondAuthentication,
   resizeSsh,
   sendSshInput,
+  startSshPortForward,
+  stopSshPortForward,
   type AuthenticationChallengeEvent,
   type HostKeyChangedEvent,
   type HostKeyEvent,
   type SshClientEvent,
+  type SshPortForwardKind,
+  type SshPortForwardSummary,
 } from "./lib/ssh-bridge";
 import {
   listCredentials,
@@ -68,6 +72,14 @@ interface ConnectionForm {
   password: string;
 }
 
+interface PortForwardForm {
+  kind: SshPortForwardKind;
+  bindHost: string;
+  bindPort: string;
+  destinationHost: string;
+  destinationPort: string;
+}
+
 type WorkspaceView = "terminal" | ConfigurationSection;
 
 interface SessionTab {
@@ -85,6 +97,10 @@ interface SessionTab {
   error: string | null;
   selectedSavedHostId: string | null;
   terminalSize: { columns: number; rows: number };
+  portForwardForm: PortForwardForm;
+  portForwards: SshPortForwardSummary[];
+  portForwardError: string | null;
+  portForwardBusy: boolean;
 }
 
 const INITIAL_FORM: ConnectionForm = {
@@ -94,6 +110,14 @@ const INITIAL_FORM: ConnectionForm = {
   username: "anyssh",
   authenticationKind: "password",
   password: "",
+};
+
+const INITIAL_PORT_FORWARD_FORM: PortForwardForm = {
+  kind: "local",
+  bindHost: "127.0.0.1",
+  bindPort: "0",
+  destinationHost: "127.0.0.1",
+  destinationPort: "8080",
 };
 
 const MAX_SESSION_TABS = 8;
@@ -110,6 +134,10 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
 };
 
 let nextSessionTabId = 1;
+
+function formatForwardEndpoint(host: string, port: number): string {
+  return `${host.includes(":") ? `[${host}]` : host}:${port}`;
+}
 
 function createSessionTab(
   source:
@@ -141,6 +169,10 @@ function createSessionTab(
       error: null,
       selectedSavedHostId: source.host.id,
       terminalSize: { columns: 120, rows: 32 },
+      portForwardForm: { ...INITIAL_PORT_FORWARD_FORM },
+      portForwards: [],
+      portForwardError: null,
+      portForwardBusy: false,
     };
   }
 
@@ -161,6 +193,10 @@ function createSessionTab(
     error: null,
     selectedSavedHostId: null,
     terminalSize: { columns: 120, rows: 32 },
+    portForwardForm: { ...INITIAL_PORT_FORWARD_FORM },
+    portForwards: [],
+    portForwardError: null,
+    portForwardBusy: false,
   };
 }
 
@@ -360,6 +396,10 @@ function App() {
   const passwordVisible = activeTab.passwordVisible;
   const error = activeTab.error;
   const selectedSavedHostId = activeTab.selectedSavedHostId;
+  const portForwardForm = activeTab.portForwardForm;
+  const portForwards = activeTab.portForwards;
+  const portForwardError = activeTab.portForwardError;
+  const portForwardBusy = activeTab.portForwardBusy;
 
   useEffect(() => {
     if (workspaceView === "terminal") return;
@@ -394,6 +434,19 @@ function App() {
       updateSessionTab(activeTabIdRef.current, (tab) => ({
         ...tab,
         changedHostKey,
+      }));
+    },
+    [updateSessionTab],
+  );
+
+  const setPortForwardForm = useCallback(
+    (
+      update: PortForwardForm | ((current: PortForwardForm) => PortForwardForm),
+    ) => {
+      updateSessionTab(activeTabIdRef.current, (tab) => ({
+        ...tab,
+        portForwardForm:
+          typeof update === "function" ? update(tab.portForwardForm) : update,
       }));
     },
     [updateSessionTab],
@@ -520,6 +573,9 @@ function App() {
               pendingHostKey: null,
               pendingAuthentication: null,
               changedHostKey: event,
+              portForwards: [],
+              portForwardError: null,
+              portForwardBusy: false,
               form: { ...tab.form, password: "" },
               passwordVisible: false,
             }),
@@ -586,6 +642,9 @@ function App() {
               statusDetail: event.message,
               error: event.message,
               pendingAuthentication: null,
+              portForwards: [],
+              portForwardError: null,
+              portForwardBusy: false,
               form: { ...tab.form, password: "" },
               passwordVisible: false,
             }),
@@ -603,6 +662,9 @@ function App() {
               sessionId: null,
               pendingHostKey: null,
               pendingAuthentication: null,
+              portForwards: [],
+              portForwardError: null,
+              portForwardBusy: false,
               form: { ...tab.form, password: "" },
               passwordVisible: false,
             }),
@@ -666,6 +728,9 @@ function App() {
       pendingHostKey: null,
       changedHostKey: null,
       pendingAuthentication: null,
+      portForwards: [],
+      portForwardError: null,
+      portForwardBusy: false,
       passwordVisible: false,
       error: null,
       form: { ...current.form, password: "" },
@@ -906,6 +971,110 @@ function App() {
     },
     [updateSessionTab],
   );
+
+  async function handleStartPortForward(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const tabId = activeTabIdRef.current;
+    const tab = sessionTabsRef.current.find((item) => item.id === tabId);
+    if (!tab?.sessionId || tab.status !== "connected") {
+      updateSessionTab(tabId, (current) => ({
+        ...current,
+        portForwardError: "Connect this session before starting a forward.",
+      }));
+      return;
+    }
+
+    const bindPort = Number(portForwardForm.bindPort);
+    const destinationPort = Number(portForwardForm.destinationPort);
+    if (
+      !Number.isInteger(bindPort) ||
+      bindPort < 0 ||
+      bindPort > 65_535 ||
+      (portForwardForm.kind !== "dynamic" &&
+        (!portForwardForm.destinationHost.trim() ||
+          !Number.isInteger(destinationPort) ||
+          destinationPort < 1 ||
+          destinationPort > 65_535))
+    ) {
+      updateSessionTab(tabId, (current) => ({
+        ...current,
+        portForwardError: "Enter valid bind and destination ports.",
+      }));
+      return;
+    }
+
+    const sessionId = tab.sessionId;
+    const generation = tab.generation;
+    updateSessionTab(tabId, (current) => ({
+      ...current,
+      portForwardError: null,
+      portForwardBusy: true,
+    }));
+    try {
+      const summary = await startSshPortForward(sessionId, {
+        kind: portForwardForm.kind,
+        bindHost: portForwardForm.bindHost,
+        bindPort,
+        ...(portForwardForm.kind === "dynamic"
+          ? {}
+          : {
+              destinationHost: portForwardForm.destinationHost.trim(),
+              destinationPort,
+            }),
+      });
+      updateSessionTab(tabId, (current) =>
+        current.sessionId === sessionId && current.generation === generation
+          ? {
+              ...current,
+              portForwards: [...current.portForwards, summary],
+              portForwardBusy: false,
+            }
+          : current,
+      );
+    } catch (forwardError) {
+      updateSessionTab(tabId, (current) =>
+        current.sessionId === sessionId && current.generation === generation
+          ? {
+              ...current,
+              portForwardError:
+                forwardError instanceof Error
+                  ? forwardError.message
+                  : String(forwardError),
+              portForwardBusy: false,
+            }
+          : current,
+      );
+    }
+  }
+
+  async function handleStopPortForward(forwardId: string) {
+    const tabId = activeTabIdRef.current;
+    const tab = sessionTabsRef.current.find((item) => item.id === tabId);
+    if (!tab?.sessionId) return;
+    const sessionId = tab.sessionId;
+    try {
+      await stopSshPortForward(sessionId, forwardId);
+      updateSessionTab(tabId, (current) =>
+        current.sessionId === sessionId
+          ? {
+              ...current,
+              portForwards: current.portForwards.filter(
+                (forward) => forward.id !== forwardId,
+              ),
+              portForwardError: null,
+            }
+          : current,
+      );
+    } catch (forwardError) {
+      updateSessionTab(tabId, (current) => ({
+        ...current,
+        portForwardError:
+          forwardError instanceof Error
+            ? forwardError.message
+            : String(forwardError),
+      }));
+    }
+  }
 
   function selectSavedHost(host: HostSummary) {
     const current = sessionTabsRef.current.find(
@@ -1593,6 +1762,179 @@ function App() {
                   </button>
                 </form>
               )}
+
+              <section
+                aria-labelledby="port-forwarding-title"
+                className="forwarding-panel"
+              >
+                <div className="forwarding-heading">
+                  <div>
+                    <p className="eyebrow">Session scoped</p>
+                    <h3 id="port-forwarding-title">Port forwarding</h3>
+                  </div>
+                  <span>{portForwards.length}/16</span>
+                </div>
+                <form
+                  className="forwarding-form"
+                  onSubmit={handleStartPortForward}
+                >
+                  <label>
+                    Type
+                    <select
+                      aria-label="Port forward type"
+                      onChange={(event) =>
+                        setPortForwardForm((current) => ({
+                          ...current,
+                          kind: event.target.value as SshPortForwardKind,
+                        }))
+                      }
+                      value={portForwardForm.kind}
+                    >
+                      <option value="local">Local</option>
+                      <option value="remote">Remote</option>
+                      <option value="dynamic">Dynamic SOCKS5</option>
+                    </select>
+                  </label>
+                  <div className="field-grid">
+                    <label>
+                      {portForwardForm.kind === "remote"
+                        ? "Server bind"
+                        : "Local bind"}
+                      <select
+                        aria-label="Port forward bind host"
+                        onChange={(event) =>
+                          setPortForwardForm((current) => ({
+                            ...current,
+                            bindHost: event.target.value,
+                          }))
+                        }
+                        value={portForwardForm.bindHost}
+                      >
+                        <option value="127.0.0.1">127.0.0.1</option>
+                        <option value="::1">::1</option>
+                      </select>
+                    </label>
+                    <label className="port-field">
+                      Bind port
+                      <input
+                        aria-label="Forward bind number"
+                        inputMode="numeric"
+                        max="65535"
+                        min="0"
+                        onChange={(event) =>
+                          setPortForwardForm((current) => ({
+                            ...current,
+                            bindPort: event.target.value,
+                          }))
+                        }
+                        type="number"
+                        value={portForwardForm.bindPort}
+                      />
+                    </label>
+                  </div>
+                  {portForwardForm.kind !== "dynamic" && (
+                    <div className="field-grid">
+                      <label>
+                        {portForwardForm.kind === "remote"
+                          ? "Local destination"
+                          : "Target destination"}
+                        <input
+                          aria-label="Port forward destination host"
+                          autoCapitalize="none"
+                          onChange={(event) =>
+                            setPortForwardForm((current) => ({
+                              ...current,
+                              destinationHost: event.target.value,
+                            }))
+                          }
+                          spellCheck={false}
+                          value={portForwardForm.destinationHost}
+                        />
+                      </label>
+                      <label className="port-field">
+                        Port
+                        <input
+                          aria-label="Forward destination number"
+                          inputMode="numeric"
+                          max="65535"
+                          min="1"
+                          onChange={(event) =>
+                            setPortForwardForm((current) => ({
+                              ...current,
+                              destinationPort: event.target.value,
+                            }))
+                          }
+                          type="number"
+                          value={portForwardForm.destinationPort}
+                        />
+                      </label>
+                    </div>
+                  )}
+                  <p className="forwarding-policy">
+                    Loopback only. Payloads stay in Rust and are never sent
+                    through the WebView.
+                  </p>
+                  {portForwardError && (
+                    <div className="inline-error" role="alert">
+                      {portForwardError}
+                    </div>
+                  )}
+                  <button
+                    className="secondary-button full-width-button"
+                    disabled={
+                      !connected || portForwardBusy || portForwards.length >= 16
+                    }
+                    type="submit"
+                  >
+                    {!connected
+                      ? "Session required"
+                      : portForwardBusy
+                        ? "Starting…"
+                        : "Start forward"}
+                  </button>
+                </form>
+
+                {portForwards.length > 0 && (
+                  <ul
+                    aria-label="Active port forwards"
+                    className="forwarding-list"
+                  >
+                    {portForwards.map((forward) => (
+                      <li key={forward.id}>
+                        <div>
+                          <strong>
+                            {forward.kind === "dynamic"
+                              ? "SOCKS5"
+                              : forward.kind === "local"
+                                ? "Local"
+                                : "Remote"}{" "}
+                            ·{" "}
+                            {formatForwardEndpoint(
+                              forward.bindHost,
+                              forward.boundPort,
+                            )}
+                          </strong>
+                          <span>
+                            {forward.kind === "dynamic"
+                              ? "Unauthenticated CONNECT"
+                              : `→ ${formatForwardEndpoint(
+                                  forward.destinationHost ?? "",
+                                  forward.destinationPort ?? 0,
+                                )}`}
+                          </span>
+                        </div>
+                        <button
+                          aria-label={`Stop ${forward.kind} forward on port ${forward.boundPort}`}
+                          onClick={() => void handleStopPortForward(forward.id)}
+                          type="button"
+                        >
+                          Stop
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
 
               <div className="connection-state" aria-live="polite">
                 <span className={`state-icon ${statusTone}`}>

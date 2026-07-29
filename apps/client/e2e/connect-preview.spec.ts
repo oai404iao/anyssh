@@ -55,6 +55,142 @@ test("connects through the host-key preview flow", async ({ page }) => {
   ).toBeVisible();
 });
 
+test("manages Local, Dynamic, and Remote forwards as session metadata", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByLabel("Password", { exact: true }).fill("fixture");
+  await page.getByRole("button", { name: "Connect" }).click();
+  await page
+    .getByRole("dialog", { name: "Verify server identity" })
+    .getByRole("button", { name: "Trust and continue" })
+    .click();
+
+  const forwarding = page.getByRole("region", { name: "Port forwarding" });
+  await forwarding.getByRole("button", { name: "Start forward" }).click();
+  await expect(
+    forwarding.getByRole("button", {
+      name: /^Stop local forward on port \d+$/,
+    }),
+  ).toBeVisible();
+  await expect(forwarding).toContainText("1/16");
+
+  await forwarding
+    .getByRole("combobox", { name: "Port forward type" })
+    .selectOption("dynamic");
+  await expect(
+    forwarding.getByRole("textbox", {
+      name: "Port forward destination host",
+    }),
+  ).toHaveCount(0);
+  await forwarding.getByRole("button", { name: "Start forward" }).click();
+  const stopDynamic = forwarding.getByRole("button", {
+    name: /^Stop dynamic forward on port \d+$/,
+  });
+  await expect(stopDynamic).toBeVisible();
+
+  await forwarding
+    .getByRole("combobox", { name: "Port forward type" })
+    .selectOption("remote");
+  await expect(
+    forwarding.getByRole("textbox", {
+      name: "Port forward destination host",
+    }),
+  ).toBeVisible();
+  await forwarding.getByRole("button", { name: "Start forward" }).click();
+  await expect(
+    forwarding.getByRole("button", {
+      name: /^Stop remote forward on port \d+$/,
+    }),
+  ).toBeVisible();
+  await expect(forwarding).toContainText("3/16");
+  await expect(forwarding).not.toContainText("fixture");
+
+  await stopDynamic.click();
+  await expect(stopDynamic).toHaveCount(0);
+  await expect(forwarding).toContainText("2/16");
+
+  await page.getByRole("button", { name: "Disconnect" }).click();
+  await expect(
+    forwarding.getByRole("button", { name: /^Stop .* forward on port \d+$/ }),
+  ).toHaveCount(0);
+  await expect(
+    forwarding.getByRole("button", { name: "Session required" }),
+  ).toBeDisabled();
+});
+
+test("keeps active forwards isolated between session tabs", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  async function connectActiveTab(
+    displayName: string,
+    host: string,
+  ): Promise<void> {
+    await page.getByLabel("Display name").fill(displayName);
+    await page.getByRole("textbox", { name: "Host", exact: true }).fill(host);
+    await page.getByLabel("Password", { exact: true }).fill("fixture");
+    await page.getByRole("button", { name: "Connect" }).click();
+    await page
+      .getByRole("dialog", { name: "Verify server identity" })
+      .getByRole("button", { name: "Trust and continue" })
+      .click();
+    await expect(page.getByText("Interactive shell is active.")).toBeVisible();
+  }
+
+  await connectActiveTab("Forward one", "forward-one.example");
+  let forwarding = page.getByRole("region", { name: "Port forwarding" });
+  await forwarding.getByRole("button", { name: "Start forward" }).click();
+  await expect(
+    forwarding.getByRole("button", {
+      name: /^Stop local forward on port \d+$/,
+    }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "New session tab" }).click();
+  await connectActiveTab("Forward two", "forward-two.example");
+  forwarding = page.getByRole("region", { name: "Port forwarding" });
+  await expect(
+    forwarding.getByRole("button", { name: /^Stop .* forward on port \d+$/ }),
+  ).toHaveCount(0);
+  await forwarding
+    .getByRole("combobox", { name: "Port forward type" })
+    .selectOption("dynamic");
+  await forwarding.getByRole("button", { name: "Start forward" }).click();
+  await expect(
+    forwarding.getByRole("button", {
+      name: /^Stop dynamic forward on port \d+$/,
+    }),
+  ).toBeVisible();
+
+  await page.getByRole("tab", { name: "Forward one" }).click();
+  forwarding = page.getByRole("region", { name: "Port forwarding" });
+  await expect(
+    forwarding.getByRole("button", {
+      name: /^Stop local forward on port \d+$/,
+    }),
+  ).toBeVisible();
+  await expect(
+    forwarding.getByRole("button", {
+      name: /^Stop dynamic forward on port \d+$/,
+    }),
+  ).toHaveCount(0);
+
+  await page
+    .getByRole("button", { name: "Close Forward one session tab" })
+    .click();
+  await expect(page.getByRole("tab", { name: "Forward two" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(
+    page.getByRole("region", { name: "Port forwarding" }).getByRole("button", {
+      name: /^Stop dynamic forward on port \d+$/,
+    }),
+  ).toBeVisible();
+});
+
 test("completes a session-bound keyboard-interactive challenge", async ({
   page,
 }) => {
@@ -161,7 +297,7 @@ test("routes simultaneous authentication challenges to their owning tabs", async
 
   await page.getByRole("tab", { name: "OTP one" }).click();
   await page.getByRole("button", { name: "Connect" }).click();
-  await page.getByRole("tab", { name: "OTP two" }).click();
+  await page.getByRole("tab", { name: "OTP two" }).click({ force: true });
   await page.getByRole("button", { name: "Connect" }).click();
 
   await expect(page.locator(".session-tab-pending")).toHaveCount(2);
@@ -271,7 +407,7 @@ test("closes a connecting tab without accepting late events", async ({
   await page.getByRole("button", { name: "Connect" }).click();
   await page
     .getByRole("button", { name: "Close Closing session session tab" })
-    .click();
+    .click({ force: true });
 
   await page.waitForTimeout(350);
   await expect(

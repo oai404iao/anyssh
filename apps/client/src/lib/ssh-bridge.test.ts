@@ -10,6 +10,8 @@ import {
   disconnectSsh,
   respondAuthentication,
   sendSshInput,
+  startSshPortForward,
+  stopSshPortForward,
   type SshClientEvent,
 } from "./ssh-bridge";
 
@@ -297,6 +299,65 @@ describe("browser preview SSH bridge", () => {
       trustedFingerprintsSha256: ["SHA256:old-browser-host-key"],
     });
     expect(events.at(-1)).toEqual({ type: "closed" });
+    vi.useRealTimers();
+  });
+
+  it("simulates metadata-only port forward lifecycle without opening a listener", async () => {
+    vi.useFakeTimers();
+    trustBrowserKnownHost(
+      "forward.example",
+      22,
+      "ssh-ed25519",
+      "SHA256:4G6Yp8sJ0B7x1uN3zR9Qm2cK5dL8vT6aW0fH3eP7nXs",
+    );
+    const sessionId = await connectSsh(
+      {
+        host: "forward.example",
+        port: 22,
+        authentication: {
+          kind: "temporaryPassword",
+          username: "anyssh",
+          password: "fixture",
+        },
+        columns: 80,
+        rows: 24,
+      },
+      {
+        onEvent: () => {},
+        onData: () => {},
+      },
+    );
+    await vi.runAllTimersAsync();
+
+    const forward = await startSshPortForward(sessionId, {
+      kind: "local",
+      bindHost: "127.0.0.1",
+      bindPort: 0,
+      destinationHost: "target.internal",
+      destinationPort: 8080,
+    });
+    expect(forward).toMatchObject({
+      kind: "local",
+      bindHost: "127.0.0.1",
+      destinationHost: "target.internal",
+      destinationPort: 8080,
+    });
+    expect(forward.boundPort).toBeGreaterThan(0);
+    expect(JSON.stringify(forward)).not.toContain("payload");
+
+    await expect(
+      startSshPortForward(sessionId, {
+        kind: "dynamic",
+        bindHost: "0.0.0.0",
+        bindPort: 1080,
+      }),
+    ).rejects.toThrow("loopback");
+
+    await stopSshPortForward(sessionId, forward.id);
+    await expect(
+      stopSshPortForward(sessionId, forward.id),
+    ).resolves.toBeUndefined();
+    await disconnectSsh(sessionId);
     vi.useRealTimers();
   });
 });
