@@ -16,15 +16,16 @@
         "width": 1280,
         "height": 800,
         "minWidth": 900,
-        "minHeight": 600
+        "minHeight": 600,
+        "useHttpsScheme": true
       }
     ],
     "security": {
       "csp": {
         "default-src": "'self'",
-        "connect-src": "ipc: http://ipc.localhost",
+        "connect-src": "ipc: http://ipc.localhost https://ipc.localhost",
         "font-src": "'self' data: anyssh-font: http://anyssh-font.localhost https://anyssh-font.localhost",
-        "img-src": "'self' asset: http://asset.localhost data:",
+        "img-src": "'self' asset: http://asset.localhost https://asset.localhost data:",
         "style-src": "'self' 'unsafe-inline'"
       }
     }

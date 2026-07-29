@@ -297,7 +297,7 @@ export async function deleteFontAsset(fontId: string): Promise<boolean> {
 export function fontAssetUrl(font: FontAssetSummary): string {
   const path = `${font.id}/${font.sha256Hex}.${font.format}`;
   if (/Windows|Android/u.test(navigator.userAgent)) {
-    return `http://anyssh-font.localhost/${path}`;
+    return `https://anyssh-font.localhost/${path}`;
   }
   return `anyssh-font://localhost/${path}`;
 }
