@@ -440,7 +440,9 @@ async function unlockRestartedVault(targetPage) {
   await targetPage.locator(".primary-nav .nav-item").nth(7).click();
   await assert(targetPage.getByLabel("App theme")).toHaveValue("light");
   const restartedTheme = targetPage.getByLabel("Terminal theme");
-  const restartedFont = targetPage.getByLabel("Font", { exact: true });
+  const restartedFont = targetPage.getByLabel("Terminal font", {
+    exact: true,
+  });
   await assert(restartedTheme.locator("option:checked")).toContainText(
     "Windows Aurora",
   );
@@ -864,7 +866,7 @@ async function verifyAppearanceAndSnippets(targetPage) {
   await targetPage.getByRole("button", { name: "Import Font" }).click();
   await appearanceDriver;
 
-  const fontSelect = targetPage.getByLabel("Font", { exact: true });
+  const fontSelect = targetPage.getByLabel("Terminal font", { exact: true });
   await assert(fontSelect).toContainText("imported");
   const themeOption = terminalTheme
     .locator("option")
