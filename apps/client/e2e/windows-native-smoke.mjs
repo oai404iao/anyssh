@@ -450,19 +450,10 @@ async function unlockRestartedVault(targetPage) {
     "imported",
   );
   const restartedFontId = await restartedFont.inputValue();
-  await assert
-    .poll(() =>
-      targetPage.evaluate(
-        (family) =>
-          Array.from(globalThis.document.fonts).some(
-            (face) =>
-              [family, `"${family}"`, `'${family}'`].includes(face.family) &&
-              face.status === "loaded",
-          ),
-        `AnySSH Imported ${restartedFontId}`,
-      ),
-    )
-    .toBe(true);
+  await assertManagedFontLoaded(
+    targetPage,
+    `AnySSH Imported ${restartedFontId}`,
+  );
   await assert(targetPage.locator("body")).not.toContainText(themeFixturePath);
   await assert(targetPage.locator("body")).not.toContainText(fontFixturePath);
   await capture(
@@ -902,19 +893,7 @@ async function verifyAppearanceAndSnippets(targetPage) {
   await assert(targetPage.locator("body")).not.toContainText(fontFixturePath);
 
   const importedFontFamily = `AnySSH Imported ${fontId}`;
-  await assert
-    .poll(() =>
-      targetPage.evaluate(
-        (family) =>
-          Array.from(globalThis.document.fonts).some(
-            (face) =>
-              [family, `"${family}"`, `'${family}'`].includes(face.family) &&
-              face.status === "loaded",
-          ),
-        importedFontFamily,
-      ),
-    )
-    .toBe(true);
+  await assertManagedFontLoaded(targetPage, importedFontFamily);
   await capture(
     targetPage,
     "02b5-appearance-imported.png",
@@ -1409,6 +1388,89 @@ async function findAnySshPage(connectedBrowser) {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error("AnySSH WebView2 page was not exposed through CDP");
+}
+
+async function assertManagedFontLoaded(targetPage, family) {
+  try {
+    await assert
+      .poll(() =>
+        targetPage.evaluate(
+          (expectedFamily) =>
+            Array.from(globalThis.document.fonts).some(
+              (face) =>
+                [
+                  expectedFamily,
+                  `"${expectedFamily}"`,
+                  `'${expectedFamily}'`,
+                ].includes(face.family) && face.status === "loaded",
+            ),
+          family,
+        ),
+      )
+      .toBe(true);
+  } catch (error) {
+    const probe = await targetPage
+      .evaluate(async (expectedFamily) => {
+        const aliases = [
+          expectedFamily,
+          `"${expectedFamily}"`,
+          `'${expectedFamily}'`,
+        ];
+        const matchingStatuses = Array.from(globalThis.document.fonts)
+          .filter((face) => aliases.includes(face.family))
+          .map((face) => face.status);
+        const diagnostics = {
+          origin: globalThis.location.origin,
+          matchingStatuses,
+          assetFound: false,
+          fetchStatus: null,
+          fetchContentType: null,
+          fetchError: null,
+        };
+        try {
+          const invoke = globalThis.__TAURI_INTERNALS__?.invoke;
+          if (typeof invoke !== "function") {
+            diagnostics.fetchError = "TauriInvokeUnavailable";
+            return diagnostics;
+          }
+          const assets = await invoke("font_asset_list");
+          const asset = Array.isArray(assets)
+            ? assets.find(
+                (candidate) =>
+                  expectedFamily === `AnySSH Imported ${candidate.id}`,
+              )
+            : null;
+          if (!asset) return diagnostics;
+          diagnostics.assetFound = true;
+          const path = `${asset.id}/${asset.sha256Hex}.${asset.format}`;
+          const url = /Windows|Android/u.test(navigator.userAgent)
+            ? `http://anyssh-font.localhost/${path}`
+            : `anyssh-font://localhost/${path}`;
+          try {
+            const response = await fetch(url, { cache: "no-store" });
+            diagnostics.fetchStatus = response.status;
+            diagnostics.fetchContentType = response.headers.get("content-type");
+            await response.body?.cancel();
+          } catch (fetchError) {
+            diagnostics.fetchError =
+              fetchError instanceof Error ? fetchError.name : "UnknownError";
+          }
+        } catch (probeError) {
+          diagnostics.fetchError =
+            probeError instanceof Error ? probeError.name : "UnknownError";
+        }
+        return diagnostics;
+      }, family)
+      .catch((probeError) => ({
+        probeError:
+          probeError instanceof Error ? probeError.name : "UnknownError",
+      }));
+    await writeFile(
+      path.join(runDirectory, `${stage}-managed-font-probe.json`),
+      `${JSON.stringify(probe, null, 2)}\n`,
+    );
+    throw error;
+  }
 }
 
 function observePage(targetPage) {

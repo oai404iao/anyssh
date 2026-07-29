@@ -10,7 +10,6 @@
         "minWidth": 900,
         "minHeight": 600,
         "dataDirectory": "anyssh-qa-webview2",
-        "useHttpsScheme": true,
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9222 --remote-allow-origins=*"
       }
     ]
