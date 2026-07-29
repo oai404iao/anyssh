@@ -13,7 +13,7 @@ Linux/Windows Desktop 能导入加密 OpenSSH Private Key，同时保持 Passphr
 - OpenSSH Private Key 加密状态检测。
 - Linux GTK 和 Windows 原生 Secure Prompt。
 - 最多三次 Passphrase 尝试、取消和稳定错误。
-- 复用 Schema v5 引入并由当前 Schema v7 保留的 Private Key/Passphrase
+- 复用 Schema v5 引入并由当前 Schema v8 保留的 Private Key/Passphrase
   Record AEAD。
 - X11 与 Windows 真实交互证据。
 

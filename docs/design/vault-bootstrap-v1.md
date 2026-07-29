@@ -89,9 +89,9 @@ HKDF-SHA-256 使用 Vault ID 的 UTF-8 表示作为 Salt，VMK 作为输入密�
 
 两个输出均为 32 bytes，必须分别持有和清零。
 
-## SQLCipher Schema v7
+## SQLCipher Schema v8
 
-数据库当前 `user_version` 为 `7`。Schema v1 创建：
+数据库当前 `user_version` 为 `8`。Schema v1 创建：
 
 ```sql
 CREATE TABLE vault_meta(
@@ -148,13 +148,20 @@ Ciphertext。完整定义见：
 
 - [Keyboard-interactive Authentication v1](keyboard-interactive-authentication-v1.md)
 
+Schema v8 新增 Vault-wide Appearance Settings、Custom Terminal Theme、
+Imported Font Metadata 和 Snippet Repository。Snippet Body 使用 Record AEAD；
+Font Binary 位于完整性校验的应用管理 Asset Store，不进入 SQLCipher BLOB。完整
+定义见：
+
+- [Terminal Appearance, Font, and Snippet v1](terminal-appearance-font-and-snippet-v1.md)
+
 ## 创建和迁移
 
 - 新 Vault 先在同文件系统的私有临时目录中完整创建 Bootstrap 和数据库。
 - 文件同步后，通过目录 Rename 原子发布为正式 Vault。
 - 已存在或不完整的 Vault 不得被自动覆盖。
 - Schema migration 在 `IMMEDIATE` Transaction 中执行；失败或中断必须回滚。
-- 已有 Schema v1 Vault 在解锁时依次迁移到 v2、v3、v4、v5、v6、v7。
+- 已有 Schema v1 Vault 在解锁时依次迁移到 v2、v3、v4、v5、v6、v7、v8。
 - Schema v2 -> v3 在同一 Transaction 中把旧 Host Password 重新加密为
   Credential；中断后保持完整 v2 并可重试。
 - Schema v3 -> v4 重建 Host/Route Step 表，把非空引用迁移为 `Set`、空引用
@@ -165,6 +172,8 @@ Ciphertext。完整定义见：
 - Schema v5 -> v6 只新增 Known Host/Key 表；中断后保持完整 v5 并可重试。
 - Schema v6 -> v7 重建 Credential 及其引用表，保持 ID、Ciphertext、
   Override、Known Host 和 Foreign Key；中断后保持完整 v6 并可重试。
+- Schema v7 -> v8 新增 Appearance/Theme/Font/Snippet 表和默认 Appearance；
+  保持全部旧 Repository 与引用，中断后保持完整 v7 并可重试。
 - 每个 Migration 显式写入自己的版本号，不能用最新 Schema 常量代替中间版本。
 - Schema `0` 只用于新 Vault 初始化，不在已有文件上自动创建 Schema。
 - Linux 目录权限为 `0700`，Bootstrap 和数据库权限为 `0600`。
@@ -189,4 +198,6 @@ Ciphertext。完整定义见：
   一致性、并发 TOFU 和中断回滚通过。
 - Schema v7 Interactive Credential、v6 引用/Known Host 保持、重启、
   Secret 列约束、明文扫描和中断回滚通过。
+- Schema v8 Appearance/Theme/Font/Snippet、v7 Repository 保持、Snippet
+  Record AEAD、Managed Font Integrity、重启和中断回滚通过。
 - Windows 与 Android 构建已经验证；iOS 仍等待 macOS/Xcode 环境。

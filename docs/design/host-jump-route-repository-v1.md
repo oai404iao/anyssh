@@ -4,7 +4,7 @@
 > 日期：2026-07-27
 
 本文定义在 SQLCipher Schema v3 引入的 Vault-backed Host/Jump Route
-Repository。当前 Schema v7 延续了 Schema v4 的 Group/三态 Host 引用列，完整定义见
+Repository。当前 Schema v8 延续了 Schema v4 的 Group/三态 Host 引用列，完整定义见
 [Group Inheritance v1](group-inheritance-v1.md)。Known Host 由
 [Known Host Repository v1](known-host-repository-v1.md) 单独定义。
 任意长度 Jump Route 的 Rust-only 执行见

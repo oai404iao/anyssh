@@ -15,3 +15,4 @@
 - [0007：Multi Tab Terminal and Session Lifecycle](0007-multi-tab-terminal-and-session-lifecycle.md)
 - [0008：SSH Port Forwarding](0008-ssh-port-forwarding.md)
 - [0009：Private Key Generation and Encrypted Export](0009-private-key-generation-and-encrypted-export.md)
+- [0010：Terminal Appearance, Font, and Snippet Productization](0010-terminal-appearance-font-and-snippet-productization.md)

@@ -1,6 +1,6 @@
 # ExecPlan 0010：Terminal Appearance, Font, and Snippet Productization
 
-- 状态：Active
+- 状态：Completed
 - 创建日期：2026-07-29
 - 最后更新：2026-07-29
 - 负责人：项目维护者与执行 Agent
@@ -77,12 +77,33 @@ Theme Script、本地 Shell、WebView Path 或 Secret 插值。
 - [x] 2026-07-29：完成 Milestone 4：Snippet Summary-only List、显式 Edit、
   Literal `{{variable}}`、Insert/Run、Multi-line Preview/Confirmation 和真实 SSH
   Marker。
-- [ ] 完成 Milestone 5：Native QA、CI 与治理。
+- [x] 完成 Milestone 5：Native QA、CI 与治理。
 - [x] 2026-07-29：Frontend/Vitest/Playwright/Browser QA、Rust Workspace、
   OpenSSH Smoke、Linux X11、Wayland/IBus、Linux Container 和 Android ARM64
   Container Build 已通过。
-- [ ] Windows Native Picker/WebView2/Restart Evidence 与同 Commit GitHub Actions
-  尚待 authoritative Windows Runner 验证。
+- [x] 2026-07-29：Windows Native Picker/WebView2/Restart Evidence 通过。
+  Native Theme/Font Picker、受限 Font Protocol、Mounted xterm、Snippet SSH
+  Marker、重启恢复和 Browser Error Log 均由真实 EXE 验证。
+- [x] 2026-07-29：Head
+  `471bbd6f6dc54ebf3d78330cc99c86674aaedd62` 的 GitHub Actions Run
+  `30457692061` 九个 Job 全部通过。最终 Evidence 为：
+  - Browser `smoke-1785332929`
+  - X11 `smoke-1785333012-5856`
+  - Wayland `smoke-1785333277-9106`
+  - Windows `smoke-20260729-135106-1056`
+  - Linux Build `build-1785333255-1`
+  - Android Build `build-1785333496-1`
+- [x] 2026-07-29：最终 CI Build SHA-256：
+  - Linux `anyssh-client`：
+    `c777b95d36220629e623841863fc8c71c13b6d42efd5733548841eecf4012b9b`
+  - Android `AnySSH-arm64-debug.apk`：
+    `53a219617d9284bb3084706d9a13ea55c74ca89f82c4ad03aa22a5428a651f95`
+  - Windows `anyssh-client.exe`：
+    `04496523aae3835a6a0c0e36e298faca5eb7550262a2336909f5337070b810d6`
+- [x] 2026-07-29：人工检查 Browser Desktop/Mobile、X11、Wayland 和 Windows
+  Appearance、Imported Font、Snippet Preview/Output 与 Restart Screenshot。
+  Error Log 为空，Font Path/Bytes、Snippet Body/Variable 和测试 Secret 扫描通过。
+- [x] 2026-07-29：ADR-0020 接受，本计划移动到 `completed/`。
 
 ## Milestones
 
@@ -195,6 +216,21 @@ git diff --check
 - 2026-07-29：仅校验 Opaque ID/Digest 仍可能让已删除但残留的 Asset 被猜测 URL
   访问；Protocol 必须额外要求当前进程中的 Live DB Registration，Vault Lock
   清空 Registry，Repository List 同时清理无引用 Managed Asset。
+- 2026-07-29：Tabby、Electerm 和 Wave 等 Web Renderer 客户端主要使用系统已
+  安装字体或随应用同源打包的字体；Termora、WezTerm 等 Native Renderer 则在
+  WebView 外枚举、定位和塑形字体。AnySSH 的 Vault-scoped Managed Font Import
+  不能照搬系统安装方案，因此继续保留 Rust-owned Asset Store 和受限 Protocol。
+- 2026-07-29：`@xterm/addon-ligatures` 在 Chromium 暴露 Local Font Access API
+  时会尝试申请 `local-fonts` Permission；WebView2 无用户激活会产生
+  `SecurityError`。Terminal Adapter 在该 API 存在时改用 pinned Addon 的有界
+  Fallback Ligature 集和 xterm Character Joiner，不再隐式申请权限。
+- 2026-07-29：Windows Imported Font 最终失败是 QA False Negative，不是
+  Protocol 或 `FontFace` 失败。Select Option Value 为 `imported:{font_id}`，
+  实际 CSS Family 为 `AnySSH Imported {font_id}`；测试误把前缀当作 ID，导致
+  `document.fonts` 永远匹配不到。规范化 Option Value 后真实 WebView2 流程通过。
+- 2026-07-29：把 Wry Windows Custom Protocol 临时切到 HTTPS 没有改善上述
+  False Negative，且不是必要条件；最终恢复并验证默认
+  `http://anyssh-font.localhost` 映射。
 
 ## Decision Log
 
@@ -211,8 +247,26 @@ git diff --check
 - 2026-07-29：受限 Font Protocol 只服务当前 Vault Repository 已注册的
   `id + format + digest`；删除、Integrity Reconciliation 或 Vault Lock 后立即
   Fail Closed。
+- 2026-07-29：Ligature 支持不得依赖 WebView Local Font Access Permission。
+  不暴露该 API 的 Runtime 使用官方 Addon；暴露 Permission-gated API 的 Chromium/
+  WebView2 使用等价的有界 Fallback Character Joiner。
+- 2026-07-29：Windows/Android 保持 Wry 默认 HTTP Custom Protocol 映射；
+  Linux 使用 `anyssh-font://localhost`。两者都只接受 Opaque ID、Digest 和受控
+  Format，不回退到 File URL、Path IPC 或系统级 Font 安装。
+- 2026-07-29：同 Commit CI 通过后接受 ADR-0020。
 
 ## Outcomes & Retrospective
 
-计划刚开始。ADR-0020 保持 Proposed，直到 Schema v8、Mounted Terminal、
-Native Font、Snippet SSH Marker 和同 Commit CI 全部完成。
+Terminal Appearance、Font 和 Snippet Productization 已完成。Schema v8、
+Vault-wide Appearance、Strict Theme JSON、System/Imported Font、Managed Asset
+Integrity、Mounted xterm 原地更新、Snippet Record AEAD、Literal Variable、
+Multi-line Confirmation 和 selected SSH PTY Run 均由本地与同 Commit CI 验证。
+
+Head `471bbd6f6dc54ebf3d78330cc99c86674aaedd62` 的 Run `30457692061`
+九个 Job 全绿。Browser、X11、Wayland、Windows、Linux 和 Android Artifact 已
+人工检查；Windows WebView2 已证明 Imported Font 真正进入 `document.fonts`、
+更新 Mounted Terminal 并跨进程重启恢复。Ligature 路径不再依赖隐式
+Local Font Access Permission。ADR-0020 因此从 Proposed 变为 Accepted。
+
+Android/iOS Custom Font Picker、Per-Host/Group Appearance、Secret Variable、
+Runbook、Plugin 和远程 Font 继续留在后续范围；iOS 仍等待 macOS/Xcode 环境。

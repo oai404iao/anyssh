@@ -55,7 +55,7 @@ credential_list_system_agent_identities()
 
 ## Credential 模型
 
-Schema v5 首次增加 `system_agent`；当前 Schema v7 的完整 Credential Kind：
+Schema v5 首次增加 `system_agent`；当前 Schema v8 的完整 Credential Kind：
 
 ```text
 password

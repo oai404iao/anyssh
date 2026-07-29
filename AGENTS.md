@@ -1,6 +1,7 @@
 # AGENTS.md - AnySSH
 
-> AnySSH 仓库的 AI Coding Agent 操作手册。开始修改前先阅读本文件，再阅读活动 ExecPlan。
+> AnySSH 仓库的 AI Coding Agent 操作手册。开始修改前先阅读本文件，再检查活动
+> ExecPlan；没有活动计划时先确认优先级并创建计划。
 
 ## 项目是什么
 
@@ -21,8 +22,9 @@ React/xterm.js UI
 **System SSH Agent 认证**、**Native Encrypted Private Key Passphrase** 和
 **Known Host Repository/Durable TOFU**、**Keyboard-interactive and OTP**、
 **Multi Tab Terminal and Session Lifecycle**、**SSH Port Forwarding** 和
-**Private Key Generation and Encrypted Export**。当前活动计划是
-**Terminal Appearance, Font, and Snippet Productization**。
+**Private Key Generation and Encrypted Export**、**Terminal Appearance, Font,
+and Snippet Productization**。当前没有活动 ExecPlan；下一项 Desktop MVP 工作
+等待项目负责人确认优先级。
 已经存在可构建的 React 前端、Rust Workspace、russh SSH/Jump Host、SQLCipher/
 PIN Vault、Tauri IPC、Host/Credential/Route Repository、Windows WebView2、
 OpenSSH Fixture、Playwright E2E、agent-browser 与原生 X11/Wayland 检查。
@@ -47,7 +49,7 @@ any_ssh/
 |   |-- anyssh-domain/                # Endpoint、TerminalSize 等领域值对象
 |   |-- anyssh-ssh/                   # russh Session、Host Key、PTY、背压
 |   |-- anyssh-vault/                 # VMK、PIN Key Slot、HKDF、Bootstrap
-|   `-- anyssh-storage/               # DB Actor、Schema v7、Repository、Record AEAD
+|   `-- anyssh-storage/               # DB Actor、Schema v8、Repository、Record AEAD
 |-- scripts/
 |   |-- build-in-container.sh          # 独立 Linux/Android Build Image 入口
 |   |-- check-android-build.sh         # Android ARM64 APK 与 bundled SQLCipher 构建
@@ -256,7 +258,8 @@ Evidence 复制回仓库。
 - Schema v1 -> v2 Credential、Schema v2 -> v3 旧 Host Password 转
   Credential、Schema v3 -> v4 Group/三态 Override、Schema v4 -> v5 System
   Agent Credential、Schema v5 -> v6 Known Host、Schema v6 -> v7 Interactive
-  Credential Migration 的成功、重启和中断回滚。
+  Credential、Schema v7 -> v8 Appearance/Theme/Font/Snippet Migration 的成功、
+  重启和中断回滚。
 - Host/Jump Route 引用占用、顺序恢复、直接/间接循环和 Locked Repository 拒绝。
 - SQLCipher 重启解锁和 Credential 字段 AEAD。
 - 数据库、WAL、Sidecar 与 Bootstrap 明文扫描。
@@ -597,13 +600,10 @@ Clear
 
 ## 当前下一步
 
-当前唯一活动计划是：
-
-- [`0010-terminal-appearance-font-and-snippet-productization.md`](docs/execplans/active/0010-terminal-appearance-font-and-snippet-productization.md)
-
-除非用户明确改变优先级，应先完成 Schema v8、App/Terminal Theme、System/
-Imported Font、Snippet CRUD/Variable/Confirmation 和 Native Evidence；不要
-直接跳到 WebDAV、SFTP、Runbook、Plugin 或高级脚本系统。
+当前没有活动 ExecPlan。开始新的多步骤能力前，先由项目负责人在 Desktop
+Platform Slot、OpenSSH `known_hosts` Import/Export 和 Release Packaging 之间
+确认优先级，然后创建活动计划。不要未经确认直接跳到 WebDAV、SFTP、Runbook、
+Plugin 或高级脚本系统。
 
 ## 关键文件
 
@@ -654,8 +654,8 @@ Imported Font、Snippet CRUD/Variable/Confirmation 和 Native Evidence；不要
 | 总体技术设计 | `docs/design/technical-architecture-2026.md` |
 | ADR 索引 | `docs/adr/README.md` |
 | ExecPlan 规范 | `docs/execplans/README.md` |
-| 当前活动计划 | `docs/execplans/active/0010-terminal-appearance-font-and-snippet-productization.md` |
-| 最新完成计划 | `docs/execplans/completed/0009-private-key-generation-and-encrypted-export.md` |
+| 当前活动计划 | 无；下一项工作等待优先级确认 |
+| 最新完成计划 | `docs/execplans/completed/0010-terminal-appearance-font-and-snippet-productization.md` |
 | Phase 0 结果 | `docs/execplans/completed/0001-phase-0-technical-validation.md` |
 | Group 结果 | `docs/execplans/completed/0002-group-persistence-and-inheritance.md` |
 | System Agent 结果 | `docs/execplans/completed/0003-system-ssh-agent-authentication.md` |
@@ -665,6 +665,7 @@ Imported Font、Snippet CRUD/Variable/Confirmation 和 Native Evidence；不要
 | Multi Tab 结果 | `docs/execplans/completed/0007-multi-tab-terminal-and-session-lifecycle.md` |
 | Port Forwarding 结果 | `docs/execplans/completed/0008-ssh-port-forwarding.md` |
 | Private Key Generation/Export 结果 | `docs/execplans/completed/0009-private-key-generation-and-encrypted-export.md` |
+| Appearance/Font/Snippet 结果 | `docs/execplans/completed/0010-terminal-appearance-font-and-snippet-productization.md` |
 | 2026 技术基线 | `docs/reference/technology-baseline-2026.md` |
 | 术语表 | `docs/reference/glossary.md` |
 

@@ -5,7 +5,7 @@
 > 范围：当前 Tauri/React Client、Rust Core、Vault、SQLCipher Repository、
 > Group Inheritance、russh Session、Native Encrypted Private Key Import 和
 > Endpoint-scoped Known Host Trust、Private Key Generation/Encrypted Export、
-> QA/Build Evidence。
+> Appearance/Managed Font/Snippet、QA/Build Evidence。
 
 ## 1. 安全目标
 
@@ -20,6 +20,8 @@ AnySSH 当前必须保持以下不变量：
 6. 大量远端输出、Route 展开和 DB Command 必须有明确上限。
 7. 数据库、WAL、Bootstrap、日志和 QA Evidence 不包含测试 Secret 明文。
 8. QA-only Debug 能力不得进入 Canonical/Release 配置。
+9. Theme/Font/Snippet 必须保持有界 Typed Data；Font Path/Bytes 不进入普通
+   WebView IPC，Snippet 不执行本地代码且只发送到指定 Live SSH PTY。
 
 ## 2. 资产
 
@@ -120,7 +122,7 @@ System SSH Agent Socket / Named Pipe
 | T-21 | 多 Tab 把 Output/Input/Host Key/OTP 路由到错误 Session，或关闭 UI 后留下孤儿连接 | Accepted ADR-0017：Tab ID/Generation 与 Rust Session ID 分离；每 Tab Event/Data Channel、Mounted xterm/Ack/Pending Request；Late Return Disconnect；Close、Channel Loss、Vault Lock 和 App Exit Fail Closed | Browser、X11、Wayland、Windows 已覆盖 Close-during-connect、同时 Challenge、非活动 4 MiB 输出、单 Tab Close 和双 Session Vault Lock |
 | T-22 | Forward Listener 无意暴露到 LAN/Public、Payload 经 WebView 泄漏、恶意 SOCKS Request 或 Tab 关闭后残留 Tunnel | Accepted ADR-0018：Forward Rust-only、绑定 Live Session、v1 Loopback-only、SOCKS5 CONNECT-only、16 Forward/64 Connection、有界 Queue/Timeout/Cancellation、显式 Remote Channel Reject；OpenSSH、Browser、X11、Wayland、Windows 和同 Commit CI 已覆盖 Direct/Jump、4 MiB/Half-close、Stop/Disconnect/Tab Close/Vault Lock 和 Payload Scan | Renderer 仍可修改 Forward Metadata，但不能接触 Payload；Wildcard/LAN/Public Bind 与持久化 Profile 必须另行设计 |
 | T-23 | Key Generation/Reveal/Export 把 Private Key、PIN、Passphrase 或 Path 暴露给 WebView、Shell、日志或不安全文件，或用并发 RSA 请求耗尽 Blocking Pool | Accepted ADR-0019：Rust CSPRNG、单 Slot Private Key Operation、Public-only Projection、Native PIN Step-up、Native Passphrase Confirmation、Rust-owned Save Picker、encrypted-only create-new Export、Unix `0600`/`O_NOFOLLOW`、Windows protected current-user DACL、Reparse Ancestor/ADS 拒绝、三次上限、取消和部分文件清理；OpenSSH、Browser、X11、Wayland、Windows 和同 Commit CI 已验证 | Android Document Provider、iOS Share Sheet 和移动端 Step-up 仍未实现 |
-| T-24 | 恶意 Theme/Font/Snippet 借 CSS、Remote Resource、文件 Path、脚本 Runtime 或模板混淆执行本地代码、读取文件/Secret，或把命令发送到错误 Session | Proposed ADR-0020：Typed Theme/Font/Snippet Data、Theme 固定字段/颜色、Rust-owned Font Picker/Opaque Asset、Snippet ID + Literal Variable + Session ID、Multi-line Confirmation、禁止 Local Shell/`eval`/Plugin | Schema v8、Font Protocol、Native QA 和 Stale Session/Lock Evidence 尚待实现；用户仍可能主动把 Secret 写入 Snippet |
+| T-24 | 恶意 Theme/Font/Snippet 借 CSS、Remote Resource、文件 Path、脚本 Runtime 或模板混淆执行本地代码、读取文件/Secret，或把命令发送到错误 Session | Accepted ADR-0020：Typed Theme/Font/Snippet Data、Theme 固定字段/颜色、Rust-owned Font Picker/Opaque Asset、Live-registered Font Protocol、Snippet ID + Literal Variable + Session ID、Multi-line Confirmation、禁止 Local Shell/`eval`/Plugin；Browser、X11、Wayland、Windows 和同 Commit CI 已验证 | 用户仍可能主动把 Secret 写入 Snippet；Android/iOS Custom Font Picker、Secret Binding 和 Runbook 仍需单独设计 |
 
 ## 6. 平台结论
 
@@ -145,6 +147,8 @@ System SSH Agent Socket / Named Pipe
   Interactive Tab Close 和 Vault Lock Cleanup。Run `30427696136` 又验证
   Private Key Generation/Export 的 Windows Credential UI、Save Dialog、
   owner-only ACL、Junction/ADS Guard、Reimport、OpenSSH Marker 和 Secret Scan。
+  Run `30457692061` 进一步验证 Native Theme/Font Picker、WebView2 Custom Font
+  Protocol、Mounted xterm、Snippet SSH Marker、重启恢复和 Browser Error Log。
 - Android：ARM64 Debug APK、Rust Core 和 bundled SQLCipher 构建已验证；Runtime
   与 Content URI 尚未验证。
 - iOS：因无 macOS/Xcode 环境而明确延期。
@@ -182,6 +186,9 @@ pnpm check:container:android
   Host Key 变化、原生 Forget、两 Jump Route、取消、超时和 4 MiB 背压。
 - Schema v7 Interactive Credential、Partial-success、多 Round/Prompt、
   Request/Hop/Timeout/Cancel、OpenSSH PAM 和 Response 明文扫描。
+- Schema v8 Appearance/Theme/Font/Snippet Migration、Managed Asset Integrity、
+  Mounted Terminal、Literal Variable、Multi-line Confirmation、Stale Session/
+  Lock 和 Path/Body/Variable Evidence Scan。
 - Browser、X11、Wayland/IME、Windows WebView2 和 Android Build Evidence。
 
 Group Feature Commit `ece4fe7` 的 Run `30279500562` 全部九个 Job 通过；关键
@@ -201,13 +208,19 @@ Private Key Management Head `6dd5cd13e85d4b746bb3b7f60d8783e2b75d8eec`
 Linux/Android/Windows Build Hash、Windows ACL/Junction/ADS、Error Log 和
 Private Key/PIN/Passphrase Evidence Scan 已人工复核。
 
+Appearance/Font/Snippet Head
+`471bbd6f6dc54ebf3d78330cc99c86674aaedd62` 的 Run `30457692061`
+全部九个 Job 通过；Browser、X11、Wayland、Windows、Linux/Android/Windows
+Build Hash、Imported Font Protocol、Snippet SSH Marker、Restart、Error Log
+和 Path/Body/Variable Evidence Scan 已人工复核。
+
 ## 8. 复审触发条件
 
 以下变化必须更新本文件，并在需要时新增 ADR：
 
 - VMK/Key Slot、KDF、SQLCipher Key 或备份格式变化。
 - Secret Reveal、剪贴板、Key Export 或加密 Key Passphrase Prompt。
-- Theme/Font Import、Snippet/Runbook、Custom Protocol 或可执行扩展。
+- Theme/Font 数据格式、Snippet/Runbook、Custom Protocol 或可执行扩展变化。
 - Group 继承、Known Host、Proxy、Forward 或 Agent 引入新的 Secret/权限边界。
 - WebDAV Operation/Snapshot/HLC 格式。
 - 启用 WebGL、第三方脚本 Runtime、插件或远程内容。

@@ -185,13 +185,32 @@
   - Android：`b9c0b92ac739458b8763c9a6d88394a3ce6775831fcb2e1fb0b8e39657ddd36b`
   - Windows：`fc2ec91072e83c11e58f6db8ca387679bfc4eceae763c50c0f732b74fca7def7`
 - ADR-0019 已接受，Private Key Generation and Encrypted Export ExecPlan 已完成。
-- Proposed ADR-0020、Terminal Appearance/Font/Snippet Design 与 ExecPlan 0010
-  已创建；当前将实现 Schema v8、Theme/Font Product Settings 和受限 Snippet。
+- SQLCipher Schema v8 已新增 Vault-wide Appearance Settings、Strict Custom
+  Terminal Theme、Imported Font Metadata/Managed Asset 和 Snippet Repository；
+  Snippet Body 使用 Record AEAD，List 只返回 Summary。
+- App System/Dark/Light、Built-in/Custom Terminal Theme、Bundled/System/
+  Imported Font、Font Size、Line Height、Ligature 和 Ambiguous Width 已产品化。
+  Mounted xterm.js 原地更新，不重建 Tab、Scrollback 或 Output Ack。
+- Linux/Windows Native Picker 在 Rust 内导入 Theme/Font，WebView 只获得
+  Opaque ID、Family、Style、Format 和 Digest Metadata。受限 Font Protocol
+  要求当前解锁 Repository 的 Live Registration；删除、损坏或 Vault Lock
+  立即 Fail Closed。
+- Snippet 已实现 CRUD、Summary-only List、Literal `{{variable}}`、Insert/Run
+  和 Multi-line Preview/Confirmation；Rust 只把渲染结果送入所选 Live SSH PTY，
+  不调用本地 Shell 或读取文件、环境、网络与 Credential Secret。
+- Head `471bbd6f6dc54ebf3d78330cc99c86674aaedd62` 的 GitHub Actions Run
+  `30457692061` 全部九个 Job 通过；Browser、X11、Wayland、Windows 的
+  Appearance/Imported Font/Snippet/Restart Screenshot、Error Log 和敏感信息
+  扫描已人工检查。最终 CI SHA-256：
+  - Linux：`c777b95d36220629e623841863fc8c71c13b6d42efd5733548841eecf4012b9b`
+  - Android：`53a219617d9284bb3084706d9a13ea55c74ca89f82c4ad03aa22a5428a651f95`
+  - Windows：`04496523aae3835a6a0c0e36e298faca5eb7550262a2336909f5337070b810d6`
+- ADR-0020 已接受，Terminal Appearance, Font, and Snippet Productization
+  ExecPlan 已完成。
 - CI 工作流。
 
 当前仓库尚未完成：
 
-- Theme/Font/Snippet 产品化。
 - OpenSSH `known_hosts` 导入/导出。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
 - Android Runtime、Content URI、软键盘与生命周期验证。
@@ -214,7 +233,8 @@
 
 ## 当前活动计划
 
-- [`Phase 1：Terminal Appearance, Font, and Snippet Productization`](../execplans/active/0010-terminal-appearance-font-and-snippet-productization.md)
+当前没有活动 ExecPlan。下一项工作需先由项目负责人在 Desktop Platform Slot、
+OpenSSH `known_hosts` Import/Export 和 Release Packaging 之间确认优先级。
 
 ## 已完成计划
 
@@ -227,3 +247,4 @@
 - [`Phase 1：Multi Tab Terminal and Session Lifecycle`](../execplans/completed/0007-multi-tab-terminal-and-session-lifecycle.md)
 - [`Phase 1：SSH Port Forwarding`](../execplans/completed/0008-ssh-port-forwarding.md)
 - [`Phase 1：Private Key Generation and Encrypted Export`](../execplans/completed/0009-private-key-generation-and-encrypted-export.md)
+- [`Phase 1：Terminal Appearance, Font, and Snippet Productization`](../execplans/completed/0010-terminal-appearance-font-and-snippet-productization.md)

@@ -36,7 +36,8 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
 - 随机 VMK、Argon2id PIN Slot、HKDF 子密钥和版本化 Bootstrap。
 - SQLCipher 4.10 整库加密与 XChaCha20-Poly1305 Credential 字段加密。
 - 专用 DB Actor Thread、16 项有界 Command Queue 和 oneshot Response。
-- Schema v7 Credential/Group/Host/Jump Route/Known Host Repository；Group 与 Host 使用显式
+- Schema v8 Credential/Group/Host/Jump Route/Known Host/Appearance/Theme/
+  Font/Snippet Repository；Group 与 Host 使用显式
   `Inherit / Set / Clear` 引用状态，Route 只保存有序 Host ID。
 - Group Parent Chain 最多 32 层；有效 Credential/Route 在 DB Actor 内解析，
   WebView 只获得 metadata-only Summary。
@@ -91,6 +92,18 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
   `30427696136` 九个 Job 全部通过；Private Key Generation/Export 的
   Browser/X11/Wayland/Windows Screenshot、ACL/Junction/ADS、Error Log、
   Secret Scan 和 Linux/Android/Windows Build Hash 已人工检查。ADR-0019 已接受。
+- App System/Dark/Light、Custom Terminal Theme、Bundled/System/Imported Font、
+  Font Size/Line Height/Ligature/Ambiguous Width 已持久化到 Schema v8，并在
+  Mounted xterm.js 上原地更新。
+- Linux/Windows Theme/Font Import 使用 Rust-owned Native Picker、Opaque ID、
+  SHA-256 Managed Asset 和受限 `anyssh-font` Protocol；Path 和 Font Bytes
+  不进入普通 WebView IPC。
+- Snippet 已实现 Record-AEAD Body、Summary-only List、Literal
+  `{{variable}}`、Multi-line Preview/Confirmation 和 selected SSH PTY Run；
+  不执行本地 Shell、Script 或 Plugin。
+- Head `471bbd6f6dc54ebf3d78330cc99c86674aaedd62` 的 GitHub Actions Run
+  `30457692061` 九个 Job 全部通过；Browser、X11、Wayland、Windows、
+  Linux/Android/Windows Build Hash 和敏感信息扫描已人工检查。ADR-0020 已接受。
 - Head `56b37a10bf91c2c7bb20c88bb99041ca404c5691` 的 GitHub Actions Run
   `30368134792` 九个 Job 全部通过，Browser、X11、Wayland、Windows、Android、
   Linux 的 Multi Tab 截图、Error Log、Build Hash 和 Secret Scan 已人工检查。
@@ -100,9 +113,7 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
 
 iOS 因当前没有 macOS/Xcode 环境暂缓。
 
-当前活动计划：
-
-- [`Phase 1：Terminal Appearance, Font, and Snippet Productization`](docs/execplans/active/0010-terminal-appearance-font-and-snippet-productization.md)
+当前没有活动 ExecPlan；下一项 Desktop MVP 工作等待优先级确认。
 
 已完成计划：
 
@@ -115,6 +126,7 @@ iOS 因当前没有 macOS/Xcode 环境暂缓。
 - [`Phase 1：Multi Tab Terminal and Session Lifecycle`](docs/execplans/completed/0007-multi-tab-terminal-and-session-lifecycle.md)
 - [`Phase 1：SSH Port Forwarding`](docs/execplans/completed/0008-ssh-port-forwarding.md)
 - [`Phase 1：Private Key Generation and Encrypted Export`](docs/execplans/completed/0009-private-key-generation-and-encrypted-export.md)
+- [`Phase 1：Terminal Appearance, Font, and Snippet Productization`](docs/execplans/completed/0010-terminal-appearance-font-and-snippet-productization.md)
 
 ## 文档入口
 

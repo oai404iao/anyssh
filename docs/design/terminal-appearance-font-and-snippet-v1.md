@@ -154,11 +154,19 @@ Terminal 只在首次 Mount 时创建。Appearance 变化通过 `terminal.option
 受控 Addon 更新，然后 Visible Terminal 执行 Fit；Inactive Terminal 继续 Mounted
 并 Ack Output，不因 Theme/Font 切换重建。
 
-Custom Font 使用受限 `anyssh-font://<font-id>` Protocol 注册 `@font-face`。
-Protocol 只接受规范 Opaque ID、受控 Format 和 SHA-256 Digest，不接受 Path、
-Query、Traversal 或任意 MIME；此外必须命中当前进程由已解锁 Repository List
-建立的 Live Registration。删除、Integrity Reconciliation 或 Vault Lock 会立即
-移除 Registration，因此即使磁盘清理失败，旧 URL 也 Fail Closed。
+Custom Font 使用受限应用 Protocol 注册 `FontFace`。Linux 使用
+`anyssh-font://localhost/{id}/{digest}.{format}`；Windows/Android 使用 Wry 的
+`http://anyssh-font.localhost/{id}/{digest}.{format}` 映射。Protocol 只接受规范
+Opaque ID、受控 Format 和 SHA-256 Digest，不接受 Path、Query、Traversal 或任意
+MIME；此外必须命中当前进程由已解锁 Repository List 建立的 Live Registration。
+删除、Integrity Reconciliation 或 Vault Lock 会立即移除 Registration，因此即使
+磁盘清理失败，旧 URL 也 Fail Closed。
+
+Ligature 使用 pinned `@xterm/addon-ligatures`。当 Runtime 不暴露 Local Font
+Access API 时直接加载 Addon；当 Chromium/WebView2 暴露需要 User Activation 的
+API 时，不申请 `local-fonts` Permission，而使用同一 pinned Fallback Ligature
+集合注册 xterm Character Joiner，并仅启用受控 `calt` Font Feature。Appearance
+切换仍在现有 Mounted Terminal 上原地更新。
 
 ## 5. Snippet 执行
 
@@ -226,7 +234,8 @@ WebView 不可提交：
 ## 8. 平台
 
 - Linux X11/Wayland：GTK Native Picker、System Font Catalog、Custom Font Protocol。
-- Windows：Native Picker、Reparse Point Guard、WebView2 Custom Font Protocol。
+- Windows：Native Picker、Reparse Point Guard、WebView2 HTTP Custom Font
+  Protocol；不依赖 Local Font Access Permission。
 - Android/iOS：Built-in/System Font 与 Appearance 可构建；Custom Font Import
   v1 明确 Unsupported。
 

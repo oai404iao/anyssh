@@ -3,7 +3,7 @@
 > 状态：已实现
 > 日期：2026-07-28
 
-本文定义在 SQLCipher Schema v2 引入、并由当前 Schema v7 继续使用的
+本文定义在 SQLCipher Schema v2 引入、并由当前 Schema v8 继续使用的
 Vault-backed Credential Repository，以及 SSH Credential ID 解析边界。当前产品
 已实现 metadata-only Credential 管理 UI 和 Rust-owned Native File Picker；本文
 仍不定义 Secret Reveal/Export。加密 Key Passphrase Prompt 由
@@ -151,7 +151,7 @@ DB Actor 顺序处理：
 - `ResolveCredential`
 
 `ListCredentials` 永不解密 Secret。`ResolveCredential` 返回的 Rust-only 类型不
-实现 Serialize，Debug 始终脱敏。当前 Schema v7 中，Credential 被 Group 或
+实现 Serialize，Debug 始终脱敏。当前 Schema v8 中，Credential 被 Group 或
 Host 的 `Set` Override 引用时，`DeleteCredential` 返回占用错误，不自动清空
 引用。
 
@@ -164,7 +164,7 @@ Host 的 `Set` Override 引用时，`DeleteCredential` 返回占用错误，不�
 - 迁移不修改现有 Bootstrap、VMK、Key Slot 或 `hosts` 记录。
 - 当前解锁流程会在完成 v1 -> v2 后继续执行 v2 -> v3 Host Migration 和
   v3 -> v4 Group/Override、v4 -> v5 Agent Kind、v5 -> v6 Known Host 和
-  v6 -> v7 Interactive Kind Migration。
+  v6 -> v7 Interactive Kind、v7 -> v8 Appearance/Theme/Font/Snippet Migration。
 
 ## 验证
 

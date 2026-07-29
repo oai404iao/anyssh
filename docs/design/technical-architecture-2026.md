@@ -316,7 +316,7 @@ TCP/Proxy -> Jump 1 SSH
 
 Jump Route 使用有序列表存储，并在保存时检测循环引用。
 
-当前 Schema v7 已实现该持久化模型：Route Step 只保存 Host ID，Host 保存可选
+当前 Schema v8 已延续该持久化模型：Route Step 只保存 Host ID，Host 保存可选
 Group ID 和 Credential/Route 三态引用；Foreign Key 使用 Restrict 删除语义，
 保存时对 Effective Host -> Route -> Step Host 图执行循环检测。Saved Host IPC
 只提交 Target Host ID；DB Actor 先解析最多 32 层 Group，再递归展开 Route 和
@@ -636,7 +636,7 @@ SQLCipher 查询均在 Actor Thread 中串行执行，Tauri Command 不再使用
 `spawn_blocking` 或 `Mutex<Option<LocalVault>>`。最后一个 Handle 释放时先关闭
 Queue，再 Join Actor Thread，确保数据库连接按顺序销毁。
 
-当前 Schema v7 Repository 与相邻 Runtime 设计见：
+当前 Schema v8 Repository 与相邻 Runtime 设计见：
 
 - [Credential Repository v1](credential-repository-v1.md)
 - [Host 与 Jump Route Repository v1](host-jump-route-repository-v1.md)
@@ -646,6 +646,7 @@ Queue，再 Join Actor Thread，确保数据库连接按顺序销毁。
 - [Keyboard-interactive Authentication v1](keyboard-interactive-authentication-v1.md)
 - [Multi Tab Terminal and Session Lifecycle v1](multi-tab-session-lifecycle-v1.md)
 - [SSH Port Forwarding v1](ssh-port-forwarding-v1.md)
+- [Terminal Appearance, Font, and Snippet v1](terminal-appearance-font-and-snippet-v1.md)
 
 Tauri 只调用 `anyssh-app::ApplicationCore`；它不直接解析 Credential Secret、
 构造 SSH Authentication 或访问 SQLCipher Connection。

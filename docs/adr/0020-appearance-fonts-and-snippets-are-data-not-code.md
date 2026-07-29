@@ -1,6 +1,6 @@
 # ADR-0020：Appearance、Font 与 Snippet 是受限数据而不是可执行扩展
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-07-29
 - 决策人：项目维护者
 
@@ -87,10 +87,15 @@ AnySSH Desktop MVP 已完成核心 SSH、Vault、Key、Trust、Multi Tab 和 For
 - X11/Wayland/Windows Native Font Import、Appearance、真实 SSH Snippet Marker。
 - Linux/Android/Windows Build 与同 Commit CI。
 
+验证结果：Head `471bbd6f6dc54ebf3d78330cc99c86674aaedd62` 的 GitHub Actions
+Run `30457692061` 九个 Job 全部通过。Browser、X11、Wayland 和 Windows 真实
+Runtime 已验证 Mounted Terminal、Native Theme/Font Import、受限 Font Protocol、
+Snippet Preview/Confirmation、SSH Marker、重启恢复和敏感信息扫描。
+
 ## 相关文档
 
 - Design：[Terminal Appearance, Font, and Snippet v1](../design/terminal-appearance-font-and-snippet-v1.md)
-- ExecPlan：[Terminal Appearance, Font, and Snippet Productization](../execplans/active/0010-terminal-appearance-font-and-snippet-productization.md)
+- ExecPlan：[Terminal Appearance, Font, and Snippet Productization](../execplans/completed/0010-terminal-appearance-font-and-snippet-productization.md)
 - ADR：[ADR-0006](0006-secrets-stay-out-of-webview.md)
 - ADR：[ADR-0008](0008-no-arbitrary-local-scripting-in-mvp.md)
 - ADR：[ADR-0017](0017-session-tabs-own-independent-runtime-lifecycles.md)

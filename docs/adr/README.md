@@ -33,15 +33,16 @@ ADR 记录需要长期保留的架构决策。实现细节放在 `docs/design/`�
 | [0017](0017-session-tabs-own-independent-runtime-lifecycles.md) | Accepted | Session Tab 拥有独立的 Runtime Lifecycle |
 | [0018](0018-port-forwarding-is-rust-owned-and-session-scoped.md) | Accepted | SSH Port Forwarding 由 Rust 拥有并绑定 Session |
 | [0019](0019-private-key-generation-and-export-stay-in-rust.md) | Accepted | Private Key 生成与导出留在 Rust/原生边界 |
-| [0020](0020-appearance-fonts-and-snippets-are-data-not-code.md) | Proposed | Appearance、Font 与 Snippet 是受限数据而不是可执行扩展 |
+| [0020](0020-appearance-fonts-and-snippets-are-data-not-code.md) | Accepted | Appearance、Font 与 Snippet 是受限数据而不是可执行扩展 |
 
 Phase 0 已接受 ADR-0001、0002、0003、0006、0008、0009、0010 和 0011；
 Phase 1 Group、System Agent 和加密 Private Key Prompt 验证后已接受
 ADR-0012、0013、0014；Known Host Repository 与 Durable TOFU 验证后已接受
 ADR-0015；Keyboard-interactive/OTP 验证后已接受 ADR-0016；Multi Tab Session
 Lifecycle 验证后已接受 ADR-0017；SSH Port Forwarding 验证后已接受 ADR-0018；
-Private Key Generation/Public Reveal/Encrypted Export 验证后已接受 ADR-0019。
-ADR-0004、0005、0007 和 0020 因对应能力尚未完整实现而继续保持 Proposed。
+Private Key Generation/Public Reveal/Encrypted Export 验证后已接受 ADR-0019；
+Terminal Appearance/Font/Snippet Productization 验证后已接受 ADR-0020。
+ADR-0004、0005 和 0007 因对应能力尚未完整实现而继续保持 Proposed。
 
 ## 文件规范
 
