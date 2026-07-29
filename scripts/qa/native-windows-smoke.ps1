@@ -119,6 +119,7 @@ $ThemeFixture = @"
     "background": "#101426",
     "foreground": "#D8E2F0",
     "cursor": "#73F7D0",
+    "cursorAccent": "#101426",
     "selectionBackground": "#334466AA",
     "black": "#0B1020",
     "red": "#FF6B7A",
