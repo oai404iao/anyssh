@@ -113,7 +113,7 @@ Copy-Item -LiteralPath $BundledFontPath -Destination $FontFixturePath
 $FontFixtureHash = Get-FileSha256Hex -Path $FontFixturePath
 $ThemeFixture = @"
 {
-  "version": 1,
+  "schemaVersion": 1,
   "label": "Windows Aurora",
   "palette": {
     "background": "#101426",

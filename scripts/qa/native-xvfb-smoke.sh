@@ -409,6 +409,8 @@ if [[ "$THEME_PICKER_READY" -ne 1 ]]; then
   exit 1
 fi
 sleep 1
+"$DRIVER" click 500 400
+sleep 0.25
 "$DRIVER" ctrl-l
 sleep 0.5
 "$DRIVER" type "$THEME_FIXTURE"
@@ -433,6 +435,8 @@ if [[ "$FONT_PICKER_READY" -ne 1 ]]; then
   exit 1
 fi
 sleep 1
+"$DRIVER" click 500 400
+sleep 0.25
 "$DRIVER" ctrl-l
 sleep 0.5
 "$DRIVER" type "$FONT_FIXTURE"
