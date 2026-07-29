@@ -36,6 +36,10 @@ export interface TerminalAppearance {
   palette: TerminalPalette;
 }
 
+interface LigatureController {
+  dispose(): void;
+}
+
 export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
   function TerminalPane(
     { appearance, onInput, onResize, visible = true },
@@ -45,7 +49,7 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
     const terminalRef = useRef<Terminal | null>(null);
     const fitRef = useRef<(() => void) | null>(null);
     const unicodeAddonRef = useRef<UnicodeGraphemesAddon | null>(null);
-    const ligaturesAddonRef = useRef<LigaturesAddon | null>(null);
+    const ligaturesControllerRef = useRef<LigatureController | null>(null);
     const initialAppearanceRef = useRef(appearance);
     const inputHandlerRef = useLatest(onInput);
     const resizeHandlerRef = useLatest(onResize);
@@ -93,9 +97,7 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
         initialAppearance.ambiguousWidth,
       );
       if (initialAppearance.ligaturesEnabled) {
-        const ligaturesAddon = new LigaturesAddon();
-        terminal.loadAddon(ligaturesAddon);
-        ligaturesAddonRef.current = ligaturesAddon;
+        ligaturesControllerRef.current = enableLigatures(terminal);
       }
       terminalRef.current = terminal;
       terminal.write(
@@ -131,7 +133,7 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
         terminalRef.current = null;
         fitRef.current = null;
         unicodeAddonRef.current = null;
-        ligaturesAddonRef.current = null;
+        ligaturesControllerRef.current = null;
       };
     }, [inputHandlerRef, resizeHandlerRef, visibleRef]);
 
@@ -153,13 +155,14 @@ export const TerminalPane = forwardRef<TerminalHandle, TerminalPaneProps>(
         setAmbiguousWidth(unicodeAddon, appearance.ambiguousWidth);
       }
 
-      if (appearance.ligaturesEnabled && !ligaturesAddonRef.current) {
-        const ligaturesAddon = new LigaturesAddon();
-        terminal.loadAddon(ligaturesAddon);
-        ligaturesAddonRef.current = ligaturesAddon;
-      } else if (!appearance.ligaturesEnabled && ligaturesAddonRef.current) {
-        ligaturesAddonRef.current.dispose();
-        ligaturesAddonRef.current = null;
+      if (appearance.ligaturesEnabled && !ligaturesControllerRef.current) {
+        ligaturesControllerRef.current = enableLigatures(terminal);
+      } else if (
+        !appearance.ligaturesEnabled &&
+        ligaturesControllerRef.current
+      ) {
+        ligaturesControllerRef.current.dispose();
+        ligaturesControllerRef.current = null;
       }
 
       terminal.refresh(0, terminal.rows - 1);
@@ -197,6 +200,118 @@ function useLatest<T>(value: T): MutableRefObject<T> {
 function terminalTheme(palette: TerminalPalette): ITheme {
   return { ...palette };
 }
+
+function enableLigatures(terminal: Terminal): LigatureController {
+  if (hasRestrictedLocalFontApi()) {
+    return registerFallbackLigatures(terminal);
+  }
+  const addon = new LigaturesAddon();
+  terminal.loadAddon(addon);
+  return addon;
+}
+
+function hasRestrictedLocalFontApi(): boolean {
+  return (
+    "fonts" in navigator ||
+    "queryLocalFonts" in
+      (window as Window & {
+        queryLocalFonts?: unknown;
+      })
+  );
+}
+
+function registerFallbackLigatures(terminal: Terminal): LigatureController {
+  const joinerId = terminal.registerCharacterJoiner(fallbackLigatureRanges);
+  if (terminal.element) {
+    terminal.element.style.fontFeatureSettings = '"calt" on';
+  }
+  return {
+    dispose() {
+      terminal.deregisterCharacterJoiner(joinerId);
+      if (terminal.element) {
+        terminal.element.style.fontFeatureSettings = "";
+      }
+    },
+  };
+}
+
+function fallbackLigatureRanges(text: string): [number, number][] {
+  const ranges: [number, number][] = [];
+  for (let offset = 0; offset < text.length; offset += 1) {
+    for (const ligature of FALLBACK_LIGATURES) {
+      if (!text.startsWith(ligature, offset)) continue;
+      ranges.push([offset, offset + ligature.length]);
+      offset += ligature.length - 1;
+      break;
+    }
+  }
+  return ranges;
+}
+
+// Mirrors the pinned addon's fallback set without invoking Chromium's
+// permission-gated Local Font Access API.
+const FALLBACK_LIGATURES = [
+  "<--",
+  "<---",
+  "<<-",
+  "<-",
+  "->",
+  "->>",
+  "-->",
+  "--->",
+  "<==",
+  "<===",
+  "<<=",
+  "<=",
+  "=>",
+  "=>>",
+  "==>",
+  "===>",
+  ">=",
+  ">>=",
+  "<->",
+  "<-->",
+  "<--->",
+  "<---->",
+  "<=>",
+  "<==>",
+  "<===>",
+  "<====>",
+  "::",
+  ":::",
+  "<~~",
+  "~~>",
+  "</",
+  "</>",
+  "/>",
+  "==",
+  "!=",
+  "/=",
+  "~=",
+  "<>",
+  "===",
+  "!==",
+  "!===",
+  "<:",
+  ":=",
+  "*=",
+  "*+",
+  "<*",
+  "<*>",
+  "*>",
+  "<|",
+  "<|>",
+  "|>",
+  "+*",
+  "=*",
+  "=:",
+  ":>",
+  "/*",
+  "*/",
+  "+++",
+  "<!--",
+  "<!---",
+].sort((left, right) => right.length - left.length);
 
 function setAmbiguousWidth(
   addon: UnicodeGraphemesAddon,

@@ -455,7 +455,9 @@ async function unlockRestartedVault(targetPage) {
       targetPage.evaluate(
         (family) =>
           Array.from(globalThis.document.fonts).some(
-            (face) => face.family === family && face.status === "loaded",
+            (face) =>
+              [family, `"${family}"`, `'${family}'`].includes(face.family) &&
+              face.status === "loaded",
           ),
         `AnySSH Imported ${restartedFontId}`,
       ),
@@ -905,7 +907,9 @@ async function verifyAppearanceAndSnippets(targetPage) {
       targetPage.evaluate(
         (family) =>
           Array.from(globalThis.document.fonts).some(
-            (face) => face.family === family && face.status === "loaded",
+            (face) =>
+              [family, `"${family}"`, `'${family}'`].includes(face.family) &&
+              face.status === "loaded",
           ),
         importedFontFamily,
       ),
