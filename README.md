@@ -50,6 +50,10 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
   Credential 和有序 Jump Route 的产品配置 UI。
 - Rust-owned Native File Picker 私钥导入；Path 和 Key 内容不进入 WebView IPC，
   Linux/Windows Desktop 的加密 OpenSSH Key 使用原生 Secure Passphrase Prompt。
+- Rust-owned Ed25519/RSA 4096 Generation、Public Key/Fingerprint Reveal、
+  Native PIN Step-up 和 encrypted-only OpenSSH Export。Linux/Windows 已验证
+  Save Picker/Dialog、错误重试、Export/Reimport 和真实 OpenSSH Authentication；
+  Windows Export 使用 current-user protected DACL 并拒绝 Junction/ADS。
 - 原生 Vault 创建、锁定和解锁界面。
 - Docker OpenSSH 真实协议测试。
 - Vitest、Playwright 和 agent-browser 测试路径。
@@ -83,6 +87,10 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
   `30416305300` 九个 Job 全部通过；Forwarding 的 Browser/Linux/Windows
   Screenshot、Error Log、Payload Scan 和 Android/Linux/Windows Build Hash 已
   人工检查。ADR-0018 已接受。
+- Head `6dd5cd13e85d4b746bb3b7f60d8783e2b75d8eec` 的 GitHub Actions Run
+  `30427696136` 九个 Job 全部通过；Private Key Generation/Export 的
+  Browser/X11/Wayland/Windows Screenshot、ACL/Junction/ADS、Error Log、
+  Secret Scan 和 Linux/Android/Windows Build Hash 已人工检查。ADR-0019 已接受。
 - Head `56b37a10bf91c2c7bb20c88bb99041ca404c5691` 的 GitHub Actions Run
   `30368134792` 九个 Job 全部通过，Browser、X11、Wayland、Windows、Android、
   Linux 的 Multi Tab 截图、Error Log、Build Hash 和 Secret Scan 已人工检查。
@@ -94,7 +102,7 @@ iOS 因当前没有 macOS/Xcode 环境暂缓。
 
 当前活动计划：
 
-- [`Phase 1：Private Key Generation and Encrypted Export`](docs/execplans/active/0009-private-key-generation-and-encrypted-export.md)
+- [`Phase 1：Terminal Appearance, Font, and Snippet Productization`](docs/execplans/active/0010-terminal-appearance-font-and-snippet-productization.md)
 
 已完成计划：
 
@@ -106,6 +114,7 @@ iOS 因当前没有 macOS/Xcode 环境暂缓。
 - [`Phase 1：Keyboard-interactive and OTP`](docs/execplans/completed/0006-keyboard-interactive-and-otp.md)
 - [`Phase 1：Multi Tab Terminal and Session Lifecycle`](docs/execplans/completed/0007-multi-tab-terminal-and-session-lifecycle.md)
 - [`Phase 1：SSH Port Forwarding`](docs/execplans/completed/0008-ssh-port-forwarding.md)
+- [`Phase 1：Private Key Generation and Encrypted Export`](docs/execplans/completed/0009-private-key-generation-and-encrypted-export.md)
 
 ## 文档入口
 

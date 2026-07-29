@@ -1,6 +1,6 @@
 # ExecPlan 0009：Private Key Generation and Encrypted Export
 
-- 状态：Active
+- 状态：Completed
 - 创建日期：2026-07-29
 - 最后更新：2026-07-29
 - 负责人：项目维护者与执行 Agent
@@ -76,8 +76,8 @@
 - [x] 2026-07-29：完成 Milestone 3：Tauri/React Product UI。Typed IPC、
   Browser Metadata Preview、Generate/Public/Export UI、Vitest、Playwright 和
   agent-browser 已通过。
-- [ ] 完成 Milestone 4：OpenSSH 与 Native QA。
-- [ ] 完成 Milestone 5：全量回归与治理。
+- [x] 完成 Milestone 4：OpenSSH 与 Native QA。
+- [x] 完成 Milestone 5：全量回归与治理。
 - [x] 2026-07-29：新增
   `generated_private_key_smoke.rs`。Generated Ed25519 通过 Direct、
   Generated RSA 4096 通过 Saved Host、Encrypted Export/Reimport 通过
@@ -94,7 +94,7 @@
   `artifacts/agent-browser/smoke-1785302978`；Desktop/Mobile Public Key
   Dialog、Metadata-only Generation 和 no-file Export 已人工检查，Error Log
   为空。
-- [ ] 在真实 Windows Runner 编译并执行 Credential UI、Save Dialog、
+- [x] 在真实 Windows Runner 编译并执行 Credential UI、Save Dialog、
   owner-only ACL、Junction/ADS Guard、Export/Reimport 和 OpenSSH Marker。
 - [x] 2026-07-29：Linux Container Build 通过，
   `artifacts/linux-build/build-1785303364-1/anyssh-client` SHA-256 为
@@ -114,8 +114,28 @@
   Export/Reimport、OpenSSH Marker、重启与 Changed-Key 全部执行成功；Job
   仅因短 PIN 在 PNG 压缩字节中的假阳性 Secret Scan 失败。Linux X11 已进入
   Step-up，但共享 Runner 的 Argon2 Retry 超过固定等待。两项 QA 判定已修复。
-- [ ] 运行同 Commit GitHub Actions，检查全部 Artifact 和 Windows/Linux/
-  Android Build Hash。
+- [x] 2026-07-29：Head
+  `6dd5cd13e85d4b746bb3b7f60d8783e2b75d8eec` 的 GitHub Actions Run
+  `30427696136` 九个 Job 全部通过。最终 Evidence 为：
+  - Browser `smoke-1785305898`
+  - X11 `smoke-1785305973-6187`
+  - Wayland `smoke-1785306206-9232`
+  - Windows `smoke-20260729-062048-6788`
+  - Linux Build `build-1785306211-1`
+  - Android Build `build-1785306418-1`
+- [x] 2026-07-29：最终 CI Build SHA-256：
+  - Linux `anyssh-client`：
+    `c66eb3ecd71fb3a131373c43d30aa1297799f9bd060f64e3c60920eecd2f14e9`
+  - Android `AnySSH-arm64-debug.apk`：
+    `b9c0b92ac739458b8763c9a6d88394a3ce6775831fcb2e1fb0b8e39657ddd36b`
+  - Windows `anyssh-client.exe`：
+    `fc2ec91072e83c11e58f6db8ca387679bfc4eceae763c50c0f732b74fca7def7`
+- [x] 2026-07-29：人工检查 Browser Desktop/Mobile Public Key、X11
+  PIN/Passphrase Retry、Export/Reimport/RSA、Windows Credential UI、
+  owner-only ACL、Export/Reimport/OpenSSH Marker、Wayland 回归和全部 Error
+  Log。固定 Key/Export Passphrase 与 OpenSSH Private Key Header 未出现在
+  QA Evidence；Windows 短 PIN 仅在 Text Evidence 扫描。
+- [x] 2026-07-29：ADR-0019 接受，本计划移动到 `completed/`。
 
 ## Milestones
 
@@ -272,6 +292,14 @@ git diff --check
 
 ## Outcomes & Retrospective
 
-Rust、Browser、OpenSSH、X11 和 Wayland 已完成并有本地 Evidence。Windows
-真实 Runner、同 Commit CI、CI Artifact Hash/Secret 复核以及 ADR-0019 最终
-状态尚未完成，因此计划继续保持 Active。
+Private Key Generation/Public Reveal/Encrypted Export 已完成。Ed25519 与 RSA
+4096 生成、Public-only Projection、Native PIN Step-up、新 Passphrase
+Confirmation、Rust-owned Save Picker、encrypted-only create-new Export、
+Windows owner-only ACL/Reparse/ADS Guard、Export/Reimport 和 Direct/Saved/Jump
+OpenSSH Authentication 均由本地与同 Commit CI 验证。
+
+Head `6dd5cd13e85d4b746bb3b7f60d8783e2b75d8eec` 的 Run `30427696136`
+九个 Job 全绿。Browser、X11、Wayland、Windows、Linux 和 Android Artifact 已
+人工检查；Error Log 为空，Secret Scan 通过。ADR-0019 因此从 Proposed 变为
+Accepted。Android Document Provider、iOS Share Sheet 和移动端原生 Step-up
+继续作为平台后续工作，不阻塞 Desktop v1 结论。

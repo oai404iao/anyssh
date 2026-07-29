@@ -14,3 +14,4 @@
 - [0006：Keyboard-interactive and OTP](0006-keyboard-interactive-and-otp.md)
 - [0007：Multi Tab Terminal and Session Lifecycle](0007-multi-tab-terminal-and-session-lifecycle.md)
 - [0008：SSH Port Forwarding](0008-ssh-port-forwarding.md)
+- [0009：Private Key Generation and Encrypted Export](0009-private-key-generation-and-encrypted-export.md)

@@ -55,7 +55,7 @@ NNNN-short-kebab-case-title.md
 
 当前计划：
 
-- Active：[Private Key Generation and Encrypted Export](active/0009-private-key-generation-and-encrypted-export.md)
+- Active：[Terminal Appearance, Font, and Snippet Productization](active/0010-terminal-appearance-font-and-snippet-productization.md)
 - Completed：
   - [Phase 0：技术风险验证](completed/0001-phase-0-technical-validation.md)
   - [Group 持久化与三态继承](completed/0002-group-persistence-and-inheritance.md)
@@ -65,3 +65,4 @@ NNNN-short-kebab-case-title.md
   - [Keyboard-interactive and OTP](completed/0006-keyboard-interactive-and-otp.md)
   - [Multi Tab Terminal and Session Lifecycle](completed/0007-multi-tab-terminal-and-session-lifecycle.md)
   - [SSH Port Forwarding](completed/0008-ssh-port-forwarding.md)
+  - [Private Key Generation and Encrypted Export](completed/0009-private-key-generation-and-encrypted-export.md)

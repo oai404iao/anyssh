@@ -24,8 +24,9 @@
 
 状态：进行中；Group、System Agent、加密 Private Key 原生 Passphrase Prompt、
 Known Host Repository/Durable TOFU、Keyboard-interactive/OTP 和 Multi Tab
-Terminal、SSH Port Forwarding 已完成；Private Key Generation/Public Reveal/
-Encrypted Export 是当前活动计划。
+Terminal、SSH Port Forwarding、Private Key Generation/Public Reveal/
+Encrypted Export 已完成；Terminal Appearance/Font/Snippet Productization 是
+当前活动计划。
 
 - Host 与 Group 继承（已完成）。
 - 密码、私钥（含 Linux/Windows 加密 Key Prompt）、系统 Agent（已完成）。
@@ -36,15 +37,16 @@ Encrypted Export 是当前活动计划。
 - Jump Host（任意长度 Route 与两跳 Native/Protocol 验证已完成）。
 - Local/Remote/Dynamic Forward（已完成）。
 - Key 管理（Native Import 已完成；Generation/Public Reveal/Encrypted Export
-  当前实施）。
-- Theme/Font。
-- Snippet。
+  已完成）。
+- Theme/Font（当前实施）。
+- Snippet（当前实施）。
 - 加密本地 Vault（PIN/SQLCipher/Record AEAD Core 已完成；Platform Slot 待实施）。
 
 当前建议顺序：
 
-1. Private Key Generation/Public Reveal/Encrypted Export。
-2. 更完整的 Theme/Font/Snippet 产品化。
+1. Terminal Appearance/Font/Snippet 产品化。
+2. 评审 Desktop MVP 剩余 Platform Slot、OpenSSH `known_hosts` Import/Export
+   与 Release Packaging 优先级。
 
 ## Phase 2：WebDAV E2EE
 

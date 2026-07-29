@@ -1,6 +1,6 @@
 # ADR-0019：Private Key 生成与导出留在 Rust/原生边界
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-07-29
 - 决策人：项目维护者
 
@@ -91,11 +91,15 @@ Path 越过现有安全边界。未加密导出还容易把长期私钥直接暴
   `command`。
 - Browser、X11、Wayland、Windows、Android/Linux Container 与同 Commit CI；
   Vault/Log/Evidence 扫描不包含生成或导出的 Private Key、PIN 和 Passphrase。
+- Head `6dd5cd13e85d4b746bb3b7f60d8783e2b75d8eec` 的 GitHub Actions Run
+  `30427696136` 九个 Job 全部通过；Linux/Android/Windows Build Hash、
+  Browser/X11/Wayland/Windows Screenshot、ACL/Junction/ADS Evidence、Error
+  Log 和 Secret Scan 已人工复核。
 
 ## 相关文档
 
 - Design：[Private Key Generation and Encrypted Export v1](../design/private-key-generation-and-encrypted-export-v1.md)
-- ExecPlan：[Private Key Generation and Encrypted Export](../execplans/active/0009-private-key-generation-and-encrypted-export.md)
+- ExecPlan：[Private Key Generation and Encrypted Export](../execplans/completed/0009-private-key-generation-and-encrypted-export.md)
 - ADR：[ADR-0006](0006-secrets-stay-out-of-webview.md)
 - ADR：[ADR-0007](0007-modern-ssh-algorithm-policy.md)
 - ADR：[ADR-0011](0011-native-private-key-import-stays-in-rust.md)

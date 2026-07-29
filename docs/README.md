@@ -31,6 +31,7 @@
 - [Multi Tab Terminal and Session Lifecycle v1](design/multi-tab-session-lifecycle-v1.md)
 - [SSH Port Forwarding v1](design/ssh-port-forwarding-v1.md)
 - [Private Key Generation and Encrypted Export v1](design/private-key-generation-and-encrypted-export-v1.md)
+- [Terminal Appearance, Font, and Snippet v1](design/terminal-appearance-font-and-snippet-v1.md)
 
 Design 文档回答“系统如何工作、模块边界是什么”。
 

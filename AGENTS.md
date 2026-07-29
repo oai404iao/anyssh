@@ -20,8 +20,9 @@ React/xterm.js UI
 仓库已完成 **Phase 0 技术验证**、**Phase 1 Group 持久化/三态继承**、
 **System SSH Agent 认证**、**Native Encrypted Private Key Passphrase** 和
 **Known Host Repository/Durable TOFU**、**Keyboard-interactive and OTP**、
-**Multi Tab Terminal and Session Lifecycle** 和 **SSH Port Forwarding**。
-当前活动计划是 **Private Key Generation and Encrypted Export**。
+**Multi Tab Terminal and Session Lifecycle**、**SSH Port Forwarding** 和
+**Private Key Generation and Encrypted Export**。当前活动计划是
+**Terminal Appearance, Font, and Snippet Productization**。
 已经存在可构建的 React 前端、Rust Workspace、russh SSH/Jump Host、SQLCipher/
 PIN Vault、Tauri IPC、Host/Credential/Route Repository、Windows WebView2、
 OpenSSH Fixture、Playwright E2E、agent-browser 与原生 X11/Wayland 检查。
@@ -137,6 +138,13 @@ Proposed ADR 是待验证方案，不是不可变事实。若 Phase 0 验证结�
 - Vault Bootstrap 只能包含版本、随机 ID、KDF 参数和加密 Key Slot。
 - 新增依赖时检查其 AGPLv3 兼容性，并更新 lockfile。
 - 第三方字体和素材必须保留各自的许可证文件或声明。
+- Theme、Font 和 Snippet 只能是有界 Typed Data，不得携带 JavaScript、任意
+  CSS、远程 URL、本地 Shell、`eval` 或第三方 Plugin。
+- Custom Font/Theme Import 必须由 Rust 打开 Native Picker；WebView 不得提交
+  Path 或 Font Bytes。Imported Font 只能通过 Opaque ID 的受限应用协议访问。
+- Snippet 普通 Run 只允许提交 Session ID、Snippet ID、变量值和 Enter Policy；
+  Rust 从 Vault 解析并 Literal-substitute Body 后直接送入目标 SSH PTY。Snippet
+  不得访问本地文件、环境、网络或 Credential Secret。
 
 ## Build、Test 与开发命令
 
@@ -275,6 +283,10 @@ Private Key Generation/Export 变更还必须通过真实原生 UI 生成 Ed2551
 Key、显示 Public Key/Fingerprint、执行 Native PIN Step-up、Native Export
 Passphrase 与 Save Picker，并用导出的加密 Key 完成真实 OpenSSH；Private Key、
 PIN、Passphrase 和完整 Path 不得进入 WebView、Vault 明文或 Evidence。
+Theme/Font/Snippet 变更还必须验证 Mounted xterm 原地更新不破坏 Scrollback/Ack，
+通过 Rust-owned Picker 导入测试 Font，并由真实 SSH Session 执行 Snippet
+Marker；Font Path、Snippet Variable Value 和远端 Payload 不得进入 App Log 或
+Evidence。
 
 `pnpm qa:native:windows` 只在 Windows 执行。它必须启动实际构建的 EXE、确认
 标题为 `AnySSH` 的非零窗口句柄，并通过
@@ -299,6 +311,9 @@ Remote Loopback 数据路径，关闭拥有 Forward 的 Tab、Disconnect 或 Loc
 Private Key Generation/Export 变更还必须在真实 EXE/WebView2 中执行 Windows
 Credential UI PIN/Passphrase、Native Save Dialog、加密 Export 和 OpenSSH
 Marker；QA Driver 的 Path/PIN/Passphrase 只能在 AnySSH 启动后提供给外部 Driver。
+Theme/Font/Snippet 变更还必须在真实 EXE/WebView2 中验证 Native Font Picker、
+Custom Font Protocol、Theme 重启恢复和 Snippet SSH Marker；Picker Path 只能在
+AnySSH 启动后提供给外部 QA Driver。
 
 `pnpm qa:native:wayland` 必须在 AnySSH 进程没有 `DISPLAY` 的条件下：
 
@@ -330,6 +345,9 @@ QA 报告不得保存完整进程环境；只允许白名单式记录当前测�
 `pnpm test:e2e` 验证标准浏览器工作流。Browser QA mode 是 UI 模拟，不打开网络连接；它不能替代 OpenSSH smoke。
 Multi Tab 变更至少覆盖两个 Preview Session 的 Output 隔离、同时 Pending
 Challenge、Close-during-connect、单 Tab Close 和 8 Tab 上限。
+Theme/Font/Snippet 变更至少覆盖 Dark/Light/System、Terminal Palette、Desktop/
+Mobile Font Preview、Snippet Variable、Multi-line Confirmation、Inactive Tab
+保持 Mounted 和 Stale/Closed Session 拒绝。
 
 ### agent-browser 真实检查
 
@@ -347,6 +365,8 @@ pnpm qa:browser
   Tab Strip，并关闭一个 Tab 后继续向另一个 Terminal 输入。
 - 检查桌面与移动视口。
 - 检查 Browser Errors。
+- Theme/Font/Snippet 变更必须实际切换 App/Terminal Theme、检查 Font/Unicode
+  Preview，并把一个带 Variable 的 Snippet 发送到当前 Browser Preview Terminal。
 - 生成并人工查看 `artifacts/agent-browser/` 中的截图和报告。
 
 只看到脚本退出码为 0 不算完成；Agent 必须查看关键截图，确认不存在截断、遮挡、字体或响应式问题。录制视频需要系统 `ffmpeg`，没有时截图仍是必需证据。
@@ -472,6 +492,19 @@ Clear
 - Browser QA 只模拟 Metadata；Android/iOS 在专用安全 Prompt 和 Document
   Provider/Share Sheet 完成前明确返回 Unsupported。
 
+### 12. Appearance、Font 与 Snippet 是数据而不是代码
+
+- App/Terminal Theme 只能使用版本化固定字段和规范 Color；禁止 Script、Remote
+  URL、任意 CSS 和 Theme Plugin。
+- System Font 由 Rust/平台枚举；Imported Font 使用 Native Picker、Opaque ID、
+  Size/Digest/Format 校验和受限 Font Protocol，Path 不进入 WebView。
+- Snippet Body 使用 SQLCipher + Record AEAD；List 只返回 Summary，显式 Edit
+  才把单个 Body 放入 Request-local React State。
+- Snippet 使用固定 `{{name}}` Literal Substitution，只发送到指定 Live SSH PTY；
+  不调用本地 Shell、不读取文件/环境/网络、不注入 Credential Secret。
+- 多行 Snippet 必须 Preview/Confirm；Vault Lock、Tab Close、Stale Session 或
+  Workspace 切换清空 Draft/Variable/Confirmation。
+
 ## 文档规则
 
 ### ADR
@@ -566,11 +599,11 @@ Clear
 
 当前唯一活动计划是：
 
-- [`0009-private-key-generation-and-encrypted-export.md`](docs/execplans/active/0009-private-key-generation-and-encrypted-export.md)
+- [`0010-terminal-appearance-font-and-snippet-productization.md`](docs/execplans/active/0010-terminal-appearance-font-and-snippet-productization.md)
 
-除非用户明确改变优先级，应先完成 Rust-owned Ed25519/RSA Generation、Public
-Projection、Native PIN Step-up 和 encrypted-only Export；不要直接跳到
-WebDAV、SFTP、Theme/Font/Snippet 或高级脚本系统。
+除非用户明确改变优先级，应先完成 Schema v8、App/Terminal Theme、System/
+Imported Font、Snippet CRUD/Variable/Confirmation 和 Native Evidence；不要
+直接跳到 WebDAV、SFTP、Runbook、Plugin 或高级脚本系统。
 
 ## 关键文件
 
@@ -604,6 +637,7 @@ WebDAV、SFTP、Theme/Font/Snippet 或高级脚本系统。
 | Multi Tab Session Design | `docs/design/multi-tab-session-lifecycle-v1.md` |
 | SSH Port Forwarding Design | `docs/design/ssh-port-forwarding-v1.md` |
 | Private Key Generation/Export Design | `docs/design/private-key-generation-and-encrypted-export-v1.md` |
+| Appearance/Font/Snippet Design | `docs/design/terminal-appearance-font-and-snippet-v1.md` |
 | OpenSSH Known Hosts Reference | `docs/reference/openssh-known-hosts-baseline-2026.md` |
 | Threat Model | `docs/design/threat-model-v1.md` |
 | SSH Core | `crates/anyssh-ssh/src/lib.rs` |
@@ -620,8 +654,8 @@ WebDAV、SFTP、Theme/Font/Snippet 或高级脚本系统。
 | 总体技术设计 | `docs/design/technical-architecture-2026.md` |
 | ADR 索引 | `docs/adr/README.md` |
 | ExecPlan 规范 | `docs/execplans/README.md` |
-| 当前活动计划 | `docs/execplans/active/0009-private-key-generation-and-encrypted-export.md` |
-| 最新完成计划 | `docs/execplans/completed/0008-ssh-port-forwarding.md` |
+| 当前活动计划 | `docs/execplans/active/0010-terminal-appearance-font-and-snippet-productization.md` |
+| 最新完成计划 | `docs/execplans/completed/0009-private-key-generation-and-encrypted-export.md` |
 | Phase 0 结果 | `docs/execplans/completed/0001-phase-0-technical-validation.md` |
 | Group 结果 | `docs/execplans/completed/0002-group-persistence-and-inheritance.md` |
 | System Agent 结果 | `docs/execplans/completed/0003-system-ssh-agent-authentication.md` |
@@ -630,6 +664,7 @@ WebDAV、SFTP、Theme/Font/Snippet 或高级脚本系统。
 | Keyboard-interactive 结果 | `docs/execplans/completed/0006-keyboard-interactive-and-otp.md` |
 | Multi Tab 结果 | `docs/execplans/completed/0007-multi-tab-terminal-and-session-lifecycle.md` |
 | Port Forwarding 结果 | `docs/execplans/completed/0008-ssh-port-forwarding.md` |
+| Private Key Generation/Export 结果 | `docs/execplans/completed/0009-private-key-generation-and-encrypted-export.md` |
 | 2026 技术基线 | `docs/reference/technology-baseline-2026.md` |
 | 术语表 | `docs/reference/glossary.md` |
 

@@ -169,14 +169,29 @@
   Local/Dynamic/Remote、Tab Close/Disconnect/Vault Lock Cleanup、Payload Scan
   与 Linux/Android/Windows Build Hash 已人工检查。
 - ADR-0018 已接受，SSH Port Forwarding ExecPlan 已完成。
-- Proposed ADR-0019、Private Key Generation and Encrypted Export Design 与
-  ExecPlan 0009 已创建；当前将实现 Ed25519/RSA 4096 Generation、Public Key
-  Projection、Native PIN Step-up 和 encrypted-only OpenSSH Export。
+- Rust 已实现 Ed25519/RSA 4096 CSPRNG Generation、Imported/Generated Public
+  Projection、单并发 Operation Slot、DB Actor PIN Verify 和 encrypted-only
+  OpenSSH Export；Private Key、PIN、Passphrase 和 Path 不进入普通 IPC。
+- Linux 使用 GTK Secure PIN/Passphrase 与 Native Save Picker；Windows 使用
+  Credential UI、Native Save Dialog、current-user protected DACL，并拒绝
+  Reparse Point Ancestor 和 Alternate Data Stream。
+- OpenSSH 已验证 Generated Ed25519 Direct、Generated RSA 4096 Saved Host 和
+  Exported/Reimported Ed25519 Password Jump -> Key Target。Browser、X11、
+  Wayland 和 Windows 已检查 Public-only UI、错误/正确 PIN、Passphrase Retry、
+  Export/Reimport 和 Secret Scan。
+- Head `6dd5cd13e85d4b746bb3b7f60d8783e2b75d8eec` 的 GitHub Actions Run
+  `30427696136` 全部九个 Job 通过。最终 CI SHA-256：
+  - Linux：`c66eb3ecd71fb3a131373c43d30aa1297799f9bd060f64e3c60920eecd2f14e9`
+  - Android：`b9c0b92ac739458b8763c9a6d88394a3ce6775831fcb2e1fb0b8e39657ddd36b`
+  - Windows：`fc2ec91072e83c11e58f6db8ca387679bfc4eceae763c50c0f732b74fca7def7`
+- ADR-0019 已接受，Private Key Generation and Encrypted Export ExecPlan 已完成。
+- Proposed ADR-0020、Terminal Appearance/Font/Snippet Design 与 ExecPlan 0010
+  已创建；当前将实现 Schema v8、Theme/Font Product Settings 和受限 Snippet。
 - CI 工作流。
 
 当前仓库尚未完成：
 
-- Private Key Generation/Public Reveal/Encrypted Export。
+- Theme/Font/Snippet 产品化。
 - OpenSSH `known_hosts` 导入/导出。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
 - Android Runtime、Content URI、软键盘与生命周期验证。
@@ -199,7 +214,7 @@
 
 ## 当前活动计划
 
-- [`Phase 1：Private Key Generation and Encrypted Export`](../execplans/active/0009-private-key-generation-and-encrypted-export.md)
+- [`Phase 1：Terminal Appearance, Font, and Snippet Productization`](../execplans/active/0010-terminal-appearance-font-and-snippet-productization.md)
 
 ## 已完成计划
 
@@ -211,3 +226,4 @@
 - [`Phase 1：Keyboard-interactive and OTP`](../execplans/completed/0006-keyboard-interactive-and-otp.md)
 - [`Phase 1：Multi Tab Terminal and Session Lifecycle`](../execplans/completed/0007-multi-tab-terminal-and-session-lifecycle.md)
 - [`Phase 1：SSH Port Forwarding`](../execplans/completed/0008-ssh-port-forwarding.md)
+- [`Phase 1：Private Key Generation and Encrypted Export`](../execplans/completed/0009-private-key-generation-and-encrypted-export.md)

@@ -31,6 +31,12 @@ Design 文档描述系统如何实现，包括组件、数据流、接口、安�
   Lifecycle。
 - [ssh-port-forwarding-v1.md](ssh-port-forwarding-v1.md)：Session-scoped Local、
   Remote、Dynamic Forward、SOCKS5、Loopback Policy 和 Cleanup。
+- [private-key-generation-and-encrypted-export-v1.md](private-key-generation-and-encrypted-export-v1.md)：
+  Rust Ed25519/RSA Generation、Public Projection、Native Step-up 和
+  encrypted-only Export。
+- [terminal-appearance-font-and-snippet-v1.md](terminal-appearance-font-and-snippet-v1.md)：
+  App/Terminal Theme、System/Imported Font、Snippet Template 和 Schema v8
+  边界。
 
 ## 规则
 

@@ -256,4 +256,4 @@ Native Picker、PIN Prompt 或 Passphrase Prompt 的用户取消返回空 Result
 - [Native Encrypted Private Key Passphrase v1](native-encrypted-private-key-passphrase-v1.md)
 - [Threat Model v1](threat-model-v1.md)
 - [ADR-0019](../adr/0019-private-key-generation-and-export-stay-in-rust.md)
-- [ExecPlan 0009](../execplans/active/0009-private-key-generation-and-encrypted-export.md)
+- [ExecPlan 0009](../execplans/completed/0009-private-key-generation-and-encrypted-export.md)
