@@ -449,7 +449,7 @@ async function unlockRestartedVault(targetPage) {
   await assert(restartedFont.locator("option:checked")).toContainText(
     "imported",
   );
-  const restartedFontId = await restartedFont.inputValue();
+  const restartedFontId = importedFontId(await restartedFont.inputValue());
   await assertManagedFontLoaded(
     targetPage,
     `AnySSH Imported ${restartedFontId}`,
@@ -869,14 +869,15 @@ async function verifyAppearanceAndSnippets(targetPage) {
     .filter({ hasText: "imported" })
     .first();
   const themeId = await themeOption.getAttribute("value");
-  const fontId = await fontOption.getAttribute("value");
-  if (!themeId || !fontId) {
+  const fontOptionValue = await fontOption.getAttribute("value");
+  if (!themeId || !fontOptionValue) {
     throw new Error("The imported Windows Appearance resources had no IDs.");
   }
+  const fontId = importedFontId(fontOptionValue);
 
   await targetPage.getByLabel("App theme").selectOption("light");
   await terminalTheme.selectOption(themeId);
-  await fontSelect.selectOption(fontId);
+  await fontSelect.selectOption(fontOptionValue);
   await targetPage.getByLabel("Font size").fill("15");
   await targetPage.getByLabel("Line height").selectOption("1600");
   await targetPage.getByLabel("Programming ligatures").check();
@@ -1388,6 +1389,14 @@ async function findAnySshPage(connectedBrowser) {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error("AnySSH WebView2 page was not exposed through CDP");
+}
+
+function importedFontId(optionValue) {
+  const prefix = "imported:";
+  if (!optionValue.startsWith(prefix) || optionValue.length === prefix.length) {
+    throw new Error("The selected terminal Font was not an imported asset");
+  }
+  return optionValue.slice(prefix.length);
 }
 
 async function assertManagedFontLoaded(targetPage, family) {
