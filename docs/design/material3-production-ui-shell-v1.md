@@ -89,6 +89,7 @@ apps/client/src/
 `-- styles/
     |-- tokens.css
     |-- base.css
+    |-- shared-ui.css
     |-- window.css
     |-- shell.css
     |-- terminal.css
@@ -110,7 +111,47 @@ apps/client/src/
   Refresh/Appearance 进入 App Hook，SSH Runtime/Event/Forwarding 进入 Session
   Hook。
 
-## 4. Design Token
+## 4. Shared UI Component
+
+生产 Feature 不直接拼装第三方 Primitive。统一组件路径为：
+
+```text
+Feature
+  -> shared/ui AnySSH Wrapper
+    -> Base UI behavior primitive or semantic HTML
+      -> Material 3 Token in styles/shared-ui.css
+```
+
+第一批共享组件：
+
+- `Button`：Filled、Tonal、Outlined、Text、Danger Variant，以及默认、Small、
+  Icon Size；底层保持语义 `<button>`。
+- `SelectField`：Base UI Select，使用 Portal/Positioner、Combobox、Option、
+  Selected Indicator 和 Material 3 Popup。
+- `NumberField`：Base UI Number Field，使用有界值、键盘输入和显式加减 Stepper，
+  不显示平台原生 Spinner。
+- `SwitchField`、`CheckboxField`：Base UI 状态与键盘语义，外观由 Token 控制。
+- `Badge`、`Surface`：无业务状态的展示 Primitive。
+
+约束：
+
+- 只有 `shared/ui/` 可以导入 `@base-ui/react`；Feature 不依赖上游内部 DOM 或
+  Data Attribute。
+- Wrapper 暴露 AnySSH 自己的 Typed Prop、Accessible Name 和必要的
+  `data-ui-control` QA Contract。
+- Popup 层级必须高于 Product Shell，且不得被滚动 Surface 截断。
+- Disabled、Focus-visible、Hover、Pressed 和 Selected State 必须同时覆盖
+  Light/Dark；动画遵守 `prefers-reduced-motion`。
+- 新 Component 先增加 Component Test，再逐个迁移页面；不得一次性改变
+  Connection Panel 的 Tab/Arrow 顺序或 Native Coordinate Geometry。
+- 组件库只负责行为，不获得 Theme Script、Remote URL、文件、Credential 或
+  Tauri IPC 能力。
+
+当前首批迁移为 Appearance 的 Button、Select、Number Field、Switch，以及
+Snippet 多行命令确认的 Checkbox/Dialog Button。Connection Panel 等依赖 Native
+键盘顺序的高风险表单保留分阶段迁移。
+
+## 5. Design Token
 
 Token 使用 `--md-sys-*` 命名，并保留迁移期 Alias：
 
@@ -146,7 +187,7 @@ Motion:
 Light/Dark 只切换 Token 值。现有 Appearance Setting 继续决定
 `data-app-theme`，不得把任意 CSS 或 JavaScript 保存进 Theme。
 
-## 5. Linux Window Chrome
+## 6. Linux Window Chrome
 
 Linux 使用平台配置关闭原生 Decorations，应用内容从窗口顶端开始绘制。
 
@@ -173,7 +214,7 @@ core:window:allow-close
 Linux Platform Config 必须与 Canonical Window Size/Min Size 同步；Windows QA
 Config 继续只用于 Debug WebView2 CDP，不继承 Linux Decorations 设置。
 
-## 6. 渐进迁移
+## 7. 渐进迁移
 
 迁移按以下顺序：
 
@@ -187,7 +228,7 @@ Config 继续只用于 Debug WebView2 CDP，不继承 Linux Decorations 设置�
 每个阶段都保留现有 Accessible Name，除非同时更新 Playwright、agent-browser 和
 Native Driver。不能为视觉重构破坏 Secret 清理、Mounted Terminal 或 Output Ack。
 
-## 7. 响应式与可访问性
+## 8. 响应式与可访问性
 
 - Desktop Navigation Rail 默认 252 px；小桌面可收缩为 Icon Rail。
 - 触控目标最小 44 px；Android 主要操作优先 48 px。
@@ -201,7 +242,7 @@ Native Driver。不能为视觉重构破坏 Secret 清理、Mounted Terminal 或
   Connection Panel 不跨 Workspace 保持 Mounted，避免隐藏的临时 Password Form
   与配置 Editor 同时进入 Label/Accessibility 查询。
 
-## 8. Android Terminal 输入规则
+## 9. Android Terminal 输入规则
 
 - Esc、Tab 和方向键发送固定 VT Sequence。
 - Ctrl/Alt 是只作用于下一次输入的 Latch；Ctrl 把 ASCII 字母与 `@`、`[` 等映射
@@ -215,7 +256,7 @@ Native Driver。不能为视觉重构破坏 Secret 清理、Mounted Terminal 或
 - 所有辅助输入仍调用当前 Session 的 `sendSshInput`；不得进入 Log、Global
   State、Vault 或其他 Tab。
 
-## 9. 验证
+## 10. 验证
 
 - TypeScript、ESLint、Vitest、Production Build 和 Playwright。
 - agent-browser Desktop 1440x900、Compact 820px、Android 390x844 与 Light/Dark。
@@ -224,4 +265,7 @@ Native Driver。不能为视觉重构破坏 Secret 清理、Mounted Terminal 或
 - Window Drag、Minimize、Toggle Maximize、Close 和 Keyboard Focus。
 - Existing SSH、Multi Tab、Port Forward、Appearance、Snippet 与 Vault Lock
   回归。
+- Shared UI Test 覆盖 Select、Number Field、Switch、Checkbox；Browser QA
+  实际打开 Select Popup、操作 Toggle/Stepper，并检查 Appearance 与 Snippet
+  Confirmation Screenshot。
 - Android ARM64 Build；真机 Runtime 验证在本计划后半段执行。

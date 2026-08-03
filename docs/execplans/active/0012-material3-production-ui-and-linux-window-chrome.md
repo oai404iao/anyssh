@@ -100,6 +100,23 @@ GNOME 大白框。
   - X11：`artifacts/native-xvfb/smoke-1785717089-1155103/`
   - Wayland：`artifacts/native-wayland/smoke-1785717339-1162049/`
   - Android Build：`artifacts/android-build/build-1785717922-1170485/`
+- [x] 2026-08-03：完成社区组件方案评估。选择 MIT License 的
+  `@base-ui/react` 1.6.0 作为无样式行为 Primitive，在 `shared/ui/` 封装
+  AnySSH Material 3 Component；不引入 Tailwind、MUI Theme Runtime 或整套
+  shadcn Preset。
+- [x] 2026-08-03：建立 Button、Select、Number Field、Switch、Checkbox、
+  Badge、Surface 等共享组件；Appearance 已迁移 Button/Select/Number Field/
+  Switch，Snippet 多行确认已迁移 Checkbox/Dialog Button。
+- [x] 2026-08-03：同步 Playwright、agent-browser 和 Windows Native Driver 的
+  Combobox、Switch、Checkbox 语义；新增 Shared UI Component Test，并在 Browser
+  QA 增加打开 Select Popup 的截图。
+- [x] 2026-08-03：Shared UI 第一批迁移通过 Frontend 42 Test、14 Playwright
+  E2E、agent-browser、Linux X11、Wayland/IBus、Native Check 和 Android ARM64
+  Build。最新 Evidence：
+  - Browser：`artifacts/agent-browser/smoke-1785750082/`
+  - X11：`artifacts/native-xvfb/smoke-1785749049-1487227/`
+  - Wayland：`artifacts/native-wayland/smoke-1785750154-1527347/`
+  - Android Build：`artifacts/android-build/build-1785750046-1505597/`
 - [ ] 迁移 Host -> Host Key -> OTP -> Terminal 生产纵向流程。
 - [x] 拆分 Configuration Workspace。
 - [x] 拆分 App Orchestration。
@@ -250,6 +267,25 @@ Android 真机必须验证：
   `emulator -list-avds` 也没有可用 AVD。Android 真机软键盘、中文 IME、锁屏/
   后台恢复和触控 Terminal Evidence 不能用 Browser UA 或 APK Build 伪造，保持
   为明确阻塞项。
+- 2026-08-03：shadcn/ui 的源代码管理方式很适合 Tailwind 项目，但当前生产 UI
+  已有 Material 3 CSS Token、没有 `components.json` 或 Tailwind Pipeline。
+  直接初始化 shadcn 会同时引入新的样式系统。Base UI 可只提供 Select、Dialog、
+  Checkbox、Switch 等行为与 Accessibility，视觉继续由现有 Token 控制。
+- 2026-08-03：Base UI Number Field 的可见输入使用 Textbox +
+  `aria-roledescription="Number field"`，并把原生 Number Input 作为屏幕外 Form
+  Control。自动化必须定位 AnySSH Wrapper 的可见 Accessible Name，不能继续假设
+  浏览器原生 `spinbutton`。
+- 2026-08-03：Base UI 的 Controlled Callback 会同时附带 Event Details；
+  AnySSH Wrapper 使用箭头函数只向 Feature 暴露 Typed Value，避免 React State
+  Setter 误接收第二个参数。
+- 2026-08-03：Wayland Socket 仍受 Unix Domain Socket 108 Byte Path 上限约束。
+  Linked Worktree 路径较长时，把 `XDG_RUNTIME_DIR` 放在 Artifact 子目录会让
+  Weston 启动失败；QA 改用权限为 `0700` 的短 `/tmp/anyssh-wayland-runtime-*`
+  目录，并继续只把白名单 Backend 字段写入 Evidence。
+- 2026-08-03：原 Wayland Appearance Driver 按原生 `<select>` 的 Tab/Arrow
+  顺序操作；迁移到 Portal Popup 后，未关闭的 Popup 会先消费下一次 Navigation
+  Click。Driver 现在显式打开 App Theme Popup、保存截图、键盘选择并关闭，再返回
+  Terminal 完成 IME/SSH 流程。
 
 ## Decision Log
 
@@ -280,6 +316,13 @@ Android 真机必须验证：
   辅助键只调用现有 `sendSshInput`，不新增全局 Store、日志或 IPC。
 - 2026-08-03：显示 Android Soft Keyboard 只聚焦现有 xterm Helper Textarea，
   不引入原生文本代理，也不改变 IME Composition 数据路径。
+- 2026-08-03：共享 UI 采用 `AnySSH Component -> Base UI Primitive` 包装层。
+  Feature 不直接导入 `@base-ui/react`，避免上游 API 和 Data Attribute 散落到
+  产品页面。普通 Button/Input 继续使用语义 HTML，由共享组件统一 Variant、
+  Size、Focus 和 Disabled State。
+- 2026-08-03：第一批迁移只覆盖 Appearance 和 Snippet Confirmation。暂不迁移
+  Connection Panel，因为 X11/Wayland Native Driver 仍依赖其既有 Tab/Arrow
+  顺序；后续先把 Driver 改为语义定位，再替换高风险表单控件。
 
 ## Outcomes & Retrospective
 

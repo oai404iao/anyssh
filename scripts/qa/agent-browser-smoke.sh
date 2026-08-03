@@ -57,6 +57,29 @@ wait_for_interactive_text() {
   return 1
 }
 
+select_ui_option() {
+  local label="$1"
+  local value="$2"
+  agent-browser --session "$SESSION" find role combobox click \
+    --name "$label" --exact
+  agent-browser --session "$SESSION" wait 100
+  agent-browser --session "$SESSION" click \
+    "[role='option'][data-value='$value']"
+}
+
+set_ui_switch() {
+  local label="$1"
+  local expected="$2"
+  local current
+  current="$(
+    agent-browser --session "$SESSION" get attr \
+      '[data-ui-control="switch"]' aria-checked
+  )"
+  if [[ "$current" != "$expected" ]]; then
+    agent-browser --session "$SESSION" click '[data-ui-control="switch"]'
+  fi
+}
+
 agent-browser --session "$SESSION" open "$URL"
 agent-browser --session "$SESSION" wait --load networkidle
 agent-browser --session "$SESSION" wait --text "Open a session"
@@ -253,19 +276,24 @@ agent-browser --session "$SESSION" find role button click --name "Import Theme"
 agent-browser --session "$SESSION" wait --text "Browser QA Midnight"
 agent-browser --session "$SESSION" find role button click --name "Import Font"
 agent-browser --session "$SESSION" wait --text "Browser QA Mono"
-agent-browser --session "$SESSION" select '[aria-label="App theme"]' "light"
-agent-browser --session "$SESSION" select \
-  '[aria-label="Terminal theme"]' "theme-browser-1"
-agent-browser --session "$SESSION" select \
-  '[aria-label="Terminal font"]' "imported:font-browser-1"
+agent-browser --session "$SESSION" find role combobox click \
+  --name "App theme" --exact
+agent-browser --session "$SESSION" wait 100
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/03e0-component-select-open.png"
+agent-browser --session "$SESSION" click \
+  "[role='option'][data-value='light']"
+select_ui_option "Terminal theme" "theme-browser-1"
+select_ui_option "Terminal font" "imported:font-browser-1"
 agent-browser --session "$SESSION" fill \
   '[aria-label="Terminal font size"]' "16"
-agent-browser --session "$SESSION" select \
-  '[aria-label="Terminal line height"]' "1600"
-agent-browser --session "$SESSION" check \
-  '.appearance-form input[type="checkbox"]'
-agent-browser --session "$SESSION" select \
-  '[aria-label="East Asian ambiguous width"]' "wide"
+agent-browser --session "$SESSION" click \
+  '[aria-label="Decrease Terminal font size"]'
+agent-browser --session "$SESSION" click \
+  '[aria-label="Increase Terminal font size"]'
+select_ui_option "Terminal line height" "1600"
+set_ui_switch "Programming ligatures" "true"
+select_ui_option "East Asian ambiguous width" "wide"
 agent-browser --session "$SESSION" find role button click \
   --name "Apply appearance"
 agent-browser --session "$SESSION" wait --fn \
@@ -315,8 +343,8 @@ agent-browser --session "$SESSION" click \
 agent-browser --session "$SESSION" find label "target" fill "browser-qa-marker"
 agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/03h-snippet-confirmation.png"
-agent-browser --session "$SESSION" check \
-  '.multiline-confirmation input[type="checkbox"]'
+agent-browser --session "$SESSION" click \
+  '.multiline-confirmation [data-ui-control="checkbox"]'
 agent-browser --session "$SESSION" find role button click \
   --name "Run in Session"
 agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(1)"
@@ -333,19 +361,14 @@ agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/03i-snippet-terminal-output.png"
 
 agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(8)"
-agent-browser --session "$SESSION" select '[aria-label="App theme"]' "dark"
-agent-browser --session "$SESSION" select \
-  '[aria-label="Terminal theme"]' "builtin:obsidian"
-agent-browser --session "$SESSION" select \
-  '[aria-label="Terminal font"]' "bundled:anyssh-nerd-mono"
+select_ui_option "App theme" "dark"
+select_ui_option "Terminal theme" "builtin:obsidian"
+select_ui_option "Terminal font" "bundled:anyssh-nerd-mono"
 agent-browser --session "$SESSION" fill \
   '[aria-label="Terminal font size"]' "13"
-agent-browser --session "$SESSION" select \
-  '[aria-label="Terminal line height"]' "1420"
-agent-browser --session "$SESSION" uncheck \
-  '.appearance-form input[type="checkbox"]'
-agent-browser --session "$SESSION" select \
-  '[aria-label="East Asian ambiguous width"]' "narrow"
+select_ui_option "Terminal line height" "1420"
+set_ui_switch "Programming ligatures" "false"
+select_ui_option "East Asian ambiguous width" "narrow"
 agent-browser --session "$SESSION" find role button click \
   --name "Apply appearance"
 agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(1)"
@@ -791,6 +814,7 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
 - \`screenshots/03b-multi-tab-desktop.png\`
 - \`screenshots/03c-multi-tab-mobile.png\`
 - \`screenshots/03d-first-tab-after-close.png\`
+- \`screenshots/03e0-component-select-open.png\`
 - \`screenshots/03e-appearance-light.png\`
 - \`screenshots/03f-appearance-light-mobile.png\`
 - \`screenshots/03g-terminal-custom-appearance.png\`

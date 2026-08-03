@@ -35,7 +35,17 @@ xterm.js + Rust Core 架构和现有安全边界。
    `system | dark | light` 和固定字段数据，不引入运行时 CSS、远程资源或
    可执行 Theme。
 
-3. Linux 主窗口使用 Client-side Window Chrome：
+3. 共享交互控件采用 `AnySSH shared/ui Wrapper -> Base UI Primitive`：
+
+   - 固定使用 MIT License 的 `@base-ui/react` 1.6.0 提供 Select、
+     Number Field、Switch 和 Checkbox 的行为、键盘导航与 Accessibility。
+   - Feature 只导入 AnySSH Wrapper，不直接依赖 Base UI API、内部 DOM 或
+     Data Attribute。
+   - Button、Badge、Surface 等简单组件继续使用语义 HTML；全部视觉由现有
+     Material 3 Token 和 `styles/shared-ui.css` 控制。
+   - 不引入 Tailwind、shadcn Preset、MUI Theme Runtime 或新的 Theme 执行能力。
+
+4. Linux 主窗口使用 Client-side Window Chrome：
 
    - Linux 平台配置关闭原生 Decorations。
    - React 标题栏提供拖动区、最小化、最大化/恢复和关闭按钮。
@@ -43,13 +53,13 @@ xterm.js + Rust Core 架构和现有安全边界。
    - Windows 保持现有原生窗口装饰；Android 不渲染桌面标题栏。
    - Browser QA 渲染相同标题栏外观，但不调用原生 Window API。
 
-4. 迁移期间不重写 SSH、Vault、Repository、Typed IPC 或 xterm Runtime。现有
+5. 迁移期间不重写 SSH、Vault、Repository、Typed IPC 或 xterm Runtime。现有
    Accessible Name 和 Browser/Native 自动化所依赖的稳定语义优先保持。
 
-5. 巨型文件采用渐进式拆分，不进行一次性大爆炸重写。每个阶段必须能独立通过
+6. 巨型文件采用渐进式拆分，不进行一次性大爆炸重写。每个阶段必须能独立通过
    TypeScript、Vitest、Playwright 和关键 Native QA。
 
-6. Android Product Shell 按平台身份选择，而不是只依赖 CSS 宽度：
+7. Android Product Shell 按平台身份选择，而不是只依赖 CSS 宽度：
 
    - Android User Agent 在横屏和平板宽度下仍使用 Bottom Navigation 和全高
      Terminal。
@@ -65,6 +75,8 @@ xterm.js + Rust Core 架构和现有安全边界。
   窗口行为，并增加平台回归面。
 - 引入重型 Material UI Framework：可快速获得组件，但会增加依赖、样式覆盖和
   长期迁移成本；当前已有受控 Token 与自建组件基础。
+- 初始化 shadcn/ui：组件源码管理和组合方式成熟，但当前项目没有 Tailwind 或
+  `components.json`；为少量交互控件同时引入第二套样式 Pipeline 不符合渐进迁移。
 - 删除现有 React UI 后整体重写：短期结构整齐，但容易破坏 Session、Secret
   生命周期和已验证的 Native 工作流。
 
@@ -77,6 +89,8 @@ xterm.js + Rust Core 架构和现有安全边界。
 - Linux 与 Android 可共享产品语言，同时保留平台导航和窗口能力差异。
 - Android 横屏不会误回退到 Desktop Sidebar，Terminal 可继续使用系统 IME。
 - 可以逐屏迁移而不放弃现有 SSH/Vault 可靠性证据。
+- Select、Number Field、Switch 和 Checkbox 不再依赖各平台不一致的原生外观，
+  同时保留受测的键盘和无障碍语义。
 
 ### 代价与风险
 
@@ -85,6 +99,8 @@ xterm.js + Rust Core 架构和现有安全边界。
   X11/Wayland 实机验证。
 - 渐进迁移期间会短暂存在新旧组件和样式并存，需要明确 Compatibility Layer
   和删除里程碑。
+- Base UI 增加前端依赖和 Bundle 体积；Feature Lazy-loading 与未使用
+  Compatibility CSS 清理继续作为后续里程碑。
 - Android 真机的软键盘、IME、生命周期和全屏终端仍需后续专项验证。
 
 ## 验证
@@ -95,6 +111,9 @@ xterm.js + Rust Core 架构和现有安全边界。
 - 确认窗口控制 Permission 仅限 `main` Window。
 - `pnpm test:e2e`、`pnpm qa:browser`、`pnpm qa:native:xvfb` 和
   `pnpm qa:native:wayland` 保持通过。
+- Shared UI Component Test 覆盖 Select、Number Field、Switch 和 Checkbox；
+  Browser QA 必须实际打开 Popup、操作 Toggle/Stepper，并检查 Light/Dark 与
+  Compact Screenshot。
 - Windows Build/Native QA 证明 Linux-only 配置没有改变 Windows 原生 Window。
 - Android Build 和后续真机纵向流程验证 Material 3 Responsive Shell。
 - Android User Agent 的 Landscape Playwright 检查必须保持 Product Shell；

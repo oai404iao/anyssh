@@ -112,6 +112,11 @@ Proposed ADR 是待验证方案，不是不可变事实。若 Phase 0 验证结�
 - 生产 UI 按 `app/ -> features/ -> shared/` 方向组织；新页面状态和业务组件不得
   继续堆入根 `App.tsx`。Typed Bridge 继续位于 `lib/`，样式进入 `styles/` 的
   Token/Window/Shell/Feature 分层。
+- 共享交互控件统一从 `apps/client/src/shared/ui/` 导入。该层可封装
+  `@base-ui/react` 的无样式行为 Primitive，但 Feature 不得直接导入 Base UI，
+  也不得依赖其内部 DOM/Data Attribute；Material 3 外观统一放在
+  `styles/shared-ui.css`。自动化需要稳定定位时使用 AnySSH Wrapper 暴露的
+  Accessible Name 和 `data-ui-control`。
 - Repository Refresh/Appearance 生命周期位于
   `apps/client/src/app/useRepositoryWorkspace.ts`；SSH Event/Connect/Auth/
   Forward Runtime 位于 `apps/client/src/features/sessions/useSessionRuntime.ts`。
@@ -663,7 +668,9 @@ Plugin 或高级脚本系统。
 | Repository Workspace Hook | `apps/client/src/app/useRepositoryWorkspace.ts` |
 | Linux Window Titlebar | `apps/client/src/app/shell/WindowTitlebar.tsx` |
 | Android Bottom Navigation | `apps/client/src/app/shell/MobileNavigation.tsx` |
+| Shared UI Component | `apps/client/src/shared/ui/` |
 | Material 3 样式入口 | `apps/client/src/styles/index.css` |
+| Shared UI 样式 | `apps/client/src/styles/shared-ui.css` |
 | 设计评审入口 | `apps/design-review/src/App.tsx` |
 | 配置工作区组合 | `apps/client/src/features/configuration/ConfigurationWorkspace.tsx` |
 | Host Product Workspace | `apps/client/src/features/hosts/HostWorkspace.tsx` |

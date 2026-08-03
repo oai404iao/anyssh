@@ -1,4 +1,5 @@
 @import "./tokens.css";
+@import "./shared-ui.css";
 @import "./window.css";
 @import "./shell.css";
 @import "./terminal.css";

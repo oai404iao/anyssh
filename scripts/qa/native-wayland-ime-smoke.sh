@@ -6,18 +6,21 @@ if [[ "${1:-}" == "--session" ]]; then
   RUN_DIR="$3"
   OUTER_DISPLAY="$4"
   WAYLAND_SOCKET="$5"
+  RUNTIME_DIR="$6"
 
   export DISPLAY="$OUTER_DISPLAY"
   export XDG_CACHE_HOME="$RUN_DIR/xdg-cache"
   export XDG_CONFIG_HOME="$RUN_DIR/xdg-config"
   export XDG_DATA_HOME="$RUN_DIR/xdg-data"
-  export XDG_RUNTIME_DIR="$RUN_DIR/xdg-runtime"
+  export XDG_RUNTIME_DIR="$RUNTIME_DIR"
   export XDG_SESSION_TYPE=wayland
   export XDG_CURRENT_DESKTOP=weston
   export WAYLAND_DISPLAY="$WAYLAND_SOCKET"
   export GTK_IM_MODULE=ibus
   export QT_IM_MODULE=ibus
   export XMODIFIERS=@im=ibus
+  mkdir -p "$XDG_RUNTIME_DIR"
+  chmod 700 "$XDG_RUNTIME_DIR"
 
   weston \
     --backend=x11 \
@@ -84,6 +87,7 @@ PAM_IMAGE_NAME="anyssh-openssh-pam-fixture:phase1"
 CONTAINER_NAME="anyssh-native-wayland-$RANDOM-$$"
 PAM_CONTAINER_NAME="anyssh-native-wayland-pam-$RANDOM-$$"
 RUN_DIR="$ROOT_DIR/artifacts/native-wayland/smoke-$(date +%s)-$$"
+RUNTIME_DIR="/tmp/anyssh-wayland-runtime-${UID:-0}-$$"
 DRIVER="$RUN_DIR/anyssh-x11-driver"
 WAYLAND_SOCKET="wayland-anyssh"
 SESSION_GROUP=""
@@ -121,7 +125,7 @@ cleanup() {
     "$RUN_DIR/xdg-cache" \
     "$RUN_DIR/xdg-config" \
     "$RUN_DIR/xdg-data" \
-    "$RUN_DIR/xdg-runtime"
+    "$RUNTIME_DIR"
   rm -f "$RUN_DIR/app.pid" "$RUN_DIR/dbus-address"
 }
 trap cleanup EXIT
@@ -192,8 +196,8 @@ mkdir -p \
   "$RUN_DIR/xdg-cache" \
   "$RUN_DIR/xdg-config" \
   "$RUN_DIR/xdg-data" \
-  "$RUN_DIR/xdg-runtime"
-chmod 700 "$RUN_DIR/xdg-runtime"
+  "$RUNTIME_DIR"
+chmod 700 "$RUNTIME_DIR"
 
 cc \
   -std=c11 \
@@ -304,6 +308,7 @@ setsid env -i \
   "$RUN_DIR" \
   "$DISPLAY" \
   "$WAYLAND_SOCKET" \
+  "$RUNTIME_DIR" \
   >"$RUN_DIR/session.log" 2>&1 &
 SESSION_GROUP=$!
 
@@ -342,7 +347,7 @@ tr '\0' '\n' <"/proc/$APP_PID/environ" |
   grep -E '^(GDK_BACKEND|GTK_IM_MODULE|WAYLAND_DISPLAY|XDG_CURRENT_DESKTOP|XDG_RUNTIME_DIR|XDG_SESSION_TYPE)=' \
     >"$RUN_DIR/app-backend-environment.txt"
 
-XDG_RUNTIME_DIR="$RUN_DIR/xdg-runtime" \
+XDG_RUNTIME_DIR="$RUNTIME_DIR" \
   WAYLAND_DISPLAY="$WAYLAND_SOCKET" \
   wayland-info >"$RUN_DIR/wayland-info.txt"
 
@@ -351,7 +356,7 @@ export DBUS_SESSION_BUS_ADDRESS
 export XDG_CACHE_HOME="$RUN_DIR/xdg-cache"
 export XDG_CONFIG_HOME="$RUN_DIR/xdg-config"
 export XDG_DATA_HOME="$RUN_DIR/xdg-data"
-export XDG_RUNTIME_DIR="$RUN_DIR/xdg-runtime"
+export XDG_RUNTIME_DIR="$RUNTIME_DIR"
 export WAYLAND_DISPLAY="$WAYLAND_SOCKET"
 
 IBUS_BUS_FILE=""
@@ -427,14 +432,14 @@ sleep 1
 "$DRIVER" click 100 427
 sleep 2
 "$DRIVER" click 540 318
+sleep 0.5
+"$DRIVER" probe "$RUN_DIR/02a0-appearance-select-open.bmp" >/dev/null
 "$DRIVER" down
-"$DRIVER" down
-"$DRIVER" tab
-"$DRIVER" down
-"$DRIVER" tab
-sleep 1
-"$DRIVER" click 550 790
-sleep 3
+"$DRIVER" enter
+sleep 0.5
+"$DRIVER" click 760 695
+"$DRIVER" click 760 695
+sleep 0.5
 "$DRIVER" probe "$RUN_DIR/02a-appearance-settings.bmp" >/dev/null
 "$DRIVER" click 100 106
 sleep 2
@@ -904,10 +909,11 @@ cat >"$RUN_DIR/report.md" <<EOF
 - First launch rendered the product Welcome before local PIN setup without
   exposing cryptographic implementation names.
 - Native Wayland input created an encrypted SQLCipher Vault.
-- The Appearance workspace rendered App Theme, Terminal Theme, Font, size,
-  line-height, ligature, and ambiguous-width controls. Returning to Terminal
-  preserved the mounted xterm.js instance, which then completed IME and SSH
-  input while the Tauri application remained Wayland-only.
+- The Appearance workspace rendered the shared App Theme popup, keyboard
+  selection, Number Field, Switch, Terminal Theme, Font, line-height, and
+  ambiguous-width controls. Returning to Terminal preserved the mounted
+  xterm.js instance, which then completed IME and SSH input while the Tauri
+  application remained Wayland-only.
 - IBus switched from the US keyboard engine to \`libpinyin\`.
 - The xterm.js composition path committed \`中文\` through WebKitGTK, Tauri IPC,
   the Rust SSH core, and the Docker OpenSSH shell.
@@ -937,6 +943,7 @@ cat >"$RUN_DIR/report.md" <<EOF
 - \`00-welcome.bmp\`
 - \`01-vault-create.bmp\`
 - \`02-wayland-ready.bmp\`
+- \`02a0-appearance-select-open.bmp\`
 - \`02a-appearance-settings.bmp\`
 - \`02b-terminal-appearance.bmp\`
 - \`03-host-key-dialog.bmp\`
