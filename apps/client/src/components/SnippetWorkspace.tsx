@@ -8,6 +8,7 @@ import {
   type SnippetDraft,
   type SnippetSummary,
 } from "../lib/snippet-bridge";
+import { Button, CheckboxField } from "../shared/ui";
 
 interface SnippetWorkspaceProps {
   snippets: SnippetSummary[];
@@ -359,35 +360,26 @@ export function SnippetWorkspace({
               />
             </label>
             {previewIsMultiline && (
-              <label className="toggle-field multiline-confirmation">
-                <input
-                  checked={runner.confirmedMultiline}
-                  onChange={(event) =>
-                    setRunner((current) =>
-                      current
-                        ? {
-                            ...current,
-                            confirmedMultiline: event.target.checked,
-                          }
-                        : null,
-                    )
-                  }
-                  type="checkbox"
-                />
-                I reviewed every line and want to send this multi-line command.
-              </label>
+              <CheckboxField
+                checked={runner.confirmedMultiline}
+                className="multiline-confirmation"
+                label="I reviewed every line and want to send this multi-line command."
+                onCheckedChange={(confirmedMultiline) =>
+                  setRunner((current) =>
+                    current ? { ...current, confirmedMultiline } : null,
+                  )
+                }
+              />
             )}
             <div className="dialog-actions">
-              <button
-                className="secondary-button"
+              <Button
                 disabled={busy}
                 onClick={() => setRunner(null)}
-                type="button"
+                variant="outlined"
               >
                 Cancel
-              </button>
-              <button
-                className="connect-button"
+              </Button>
+              <Button
                 disabled={
                   busy || (previewIsMultiline && !runner.confirmedMultiline)
                 }
@@ -398,7 +390,7 @@ export function SnippetWorkspace({
                   : runner.appendEnter
                     ? "Run in Session"
                     : "Insert in Session"}
-              </button>
+              </Button>
             </div>
           </form>
         </div>

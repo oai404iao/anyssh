@@ -1,4 +1,18 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+async function selectUiOption(page: Page, label: string, value: string) {
+  await page.getByRole("combobox", { name: label }).click();
+  await page
+    .locator(`[role="option"][data-value=${JSON.stringify(value)}]`)
+    .click();
+}
+
+async function setUiSwitch(page: Page, label: string, checked: boolean) {
+  const control = page.getByRole("switch", { name: label });
+  if ((await control.getAttribute("aria-checked")) !== String(checked)) {
+    await control.click();
+  }
+}
 
 test("keeps the Android product shell in landscape by platform identity", async ({
   browser,
@@ -511,17 +525,15 @@ test("updates mounted Terminal appearance and imports metadata-only resources", 
   ).toBeVisible();
   await expect(page.locator('input[type="file"]')).toHaveCount(0);
 
-  await page.getByLabel("App theme").selectOption("light");
+  await selectUiOption(page, "App theme", "light");
+  await selectUiOption(page, "Terminal theme", "theme-browser-1");
+  await selectUiOption(page, "Terminal font", "imported:font-browser-1");
   await page
-    .getByLabel("Terminal theme")
-    .selectOption({ label: "Browser QA Midnight · custom" });
-  await page
-    .getByLabel("Terminal font", { exact: true })
-    .selectOption({ label: "Browser QA Mono Regular · imported" });
-  await page.getByLabel("Terminal font size").fill("16");
-  await page.getByLabel("Terminal line height").selectOption("1600");
-  await page.getByLabel("Programming ligatures").check();
-  await page.getByLabel("East Asian ambiguous width").selectOption("wide");
+    .getByRole("textbox", { name: "Terminal font size", exact: true })
+    .fill("16");
+  await selectUiOption(page, "Terminal line height", "1600");
+  await setUiSwitch(page, "Programming ligatures", true);
+  await selectUiOption(page, "East Asian ambiguous width", "wide");
   await page.getByRole("button", { name: "Apply appearance" }).click();
 
   await expect(page.locator("html")).toHaveAttribute("data-app-theme", "light");
@@ -545,10 +557,12 @@ test("updates mounted Terminal appearance and imports metadata-only resources", 
     .locator(".appearance-asset-list > div")
     .filter({ hasText: "Browser QA Mono" });
   await importedFont.getByRole("button", { name: "Delete" }).click();
-  await expect(page.getByLabel("Terminal font", { exact: true })).toHaveValue(
-    "bundled:anyssh-nerd-mono",
+  await expect(
+    page.getByRole("combobox", { name: "Terminal font" }),
+  ).toContainText("AnySSH Nerd Mono");
+  await expect(page.getByRole("combobox", { name: "App theme" })).toContainText(
+    "Light",
   );
-  await expect(page.getByLabel("App theme")).toHaveValue("light");
 });
 
 test("creates and runs variable-aware Snippets with multi-line confirmation", async ({
@@ -591,10 +605,10 @@ test("creates and runs variable-aware Snippets with multi-line confirmation", as
     runner.getByRole("button", { name: "Run in Session" }),
   ).toBeDisabled();
   await runner
-    .getByLabel(
-      "I reviewed every line and want to send this multi-line command.",
-    )
-    .check();
+    .getByRole("checkbox", {
+      name: "I reviewed every line and want to send this multi-line command.",
+    })
+    .click();
   await runner.getByRole("button", { name: "Run in Session" }).click();
 
   await page.getByRole("button", { name: /^Terminal \d+$/ }).click();

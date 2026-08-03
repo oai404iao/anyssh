@@ -48,8 +48,8 @@
   letter-spacing: 0.03em;
 }
 
-.appearance-form input:not([type="checkbox"]),
-.appearance-form select,
+.appearance-form
+  input:not([type="checkbox"]):not([data-ui-control]):not([aria-hidden="true"]),
 .snippet-editor input,
 .snippet-editor textarea,
 .snippet-runner input,
@@ -62,10 +62,6 @@
   color: #dbe2ef;
   background: rgba(4, 7, 13, 0.48);
   font-size: 11px;
-}
-
-.appearance-form select {
-  color-scheme: dark;
 }
 
 .appearance-form .field-grid {
@@ -291,8 +287,9 @@
 :root[data-app-theme="light"] .connection-panel select,
 :root[data-app-theme="light"] .editor-form input,
 :root[data-app-theme="light"] .editor-form select,
-:root[data-app-theme="light"] .appearance-form input:not([type="checkbox"]),
-:root[data-app-theme="light"] .appearance-form select,
+:root[data-app-theme="light"]
+  .appearance-form
+  input:not([type="checkbox"]):not([data-ui-control]):not([aria-hidden="true"]),
 :root[data-app-theme="light"] .snippet-editor textarea,
 :root[data-app-theme="light"] .snippet-runner textarea {
   color: #1f2a3d;

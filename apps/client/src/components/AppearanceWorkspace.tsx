@@ -13,6 +13,13 @@ import {
   type SystemFontSummary,
   type TerminalThemeSummary,
 } from "../lib/appearance-bridge";
+import {
+  Button,
+  NumberField,
+  SelectField,
+  SwitchField,
+  type SelectOption,
+} from "../shared/ui";
 
 interface AppearanceWorkspaceProps {
   settings: AppearanceSettings;
@@ -32,6 +39,28 @@ interface FontOption {
   fontId: string | null;
   family: string;
 }
+
+const APP_THEME_OPTIONS: readonly SelectOption<
+  AppearanceSettings["appTheme"]
+>[] = [
+  { value: "system", label: "Follow system" },
+  { value: "dark", label: "Dark" },
+  { value: "light", label: "Light" },
+];
+
+const LINE_HEIGHT_OPTIONS: readonly SelectOption<string>[] = [
+  { value: "1200", label: "Compact · 1.20" },
+  { value: "1420", label: "Balanced · 1.42" },
+  { value: "1600", label: "Relaxed · 1.60" },
+  { value: "1800", label: "Spacious · 1.80" },
+];
+
+const AMBIGUOUS_WIDTH_OPTIONS: readonly SelectOption<
+  AppearanceSettings["ambiguousWidth"]
+>[] = [
+  { value: "narrow", label: "Narrow" },
+  { value: "wide", label: "Wide" },
+];
 
 export function AppearanceWorkspace({
   settings,
@@ -193,22 +222,23 @@ export function AppearanceWorkspace({
             </p>
           </div>
           <div className="manager-actions appearance-import-actions">
-            <button
-              className="secondary-button compact-button"
+            <Button
+              className="compact-button"
               disabled={busy}
               onClick={() => void importTheme()}
-              type="button"
+              size="small"
+              variant="outlined"
             >
               Import Theme
-            </button>
-            <button
-              className="connect-button compact-button"
+            </Button>
+            <Button
+              className="compact-button"
               disabled={busy}
               onClick={() => void importFont()}
-              type="button"
+              size="small"
             >
               Import Font
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -225,25 +255,16 @@ export function AppearanceWorkspace({
                 <p className="eyebrow">Application</p>
                 <h3>Interface theme</h3>
               </div>
-              <label>
-                App theme
-                <select
-                  aria-label="App theme"
-                  disabled={loading || busy}
-                  onChange={(event) =>
-                    setDraft((current) => ({
-                      ...current,
-                      appTheme: event.target
-                        .value as AppearanceSettings["appTheme"],
-                    }))
-                  }
-                  value={draft.appTheme}
-                >
-                  <option value="system">Follow system</option>
-                  <option value="dark">Dark</option>
-                  <option value="light">Light</option>
-                </select>
-              </label>
+              <SelectField
+                ariaLabel="App theme"
+                disabled={loading || busy}
+                label="App theme"
+                onValueChange={(appTheme) =>
+                  setDraft((current) => ({ ...current, appTheme }))
+                }
+                options={APP_THEME_OPTIONS}
+                value={draft.appTheme}
+              />
             </div>
 
             <div className="appearance-section">
@@ -251,132 +272,92 @@ export function AppearanceWorkspace({
                 <p className="eyebrow">Terminal</p>
                 <h3>Palette and font</h3>
               </div>
-              <label>
-                Terminal theme
-                <select
-                  aria-label="Terminal theme"
-                  disabled={loading || busy}
-                  onChange={(event) =>
-                    setDraft((current) => ({
-                      ...current,
-                      terminalThemeId: event.target.value,
-                    }))
-                  }
-                  value={draft.terminalThemeId}
-                >
-                  {allThemes.map((theme) => (
-                    <option key={theme.id} value={theme.id}>
-                      {theme.label}
-                      {theme.builtIn ? " · built-in" : " · custom"}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Font
-                <select
-                  aria-label="Terminal font"
-                  disabled={loading || busy}
-                  onChange={(event) => {
-                    const option =
-                      fontOptions.find(
-                        (candidate) => candidate.value === event.target.value,
-                      ) ?? fontOptions[0]!;
-                    setDraft((current) => ({
-                      ...current,
-                      fontSourceKind: option.sourceKind,
-                      fontId: option.fontId,
-                      fontFamily: option.family,
-                    }));
-                  }}
-                  value={selectedFontOption.value}
-                >
-                  {fontOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <SelectField
+                ariaLabel="Terminal theme"
+                disabled={loading || busy}
+                label="Terminal theme"
+                onValueChange={(terminalThemeId) =>
+                  setDraft((current) => ({ ...current, terminalThemeId }))
+                }
+                options={allThemes.map((theme) => ({
+                  value: theme.id,
+                  label: `${theme.label}${
+                    theme.builtIn ? " · built-in" : " · custom"
+                  }`,
+                }))}
+                value={draft.terminalThemeId}
+              />
+              <SelectField
+                ariaLabel="Terminal font"
+                disabled={loading || busy}
+                label="Font"
+                onValueChange={(value) => {
+                  const option =
+                    fontOptions.find(
+                      (candidate) => candidate.value === value,
+                    ) ?? fontOptions[0]!;
+                  setDraft((current) => ({
+                    ...current,
+                    fontSourceKind: option.sourceKind,
+                    fontId: option.fontId,
+                    fontFamily: option.family,
+                  }));
+                }}
+                options={fontOptions}
+                value={selectedFontOption.value}
+              />
               <div className="field-grid">
-                <label>
-                  Font size
-                  <input
-                    aria-label="Terminal font size"
-                    disabled={loading || busy}
-                    max="32"
-                    min="10"
-                    onChange={(event) =>
-                      setDraft((current) => ({
-                        ...current,
-                        fontSize: Number(event.target.value),
-                      }))
-                    }
-                    type="number"
-                    value={draft.fontSize}
-                  />
-                </label>
-                <label>
-                  Line height
-                  <select
-                    aria-label="Terminal line height"
-                    disabled={loading || busy}
-                    onChange={(event) =>
-                      setDraft((current) => ({
-                        ...current,
-                        lineHeightMillis: Number(event.target.value),
-                      }))
-                    }
-                    value={draft.lineHeightMillis}
-                  >
-                    <option value="1200">Compact · 1.20</option>
-                    <option value="1420">Balanced · 1.42</option>
-                    <option value="1600">Relaxed · 1.60</option>
-                    <option value="1800">Spacious · 1.80</option>
-                  </select>
-                </label>
-              </div>
-              <label className="toggle-field">
-                <input
-                  checked={draft.ligaturesEnabled}
+                <NumberField
+                  ariaLabel="Terminal font size"
                   disabled={loading || busy}
-                  onChange={(event) =>
-                    setDraft((current) => ({
-                      ...current,
-                      ligaturesEnabled: event.target.checked,
-                    }))
+                  label="Font size"
+                  max={32}
+                  min={10}
+                  onValueChange={(fontSize) =>
+                    setDraft((current) => ({ ...current, fontSize }))
                   }
-                  type="checkbox"
+                  value={draft.fontSize}
                 />
-                Programming ligatures
-              </label>
-              <label>
-                East Asian ambiguous width
-                <select
-                  aria-label="East Asian ambiguous width"
+                <SelectField
+                  ariaLabel="Terminal line height"
                   disabled={loading || busy}
-                  onChange={(event) =>
+                  label="Line height"
+                  onValueChange={(value) =>
                     setDraft((current) => ({
                       ...current,
-                      ambiguousWidth: event.target
-                        .value as AppearanceSettings["ambiguousWidth"],
+                      lineHeightMillis: Number(value),
                     }))
                   }
-                  value={draft.ambiguousWidth}
-                >
-                  <option value="narrow">Narrow</option>
-                  <option value="wide">Wide</option>
-                </select>
-              </label>
+                  options={LINE_HEIGHT_OPTIONS}
+                  value={String(draft.lineHeightMillis)}
+                />
+              </div>
+              <SwitchField
+                checked={draft.ligaturesEnabled}
+                disabled={loading || busy}
+                label="Programming ligatures"
+                onCheckedChange={(ligaturesEnabled) =>
+                  setDraft((current) => ({
+                    ...current,
+                    ligaturesEnabled,
+                  }))
+                }
+              />
+              <SelectField
+                ariaLabel="East Asian ambiguous width"
+                disabled={loading || busy}
+                label="East Asian ambiguous width"
+                onValueChange={(ambiguousWidth) =>
+                  setDraft((current) => ({ ...current, ambiguousWidth }))
+                }
+                options={AMBIGUOUS_WIDTH_OPTIONS}
+                value={draft.ambiguousWidth}
+              />
             </div>
 
-            <button
-              className="connect-button"
-              disabled={loading || busy}
-              type="submit"
-            >
+            <Button disabled={loading || busy} type="submit">
               {busy ? "Applying…" : "Apply appearance"}
-            </button>
+            </Button>
           </form>
 
           <div className="appearance-preview-column">
@@ -420,14 +401,15 @@ export function AppearanceWorkspace({
                         <strong>{theme.label}</strong>
                         <small>Terminal Theme v{theme.schemaVersion}</small>
                       </span>
-                      <button
+                      <Button
                         className="danger-action"
                         disabled={busy}
                         onClick={() => void removeTheme(theme.id)}
-                        type="button"
+                        size="small"
+                        variant="danger"
                       >
                         Delete
-                      </button>
+                      </Button>
                     </div>
                   ))}
                   {fonts.map((font) => (
@@ -438,14 +420,15 @@ export function AppearanceWorkspace({
                           {font.style} · {font.format.toUpperCase()}
                         </small>
                       </span>
-                      <button
+                      <Button
                         className="danger-action"
                         disabled={busy}
                         onClick={() => void removeFont(font.id)}
-                        type="button"
+                        size="small"
+                        variant="danger"
                       >
                         Delete
-                      </button>
+                      </Button>
                     </div>
                   ))}
                 </div>

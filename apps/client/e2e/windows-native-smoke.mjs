@@ -78,6 +78,20 @@ const remoteForwardMarker = requiredEnvironment(
 );
 const themeFixturePath = requiredEnvironment("ANYSSH_WINDOWS_THEME_PATH");
 const fontFixturePath = requiredEnvironment("ANYSSH_WINDOWS_FONT_PATH");
+
+async function selectUiOption(page, label, value) {
+  await page.getByRole("combobox", { name: label }).click();
+  await page
+    .locator(`[role="option"][data-value=${JSON.stringify(value)}]`)
+    .click();
+}
+
+async function setUiSwitch(page, label, checked) {
+  const control = page.getByRole("switch", { name: label });
+  if ((await control.getAttribute("aria-checked")) !== String(checked)) {
+    await control.click();
+  }
+}
 const snippetMarkerPath = requiredEnvironment(
   "ANYSSH_WINDOWS_SNIPPET_MARKER_PATH",
 );
@@ -444,18 +458,22 @@ async function unlockRestartedVault(targetPage) {
   }
 
   await targetPage.locator(".primary-nav .nav-item").nth(7).click();
-  await assert(targetPage.getByLabel("App theme")).toHaveValue("light");
-  const restartedTheme = targetPage.getByLabel("Terminal theme");
-  const restartedFont = targetPage.getByLabel("Terminal font", {
-    exact: true,
+  await assert(
+    targetPage.getByRole("combobox", { name: "App theme" }),
+  ).toContainText("Light");
+  const restartedTheme = targetPage.getByRole("combobox", {
+    name: "Terminal theme",
   });
-  await assert(restartedTheme.locator("option:checked")).toContainText(
-    "Windows Aurora",
-  );
-  await assert(restartedFont.locator("option:checked")).toContainText(
-    "imported",
-  );
-  const restartedFontId = importedFontId(await restartedFont.inputValue());
+  const restartedFont = targetPage.getByRole("combobox", {
+    name: "Terminal font",
+  });
+  await assert(restartedTheme).toContainText("Windows Aurora");
+  await assert(restartedFont).toContainText("imported");
+  const restartedFontValue = await restartedFont.getAttribute("data-value");
+  if (!restartedFontValue) {
+    throw new Error("Restarted imported Font Select had no value.");
+  }
+  const restartedFontId = importedFontId(restartedFontValue);
   await assertManagedFontLoaded(
     targetPage,
     `AnySSH Imported ${restartedFontId}`,
@@ -860,36 +878,33 @@ async function verifyAppearanceAndSnippets(targetPage) {
   await targetPage.locator(".primary-nav .nav-item").nth(7).click();
   const appearanceDriver = runNativeDialogDriver("AppearanceImport");
   await targetPage.getByRole("button", { name: "Import Theme" }).click();
-  const terminalTheme = targetPage.getByLabel("Terminal theme");
+  const terminalTheme = targetPage.getByRole("combobox", {
+    name: "Terminal theme",
+  });
   await assert(terminalTheme).toContainText("Windows Aurora");
   await targetPage.getByRole("button", { name: "Import Font" }).click();
   await appearanceDriver;
 
-  const fontSelect = targetPage.getByLabel("Terminal font", { exact: true });
+  const fontSelect = targetPage.getByRole("combobox", {
+    name: "Terminal font",
+  });
   await assert(fontSelect).toContainText("imported");
-  const themeOption = terminalTheme
-    .locator("option")
-    .filter({ hasText: "Windows Aurora" });
-  const fontOption = fontSelect
-    .locator("option")
-    .filter({ hasText: "imported" })
-    .first();
-  const themeId = await themeOption.getAttribute("value");
-  const fontOptionValue = await fontOption.getAttribute("value");
+  const themeId = await terminalTheme.getAttribute("data-value");
+  const fontOptionValue = await fontSelect.getAttribute("data-value");
   if (!themeId || !fontOptionValue) {
     throw new Error("The imported Windows Appearance resources had no IDs.");
   }
   const fontId = importedFontId(fontOptionValue);
 
-  await targetPage.getByLabel("App theme").selectOption("light");
-  await terminalTheme.selectOption(themeId);
-  await fontSelect.selectOption(fontOptionValue);
-  await targetPage.getByLabel("Font size").fill("15");
-  await targetPage.getByLabel("Line height").selectOption("1600");
-  await targetPage.getByLabel("Programming ligatures").check();
+  await selectUiOption(targetPage, "App theme", "light");
+  await selectUiOption(targetPage, "Terminal theme", themeId);
+  await selectUiOption(targetPage, "Terminal font", fontOptionValue);
   await targetPage
-    .getByLabel("East Asian ambiguous width")
-    .selectOption("wide");
+    .getByRole("textbox", { name: "Terminal font size", exact: true })
+    .fill("15");
+  await selectUiOption(targetPage, "Terminal line height", "1600");
+  await setUiSwitch(targetPage, "Programming ligatures", true);
+  await selectUiOption(targetPage, "East Asian ambiguous width", "wide");
   await targetPage.getByRole("button", { name: "Apply appearance" }).click();
   await assert(targetPage.locator("html")).toHaveAttribute(
     "data-app-theme",
@@ -949,10 +964,10 @@ async function verifyAppearanceAndSnippets(targetPage) {
     "02b7-snippet-confirmation.txt",
   );
   await runner
-    .getByLabel(
-      "I reviewed every line and want to send this multi-line command.",
-    )
-    .check();
+    .getByRole("checkbox", {
+      name: "I reviewed every line and want to send this multi-line command.",
+    })
+    .click();
   await runner.getByRole("button", { name: "Run in Session" }).click();
   await assert
     .poll(async () => {
