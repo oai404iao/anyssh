@@ -26,6 +26,10 @@
 Known Host Repository/Durable TOFU、Keyboard-interactive/OTP 和 Multi Tab
 Terminal、SSH Port Forwarding、Private Key Generation/Public Reveal/
 Encrypted Export、Terminal Appearance/Font/Snippet Productization 已完成。
+2026-08-02，Linux/Android Material Design 3 产品设计评审通过。2026-08-03，
+生产 UI 已完成 App/Repository/Session Orchestration 拆分、Linux 自定义窗口框
+和 Android Product Shell 的 Browser/Build 实现；当前优先补齐 Android 真机
+Runtime、系统软键盘、中文 IME 和生命周期证据。
 
 - Host 与 Group 继承（已完成）。
 - 密码、私钥（含 Linux/Windows 加密 Key Prompt）、系统 Agent（已完成）。
@@ -43,10 +47,12 @@ Encrypted Export、Terminal Appearance/Font/Snippet Productization 已完成。
 
 当前建议顺序：
 
-1. 评审 Desktop MVP 剩余 Platform Slot、OpenSSH `known_hosts` Import/Export
-   与 Release Packaging 优先级。
-2. 项目负责人确认优先级后创建下一份 ExecPlan；在此之前不直接进入 WebDAV、
-   SFTP、Runbook 或 Plugin。
+1. Linux/Android Material Design 3 界面总览与可点击流程评审（已完成）。
+2. 生产 UI 重构、Linux Window Chrome 和 Android 真机 Runtime、软键盘、
+   生命周期验证（进行中）。
+3. 只有客户端壳获得 Linux/Android 产品证据后，再评审 Platform Slot、
+   OpenSSH `known_hosts` Import/Export 与 Release Packaging。
+4. 在此之前不直接进入 WebDAV、SFTP、Runbook 或 Plugin。
 
 ## Phase 2：WebDAV E2EE
 
@@ -60,7 +66,10 @@ Encrypted Export、Terminal Appearance/Font/Snippet Productization 已完成。
 
 ## Phase 3：Android/iOS
 
-- 移动端导航和终端键盘。
+> 2026-08-02：Android 已被提升为首要交付平台。设计评审和客户端壳真机验证将
+> 提前执行；本节剩余的完整移动端产品化事项仍保留为后续里程碑。
+
+- 移动端导航和终端辅助键盘（Browser/Build 已实现；真机验证待完成）。
 - Keychain/Keystore/Biometric。
 - 自动锁和生命周期。
 - 网络切换、断线恢复。

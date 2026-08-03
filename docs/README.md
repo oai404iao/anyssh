@@ -32,6 +32,7 @@
 - [SSH Port Forwarding v1](design/ssh-port-forwarding-v1.md)
 - [Private Key Generation and Encrypted Export v1](design/private-key-generation-and-encrypted-export-v1.md)
 - [Terminal Appearance, Font, and Snippet v1](design/terminal-appearance-font-and-snippet-v1.md)
+- [Material 3 Production UI Shell v1](design/material3-production-ui-shell-v1.md)
 
 Design 文档回答“系统如何工作、模块边界是什么”。
 

@@ -55,7 +55,8 @@ NNNN-short-kebab-case-title.md
 
 当前计划：
 
-- Active：无；下一项工作等待项目负责人确认优先级。
+- Active：
+  - [Material 3 生产 UI 重构与 Linux 自定义窗口框](active/0012-material3-production-ui-and-linux-window-chrome.md)
 - Completed：
   - [Phase 0：技术风险验证](completed/0001-phase-0-technical-validation.md)
   - [Group 持久化与三态继承](completed/0002-group-persistence-and-inheritance.md)
@@ -67,3 +68,4 @@ NNNN-short-kebab-case-title.md
   - [SSH Port Forwarding](completed/0008-ssh-port-forwarding.md)
   - [Private Key Generation and Encrypted Export](completed/0009-private-key-generation-and-encrypted-export.md)
   - [Terminal Appearance, Font, and Snippet Productization](completed/0010-terminal-appearance-font-and-snippet-productization.md)
+  - [Linux/Android Material 3 设计评审网页](completed/0011-linux-android-material3-design-review.md)

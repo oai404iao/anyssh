@@ -1,0 +1,483 @@
+.dialog-backdrop {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(2, 4, 9, 0.78);
+  backdrop-filter: blur(10px);
+}
+
+.host-key-dialog {
+  width: min(480px, 100%);
+  padding: 27px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--md-sys-shape-extra-large);
+  background: var(--md-sys-color-surface-container-high);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.44);
+}
+
+.host-key-dialog h2 {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 23px;
+  letter-spacing: -0.035em;
+}
+
+.host-key-dialog > p:not(.eyebrow) {
+  margin: 10px 0 17px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.dialog-icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  margin-bottom: 16px;
+  border: 1px solid
+    color-mix(in srgb, var(--md-sys-color-primary) 28%, transparent);
+  border-radius: var(--md-sys-shape-medium);
+  color: var(--md-sys-color-on-primary-container);
+  background: var(--md-sys-color-primary-container);
+}
+
+.dialog-icon svg {
+  width: 19px;
+}
+
+.dialog-icon.danger-icon {
+  border-color: color-mix(in srgb, var(--md-sys-color-error) 30%, transparent);
+  color: var(--md-sys-color-error);
+  background: color-mix(
+    in srgb,
+    var(--md-sys-color-error) 11%,
+    var(--md-sys-color-surface-container-high)
+  );
+}
+
+.dialog-context-label {
+  color: var(--md-sys-color-primary);
+}
+
+.host-key-dialog dl {
+  display: grid;
+  gap: 7px;
+  margin: 0 0 12px;
+}
+
+.host-key-dialog dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 10px;
+  border-radius: var(--md-sys-shape-small);
+  background: var(--md-sys-color-surface-container-highest);
+}
+
+.host-key-dialog dt {
+  color: var(--text-muted);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.host-key-dialog dd {
+  margin: 0;
+  color: var(--text);
+  font-family: "AnySSH Nerd Mono", monospace;
+  font-size: 9px;
+}
+
+.host-key-dialog code {
+  display: block;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  border: 1px solid
+    color-mix(in srgb, var(--md-sys-color-primary) 18%, transparent);
+  border-radius: var(--md-sys-shape-small);
+  color: var(--md-sys-color-primary);
+  background: color-mix(in srgb, var(--md-sys-color-surface) 78%, transparent);
+  font-family: "AnySSH Nerd Mono", monospace;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.fingerprint-card {
+  padding: 10px;
+  border: 1px solid
+    color-mix(in srgb, var(--md-sys-color-primary) 20%, var(--border));
+  border-radius: var(--md-sys-shape-medium);
+  background: color-mix(
+    in srgb,
+    var(--md-sys-color-primary) 5%,
+    var(--md-sys-color-surface-container)
+  );
+}
+
+.fingerprint-card > span {
+  display: block;
+  margin: 0 2px 7px;
+  color: var(--text-muted);
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.fingerprint-card code {
+  padding: 8px 9px;
+  border: 0;
+  background: transparent;
+}
+
+.dialog-security-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 11px;
+  padding: 9px 10px;
+  border-radius: var(--md-sys-shape-small);
+  color: var(--text-muted);
+  background: var(--md-sys-color-surface-container-highest);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.dialog-security-note svg {
+  width: 15px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--md-sys-color-primary);
+}
+
+.dialog-security-note.danger-note svg {
+  color: var(--md-sys-color-error);
+}
+
+.changed-host-key-dialog {
+  width: min(540px, 100%);
+}
+
+.authentication-dialog {
+  width: min(500px, 100%);
+}
+
+.authentication-instructions {
+  white-space: pre-wrap;
+}
+
+.authentication-form {
+  display: grid;
+  max-height: min(52vh, 430px);
+  gap: 12px;
+  overflow-y: auto;
+  margin-top: 14px;
+  padding-right: 3px;
+}
+
+.authentication-form label {
+  display: grid;
+  gap: 7px;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.authentication-form input {
+  width: 100%;
+  height: 42px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--md-sys-shape-medium);
+  color: var(--text);
+  background: var(--md-sys-color-surface);
+  font-family: "AnySSH Nerd Mono", monospace;
+  font-size: 14px;
+}
+
+.authentication-form input:focus {
+  border-color: var(--cyan);
+  outline: 2px solid rgba(107, 230, 210, 0.2);
+  outline-offset: 1px;
+}
+
+.authentication-form .dialog-actions {
+  grid-template-columns: 1fr 1fr;
+}
+
+.authentication-form .dialog-security-note {
+  margin-top: 0;
+}
+
+.changed-key-comparison {
+  display: grid;
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.changed-key-comparison > div {
+  display: grid;
+  gap: 6px;
+}
+
+.changed-key-comparison span {
+  color: var(--text-muted);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.dialog-actions {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.dialog-actions .connect-button {
+  justify-content: center;
+}
+
+.vault-gate {
+  display: grid;
+  min-height: 100%;
+  height: 100%;
+  place-items: center;
+  padding: 32px 24px;
+  background:
+    radial-gradient(
+      circle at 50% 0%,
+      color-mix(in srgb, var(--md-sys-color-primary) 16%, transparent),
+      transparent 30rem
+    ),
+    radial-gradient(
+      circle at 8% 100%,
+      color-mix(in srgb, var(--violet) 10%, transparent),
+      transparent 28rem
+    ),
+    var(--background);
+}
+
+.vault-gate-card {
+  width: min(456px, 100%);
+  padding: 28px 32px 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--md-sys-shape-extra-large);
+  background: color-mix(
+    in srgb,
+    var(--md-sys-color-surface-container) 94%,
+    transparent
+  );
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.34);
+}
+
+.vault-gate-card-welcome {
+  width: min(680px, 100%);
+}
+
+.vault-gate-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.vault-gate-brand strong,
+.vault-gate-brand small {
+  display: block;
+}
+
+.vault-gate-brand strong {
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+.vault-gate-brand small {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.vault-gate-content {
+  display: grid;
+}
+
+.vault-welcome {
+  text-align: center;
+}
+
+.vault-welcome .vault-gate-icon {
+  margin-inline: auto;
+}
+
+.vault-welcome-hero {
+  display: grid;
+}
+
+.vault-welcome-benefits {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  margin: 2px 0 22px;
+}
+
+.vault-welcome-benefits span {
+  display: grid;
+  min-height: 76px;
+  place-items: center;
+  gap: 7px;
+  padding: 12px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--md-sys-shape-medium);
+  color: var(--text-muted);
+  background: var(--md-sys-color-surface-container-high);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.vault-welcome-benefits svg {
+  width: 20px;
+  color: var(--md-sys-color-primary);
+}
+
+.vault-welcome .vault-primary-action {
+  width: min(240px, 100%);
+  justify-self: center;
+}
+
+.vault-welcome-caption {
+  margin-top: 14px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.vault-gate-icon {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  place-items: center;
+  margin-bottom: 20px;
+  border: 1px solid
+    color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent);
+  border-radius: var(--md-sys-shape-large);
+  color: var(--md-sys-color-on-primary-container);
+  background: var(--md-sys-color-primary-container);
+}
+
+.vault-gate-icon svg {
+  width: 25px;
+}
+
+.vault-gate-icon-danger {
+  border-color: color-mix(in srgb, var(--md-sys-color-error) 30%, transparent);
+  color: var(--md-sys-color-error);
+  background: color-mix(
+    in srgb,
+    var(--md-sys-color-error) 12%,
+    var(--md-sys-color-surface-container)
+  );
+}
+
+.vault-gate h1 {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-size: clamp(26px, 3vw, 32px);
+  font-weight: 650;
+  letter-spacing: -0.04em;
+  line-height: 1.12;
+}
+
+.vault-gate-content > p:not(.eyebrow, .vault-gate-intro) {
+  margin: 12px 0 24px;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.vault-gate-intro {
+  margin: 12px 0 24px;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.vault-gate form {
+  display: grid;
+  gap: 16px;
+}
+
+.vault-gate label {
+  display: grid;
+  gap: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.vault-gate input {
+  width: 100%;
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--md-sys-shape-medium);
+  color: var(--text);
+  background: color-mix(in srgb, var(--md-sys-color-surface) 72%, transparent);
+}
+
+.vault-gate input:focus,
+.vault-gate input:hover {
+  border-color: color-mix(
+    in srgb,
+    var(--md-sys-color-primary) 58%,
+    transparent
+  );
+}
+
+.vault-field-support {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 450;
+  line-height: 1.45;
+}
+
+.vault-gate-error {
+  padding: 11px 12px;
+  border: 1px solid
+    color-mix(in srgb, var(--md-sys-color-error) 30%, transparent);
+  border-radius: var(--md-sys-shape-medium);
+  color: var(--md-sys-color-error);
+  background: color-mix(in srgb, var(--md-sys-color-error) 8%, transparent);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.vault-primary-action {
+  min-height: 48px;
+}
+
+.vault-gate-footnote {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.vault-gate-footnote svg {
+  width: 16px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--md-sys-color-primary);
+}
+
+.danger-text {
+  color: var(--danger);
+}

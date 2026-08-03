@@ -1,7 +1,7 @@
 # AnySSH
 
-AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MVP 的开源
-跨平台 SSH 客户端项目。
+AnySSH 是一个已完成 Phase 0 技术验证和 Linux/Android Material Design 3
+设计评审、正在进行生产 UI 重构的开源跨平台 SSH 客户端项目。
 
 项目名称已确定为 **AnySSH**。除单独标注许可证的第三方资源外，项目采用
 [GNU Affero General Public License v3.0 only](LICENSE)。
@@ -60,6 +60,11 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
 - Vitest、Playwright 和 agent-browser 测试路径。
 - 原生 Wayland + IBus/libpinyin + xterm.js 中文组合输入到真实 SSH Shell。
 - Android ARM64 Debug APK 构建，包含 Rust SSH、Vault 与 bundled SQLCipher。
+- 2026-08-03 的生产 Android Product Shell 已实现 Bottom Navigation、More
+  管理 Sheet、全高 Terminal、Session Context Action、Esc/Ctrl/Alt/Tab/方向键
+  辅助栏和 xterm Soft Keyboard Focus；Android 横屏继续按平台身份使用移动壳。
+- 生产 React `App.tsx` 已从约 2,431 行拆到 696 行，Repository 生命周期和 SSH
+  Session Runtime 分别进入 App/Session Hook；Inactive Terminal 继续 Mounted。
 - GitHub Actions Windows Runner 已成功产出 x86-64 Debug EXE。
 - Windows 2025 Runner 已实际启动 EXE/WebView2，并验证 Vault、Repository、
   错误 PIN、锁定/解锁与进程重启恢复。
@@ -113,9 +118,16 @@ AnySSH 是一个已完成 Phase 0 技术验证、正在进入 Phase 1 Desktop MV
 
 iOS 因当前没有 macOS/Xcode 环境暂缓。
 
-当前没有活动 ExecPlan；下一项 Desktop MVP 工作等待优先级确认。
+当前活动计划是
+[`Material 3 生产 UI 重构与 Linux 自定义窗口框`](docs/execplans/active/0012-material3-production-ui-and-linux-window-chrome.md)。
+设计评审已通过；生产 React UI 正按 App Shell、Feature、Shared UI 和分层
+Design Token 拆分。Linux 使用应用内标题栏，避免系统原生外框与应用视觉割裂；
+Android Product Shell 已具备 Browser 与 APK Build Evidence，下一步是真机
+软键盘、中文 IME、横竖屏和生命周期验证。
 
 已完成计划：
+
+- [Linux/Android Material 3 设计评审网页](docs/execplans/completed/0011-linux-android-material3-design-review.md)
 
 - [`Phase 0：技术风险验证`](docs/execplans/completed/0001-phase-0-technical-validation.md)
 - [`Phase 1：Group 持久化与三态继承`](docs/execplans/completed/0002-group-persistence-and-inheritance.md)
@@ -146,6 +158,7 @@ AI Agent 或贡献者在修改本仓库前，应先阅读根目录的 [`AGENTS.m
 ```bash
 pnpm install
 pnpm dev
+pnpm dev:design # 独立 Linux/Android Material 3 设计评审网页
 pnpm test
 pnpm test:ssh:smoke
 pnpm test:e2e
@@ -156,6 +169,18 @@ pnpm qa:native:windows # Windows only
 pnpm check:android
 pnpm check:container:linux
 pnpm check:container:android
+```
+
+Browser QA 前端监听 `0.0.0.0:1420`，设计评审网页监听
+`0.0.0.0:1430`。本机可使用 `http://127.0.0.1:<port>`，其他设备使用开发机
+局域网 IP。设计评审网页支持界面总览、可点击流程、Linux/Android 双端对比、
+Light/Dark 和浏览器本地评审备注：
+
+```bash
+pnpm dev:design
+pnpm typecheck:design
+pnpm test:design
+pnpm build:design
 ```
 
 ## Linux 原生依赖

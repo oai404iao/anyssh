@@ -34,6 +34,7 @@ ADR 记录需要长期保留的架构决策。实现细节放在 `docs/design/`�
 | [0018](0018-port-forwarding-is-rust-owned-and-session-scoped.md) | Accepted | SSH Port Forwarding 由 Rust 拥有并绑定 Session |
 | [0019](0019-private-key-generation-and-export-stay-in-rust.md) | Accepted | Private Key 生成与导出留在 Rust/原生边界 |
 | [0020](0020-appearance-fonts-and-snippets-are-data-not-code.md) | Accepted | Appearance、Font 与 Snippet 是受限数据而不是可执行扩展 |
+| [0021](0021-material3-structured-client-shell-and-linux-window-chrome.md) | Proposed | Material 3 结构化客户端壳与 Linux 自定义窗口框 |
 
 Phase 0 已接受 ADR-0001、0002、0003、0006、0008、0009、0010 和 0011；
 Phase 1 Group、System Agent 和加密 Private Key Prompt 验证后已接受
@@ -43,6 +44,8 @@ Lifecycle 验证后已接受 ADR-0017；SSH Port Forwarding 验证后已接受 A
 Private Key Generation/Public Reveal/Encrypted Export 验证后已接受 ADR-0019；
 Terminal Appearance/Font/Snippet Productization 验证后已接受 ADR-0020。
 ADR-0004、0005 和 0007 因对应能力尚未完整实现而继续保持 Proposed。
+ADR-0021 在 Linux X11/Wayland Window Chrome 和 Android Product Shell 完成
+Runtime 验证前保持 Proposed。
 
 ## 文件规范
 

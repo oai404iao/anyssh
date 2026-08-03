@@ -23,8 +23,10 @@ React/xterm.js UI
 **Known Host Repository/Durable TOFU**、**Keyboard-interactive and OTP**、
 **Multi Tab Terminal and Session Lifecycle**、**SSH Port Forwarding** 和
 **Private Key Generation and Encrypted Export**、**Terminal Appearance, Font,
-and Snippet Productization**。当前没有活动 ExecPlan；下一项 Desktop MVP 工作
-等待项目负责人确认优先级。
+and Snippet Productization**。Linux/Android Material Design 3 设计评审已通过，
+当前活动计划为生产 UI 结构化重构和 Linux 自定义窗口框；在该计划完成前暂停继续
+堆叠产品功能。2026-08-03 已完成 Android Product Shell 的 Browser/Build
+实现，真机软键盘、中文 IME、横竖屏和生命周期 Evidence 仍待补齐。
 已经存在可构建的 React 前端、Rust Workspace、russh SSH/Jump Host、SQLCipher/
 PIN Vault、Tauri IPC、Host/Credential/Route Repository、Windows WebView2、
 OpenSSH Fixture、Playwright E2E、agent-browser 与原生 X11/Wayland 检查。
@@ -44,6 +46,7 @@ any_ssh/
 |   |-- src/                          # React、xterm.js、Browser QA Bridge
 |   |-- e2e/                          # Playwright 浏览器 E2E
 |   `-- src-tauri/                    # Tauri 壳、命令与 Session Registry
+|-- apps/design-review/               # 独立 Mock 产品设计评审网页
 |-- crates/
 |   |-- anyssh-app/                   # Application Service、Saved Host Plan -> SSH
 |   |-- anyssh-domain/                # Endpoint、TerminalSize 等领域值对象
@@ -104,6 +107,27 @@ Proposed ADR 是待验证方案，不是不可变事实。若 Phase 0 验证结�
 - JavaScript 包管理器是 pnpm；依赖命令从仓库根目录执行。
 - 只提交根目录 `pnpm-lock.yaml`，不要在子项目创建额外 lockfile。
 - `apps/client` 的包名是 `@anyssh/client`。
+- `apps/design-review` 的包名是 `@anyssh/design-review`；它只使用 Mock Data，
+  不得调用 Tauri IPC、真实 SSH、Vault、数据库或网络。
+- 生产 UI 按 `app/ -> features/ -> shared/` 方向组织；新页面状态和业务组件不得
+  继续堆入根 `App.tsx`。Typed Bridge 继续位于 `lib/`，样式进入 `styles/` 的
+  Token/Window/Shell/Feature 分层。
+- Repository Refresh/Appearance 生命周期位于
+  `apps/client/src/app/useRepositoryWorkspace.ts`；SSH Event/Connect/Auth/
+  Forward Runtime 位于 `apps/client/src/features/sessions/useSessionRuntime.ts`。
+  不得把这些 Orchestration 重新堆回根 `App.tsx`。
+- Android Product Shell 判定是 Android User Agent 或 Compact Media Query；
+  Android 横屏/平板不得因 CSS 宽度超过 780 px 回退到 Desktop Sidebar。
+- Inactive Terminal 和离开 Terminal Workspace 后的 Terminal 必须继续 Mounted
+  并完成 xterm Ack；Connection Panel 不跨 Workspace 保持 Mounted，避免隐藏的
+  Quick Password Form 与配置 Editor 同时进入 Accessibility/Label 查询。
+- Android Ctrl/Alt 辅助键只允许作为下一次输入的 Tab/Generation-scoped Latch；
+  Tab 切换、Close、新建、导航、Disconnect 或重连必须失效。辅助输入只进入当前
+  `sendSshInput`，不得进入全局状态、日志、Vault 或其他 Tab。
+- Tauri Window API 只允许出现在
+  `apps/client/src/app/shell/WindowTitlebar.tsx`。Linux 使用
+  `tauri.linux.conf.json` 关闭原生 Decorations；Windows 保持原生窗口框，
+  Android 不渲染 Desktop Titlebar。
 - Rust 使用根 Cargo Workspace 和 `Cargo.lock`。
 - `cargo check` 默认只检查核心 crate，避免没有 WebKitGTK 的环境误编译 Tauri。
 - Tauri 原生检查使用 `cargo check --package anyssh-client`。
@@ -152,12 +176,24 @@ Proposed ADR 是待验证方案，不是不可变事实。若 Phase 0 验证结�
 
 所有命令从仓库根目录执行。
 
+所有供人工访问的开发、预览和 Browser QA Web 服务默认监听 `0.0.0.0`，不要只
+绑定 `127.0.0.1`。本机自动化仍可通过 `127.0.0.1` 访问；SSH Fixture、端口转发
+和安全边界测试中明确要求 Loopback 的 Listener 不受此规则影响。
+
 ```bash
 # 安装
 pnpm install
 
-# Browser QA 前端开发服务，固定端口 1420
+# Browser QA 前端开发服务，监听 0.0.0.0，固定端口 1420
 pnpm dev
+
+# Linux/Android Material 3 设计评审网页，监听 0.0.0.0，固定端口 1430
+pnpm dev:design
+pnpm typecheck:design
+pnpm test:design
+pnpm lint:design
+pnpm build:design
+pnpm format:check:design
 
 # Tauri 原生窗口；需要平台系统依赖
 pnpm dev:native
@@ -222,6 +258,9 @@ Evidence 复制回仓库。
 ### 单元与静态检查
 
 - React/Bridge：Vitest，路径 `apps/client/src/**/*.test.{ts,tsx}`。
+- 设计评审网页：Vitest，路径
+  `apps/design-review/src/**/*.test.{ts,tsx}`；评审状态只能保存在浏览器
+  `localStorage`。
 - Rust：普通单元测试和 integration test。
 - Playwright 文件必须放在 `apps/client/e2e/`，不得被 Vitest 收集。
 
@@ -351,6 +390,8 @@ Challenge、Close-during-connect、单 Tab Close 和 8 Tab 上限。
 Theme/Font/Snippet 变更至少覆盖 Dark/Light/System、Terminal Palette、Desktop/
 Mobile Font Preview、Snippet Variable、Multi-line Confirmation、Inactive Tab
 保持 Mounted 和 Stale/Closed Session 拒绝。
+Android Product Shell 变更必须使用 Android User Agent 覆盖横屏宽度，不能只用
+390 px CSS Viewport 代替平台判定。
 
 ### agent-browser 真实检查
 
@@ -366,6 +407,9 @@ pnpm qa:browser
 - 覆盖 Host Key Dialog、密码显示/隐藏、终端真实键盘输入和 Disconnect。
 - Multi Tab 变更必须实际创建两个 Preview Tab，在 Desktop/Mobile 截图中检查
   Tab Strip，并关闭一个 Tab 后继续向另一个 Terminal 输入。
+- Android Product Shell 变更必须实际打开 Forwarding Panel 和 More Sheet，
+  检查全高 Terminal、Bottom Navigation、辅助键盘、Ctrl/Alt Latch 与
+  Keyboard Action 确实聚焦 xterm。
 - 检查桌面与移动视口。
 - 检查 Browser Errors。
 - Theme/Font/Snippet 变更必须实际切换 App/Terminal Theme、检查 Font/Unicode
@@ -600,9 +644,12 @@ Clear
 
 ## 当前下一步
 
-当前没有活动 ExecPlan。开始新的多步骤能力前，先由项目负责人在 Desktop
-Platform Slot、OpenSSH `known_hosts` Import/Export 和 Release Packaging 之间
-确认优先级，然后创建活动计划。不要未经确认直接跳到 WebDAV、SFTP、Runbook、
+当前活动 ExecPlan 为
+`docs/execplans/active/0012-material3-production-ui-and-linux-window-chrome.md`。
+项目负责人已确认设计评审通过；当前先完成生产 UI Feature 拆分、Material 3
+Token、Linux Window Chrome 和 Android Product Shell。Browser、X11、Wayland
+和 Android Build 已通过；当前下一步是真实 Android 软键盘、中文 IME、横竖屏、
+锁屏/后台生命周期和长输出 Evidence。不要提前跳到 WebDAV、SFTP、Runbook、
 Plugin 或高级脚本系统。
 
 ## 关键文件
@@ -612,7 +659,18 @@ Plugin 或高级脚本系统。
 | 根开发命令 | `package.json` |
 | Rust Workspace | `Cargo.toml` |
 | React 入口 | `apps/client/src/App.tsx` |
-| 配置工作区 | `apps/client/src/components/ConfigurationWorkspace.tsx` |
+| 生产 App Frame | `apps/client/src/app/AppFrame.tsx` |
+| Repository Workspace Hook | `apps/client/src/app/useRepositoryWorkspace.ts` |
+| Linux Window Titlebar | `apps/client/src/app/shell/WindowTitlebar.tsx` |
+| Android Bottom Navigation | `apps/client/src/app/shell/MobileNavigation.tsx` |
+| Material 3 样式入口 | `apps/client/src/styles/index.css` |
+| 设计评审入口 | `apps/design-review/src/App.tsx` |
+| 配置工作区组合 | `apps/client/src/features/configuration/ConfigurationWorkspace.tsx` |
+| Host Product Workspace | `apps/client/src/features/hosts/HostWorkspace.tsx` |
+| Session Product Workspace | `apps/client/src/features/sessions/SessionWorkspace.tsx` |
+| Session Runtime Hook | `apps/client/src/features/sessions/useSessionRuntime.ts` |
+| Android Terminal Controls | `apps/client/src/features/sessions/TerminalMobileControls.tsx` |
+| Terminal Modifier Mapping | `apps/client/src/features/sessions/terminal-input.ts` |
 | Terminal Adapter | `apps/client/src/components/TerminalPane.tsx` |
 | SSH Bridge | `apps/client/src/lib/ssh-bridge.ts` |
 | Credential Bridge | `apps/client/src/lib/credential-bridge.ts` |
@@ -638,6 +696,7 @@ Plugin 或高级脚本系统。
 | SSH Port Forwarding Design | `docs/design/ssh-port-forwarding-v1.md` |
 | Private Key Generation/Export Design | `docs/design/private-key-generation-and-encrypted-export-v1.md` |
 | Appearance/Font/Snippet Design | `docs/design/terminal-appearance-font-and-snippet-v1.md` |
+| Material 3 Product Shell Design | `docs/design/material3-production-ui-shell-v1.md` |
 | OpenSSH Known Hosts Reference | `docs/reference/openssh-known-hosts-baseline-2026.md` |
 | Threat Model | `docs/design/threat-model-v1.md` |
 | SSH Core | `crates/anyssh-ssh/src/lib.rs` |
@@ -654,8 +713,8 @@ Plugin 或高级脚本系统。
 | 总体技术设计 | `docs/design/technical-architecture-2026.md` |
 | ADR 索引 | `docs/adr/README.md` |
 | ExecPlan 规范 | `docs/execplans/README.md` |
-| 当前活动计划 | 无；下一项工作等待优先级确认 |
-| 最新完成计划 | `docs/execplans/completed/0010-terminal-appearance-font-and-snippet-productization.md` |
+| 当前活动计划 | `docs/execplans/active/0012-material3-production-ui-and-linux-window-chrome.md` |
+| 最新完成计划 | `docs/execplans/completed/0011-linux-android-material3-design-review.md` |
 | Phase 0 结果 | `docs/execplans/completed/0001-phase-0-technical-validation.md` |
 | Group 结果 | `docs/execplans/completed/0002-group-persistence-and-inheritance.md` |
 | System Agent 结果 | `docs/execplans/completed/0003-system-ssh-agent-authentication.md` |

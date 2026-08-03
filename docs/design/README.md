@@ -37,6 +37,8 @@ Design 文档描述系统如何实现，包括组件、数据流、接口、安�
 - [terminal-appearance-font-and-snippet-v1.md](terminal-appearance-font-and-snippet-v1.md)：
   App/Terminal Theme、System/Imported Font、Snippet Template 和 Schema v8
   边界。
+- [material3-production-ui-shell-v1.md](material3-production-ui-shell-v1.md)：
+  生产 Material 3 Token、Feature 目录、Linux Window Chrome 和渐进迁移边界。
 
 ## 规则
 

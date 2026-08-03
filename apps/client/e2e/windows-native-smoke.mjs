@@ -137,6 +137,14 @@ try {
 async function createVaultAndRepository(targetPage) {
   await assert(
     targetPage.getByRole("heading", {
+      name: "Your servers, securely within reach.",
+    }),
+  ).toBeVisible();
+  await capture(targetPage, "00-welcome.png", "00-welcome.txt");
+  await targetPage.getByRole("button", { name: "Get started" }).click();
+
+  await assert(
+    targetPage.getByRole("heading", {
       name: "Create your encrypted Vault",
     }),
   ).toBeVisible();
@@ -236,14 +244,12 @@ async function createVaultAndRepository(targetPage) {
     .locator(".resource-card")
     .filter({ hasText: "Windows QA agent host" });
   await assert(agentHost).toContainText("System Agent");
-  await agentHost.getByRole("button", { name: "Open" }).click();
-  await assert(
-    targetPage.getByRole("heading", {
-      level: 1,
-      name: "Windows QA agent host",
-    }),
-  ).toBeVisible();
-  await targetPage.getByRole("button", { name: "Connect saved Host" }).click();
+  await agentHost.getByRole("button", { name: "Details" }).click();
+  const agentHostDetail = targetPage.getByRole("region", {
+    name: "Windows QA agent host",
+  });
+  await assert(agentHostDetail).toBeVisible();
+  await agentHostDetail.getByRole("button", { name: "Connect" }).click();
   const hostKeyDialog = targetPage.getByRole("dialog", {
     name: "Verify server identity",
   });

@@ -26,7 +26,7 @@ fi
 if ! curl --fail --silent "$URL" >/dev/null 2>&1; then
   (
     cd "$ROOT_DIR/apps/client"
-    exec pnpm exec vite --host 127.0.0.1
+    exec pnpm exec vite --host 0.0.0.0
   ) >"$OUTPUT_DIR/vite.log" 2>&1 &
   SERVER_PID=$!
 
@@ -42,6 +42,20 @@ if ! curl --fail --silent "$URL" >/dev/null 2>&1; then
   echo "AnySSH dev server did not become ready at $URL." >&2
   exit 1
 fi
+
+wait_for_interactive_text() {
+  local expected="$1"
+  local snapshot=""
+  for _ in $(seq 1 60); do
+    snapshot="$(agent-browser --session "$SESSION" snapshot -i)"
+    if grep -F "$expected" <<<"$snapshot" >/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "Timed out waiting for interactive text: $expected" >&2
+  return 1
+}
 
 agent-browser --session "$SESSION" open "$URL"
 agent-browser --session "$SESSION" wait --load networkidle
@@ -117,16 +131,25 @@ agent-browser --session "$SESSION" wait 400
 agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/03-connected-unicode.png"
 
+agent-browser --session "$SESSION" scrollintoview \
+  ".forwarding-form button[type=submit]"
 agent-browser --session "$SESSION" find role button click \
   --name "Start forward"
+wait_for_interactive_text "Stop local forward on port"
 agent-browser --session "$SESSION" select \
   '[aria-label="Port forward type"]' "dynamic"
+agent-browser --session "$SESSION" scrollintoview \
+  ".forwarding-form button[type=submit]"
 agent-browser --session "$SESSION" find role button click \
   --name "Start forward"
+wait_for_interactive_text "Stop dynamic forward on port"
 agent-browser --session "$SESSION" select \
   '[aria-label="Port forward type"]' "remote"
+agent-browser --session "$SESSION" scrollintoview \
+  ".forwarding-form button[type=submit]"
 agent-browser --session "$SESSION" find role button click \
   --name "Start forward"
+wait_for_interactive_text "Stop remote forward on port"
 agent-browser --session "$SESSION" snapshot -i \
   >"$OUTPUT_DIR/03a-forwarding-snapshot.txt"
 for kind in local dynamic remote; do
@@ -141,10 +164,15 @@ agent-browser --session "$SESSION" scrollintoview \
 agent-browser --session "$SESSION" screenshot \
   "$OUTPUT_DIR/screenshots/03a-forwarding-desktop.png"
 agent-browser --session "$SESSION" set viewport 390 844
+agent-browser --session "$SESSION" wait 150
+agent-browser --session "$SESSION" find role button click \
+  --name "Forwarding" --exact
 agent-browser --session "$SESSION" scrollintoview \
   ".forwarding-list li:last-child"
 agent-browser --session "$SESSION" screenshot \
   "$OUTPUT_DIR/screenshots/03a-forwarding-mobile.png"
+agent-browser --session "$SESSION" find role button click \
+  --name "Sessions" --exact
 agent-browser --session "$SESSION" set viewport 1440 900
 
 agent-browser --session "$SESSION" find role button click \
@@ -328,6 +356,44 @@ agent-browser --session "$SESSION" set viewport 390 844
 agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/04-mobile-connected.png"
 agent-browser --session "$SESSION" snapshot -i >"$OUTPUT_DIR/04-mobile-snapshot.txt"
+if [[ "$(agent-browser --session "$SESSION" get count \
+  '[aria-label="SSH auxiliary keyboard"]')" != "1" ]]; then
+  echo "The Android Terminal shell did not expose its auxiliary keyboard." >&2
+  exit 1
+fi
+for control in \
+  "Toggle Control modifier" \
+  "Toggle Alt modifier" \
+  "Send Escape" \
+  "Send Tab" \
+  "Send Arrow Up" \
+  "Terminal actions"; do
+  if ! grep -F "$control" "$OUTPUT_DIR/04-mobile-snapshot.txt" >/dev/null; then
+    echo "The Android Terminal shell did not expose $control." >&2
+    exit 1
+  fi
+done
+agent-browser --session "$SESSION" find role button click \
+  --name "Toggle Control modifier"
+if [[ "$(agent-browser --session "$SESSION" get attr \
+  '[aria-label="Toggle Control modifier"]' aria-pressed)" != "true" ]]; then
+  echo "The Android Control modifier did not latch." >&2
+  exit 1
+fi
+if [[ "$(agent-browser --session "$SESSION" eval \
+  'document.activeElement?.classList.contains("xterm-helper-textarea")')" != "true" ]]; then
+  echo "The Android Control modifier did not return focus to xterm." >&2
+  exit 1
+fi
+agent-browser --session "$SESSION" find role button click \
+  --name "Toggle Control modifier"
+agent-browser --session "$SESSION" find role button click \
+  --name "Keyboard" --exact
+if [[ "$(agent-browser --session "$SESSION" eval \
+  'document.activeElement?.classList.contains("xterm-helper-textarea")')" != "true" ]]; then
+  echo "The Android Keyboard action did not focus xterm." >&2
+  exit 1
+fi
 
 agent-browser --session "$SESSION" set viewport 1440 900
 agent-browser --session "$SESSION" find role button click --name "Disconnect"
@@ -356,6 +422,12 @@ agent-browser --session "$SESSION" snapshot -i \
 agent-browser --session "$SESSION" set viewport 390 844
 agent-browser --session "$SESSION" screenshot --full \
   "$OUTPUT_DIR/screenshots/05c-known-hosts-mobile.png"
+agent-browser --session "$SESSION" find role button click --name "More" --exact
+agent-browser --session "$SESSION" wait --text "Jump routes"
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/05c2-mobile-more-navigation.png"
+agent-browser --session "$SESSION" click \
+  ".mobile-navigation-sheet header > button"
 agent-browser --session "$SESSION" set viewport 1440 900
 agent-browser --session "$SESSION" find role button click --name "Forget trust…"
 agent-browser --session "$SESSION" wait --text \
@@ -535,8 +607,34 @@ agent-browser --session "$SESSION" fill \
   ".resource-dialog input[type=number]" "2202"
 agent-browser --session "$SESSION" select \
   ".resource-dialog select" "browser-group-3"
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/07c-host-editor-desktop.png"
+agent-browser --session "$SESSION" set viewport 390 844
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/07c-host-editor-mobile.png"
+agent-browser --session "$SESSION" set viewport 1440 900
 agent-browser --session "$SESSION" find role button click --name "Save Host"
 agent-browser --session "$SESSION" wait --text "Browser QA target"
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/07c-hosts-desktop.png"
+agent-browser --session "$SESSION" fill ".host-search input" \
+  "Browser QA target"
+if [[ "$(agent-browser --session "$SESSION" eval \
+  'document.querySelectorAll(".host-resource-card").length')" != "1" ]]; then
+  echo "Host search did not reduce the product grid to one matching Host." >&2
+  exit 1
+fi
+agent-browser --session "$SESSION" click \
+  ".host-resource-card .resource-actions button:first-child"
+agent-browser --session "$SESSION" wait --text "Connect directly"
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/07d-host-detail-desktop.png"
+agent-browser --session "$SESSION" set viewport 390 844
+agent-browser --session "$SESSION" screenshot --full \
+  "$OUTPUT_DIR/screenshots/07e-host-detail-mobile.png"
+agent-browser --session "$SESSION" set viewport 1440 900
+agent-browser --session "$SESSION" find role button click --name "Close details"
+agent-browser --session "$SESSION" fill ".host-search input" ""
 
 agent-browser --session "$SESSION" click ".primary-nav .nav-item:nth-child(5)"
 agent-browser --session "$SESSION" find role button click --name "New route"
@@ -644,6 +742,9 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
   full Preview/Confirmation and reached only the selected connected Terminal.
 - Compact 1024x768 layout rendered with an icon-only sidebar.
 - Responsive layout rendered at 390x844.
+- The Android Product Shell exposed Bottom Navigation, a More management
+  sheet, full-height Terminal, SSH auxiliary keys, latched Ctrl/Alt controls,
+  Forwarding switcher, and an xterm keyboard-focus action.
 - Disconnect returned the UI to the disconnected state.
 - Known Hosts displayed the trusted Endpoint, Algorithm, and SHA-256 Fingerprint
   at desktop and mobile widths.
@@ -666,6 +767,12 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
   Jump Route Inherit, and Jump Route Clear without exposing the submitted
   password.
 - Host creation joined the child Group and inherited its Credential by opaque ID.
+- Host Editor grouped target, authentication, and advanced route fields into
+  three bounded sections at desktop/mobile widths.
+- Host search reduced the Material 3 grid to the matching saved Host; the
+  desktop/mobile Detail view exposed only connection-plan metadata and a
+  deliberate session action without assembling a saved connection plan in
+  Browser QA.
 - Jump Route creation added two Hosts, moved the second Host up, and preserved
   the visible order.
 - Deleting a Jump Route still referenced by a Group showed an in-use error.
@@ -693,6 +800,7 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
 - \`screenshots/05-disconnected.png\`
 - \`screenshots/05b-known-hosts.png\`
 - \`screenshots/05c-known-hosts-mobile.png\`
+- \`screenshots/05c2-mobile-more-navigation.png\`
 - \`screenshots/05d-known-hosts-forgotten.png\`
 - \`screenshots/05e-tofu-after-forget.png\`
 - \`screenshots/06-credentials.png\`
@@ -704,6 +812,11 @@ cat >"$OUTPUT_DIR/report.md" <<EOF
 - \`screenshots/06e-interactive-connected.png\`
 - \`screenshots/07-groups.png\`
 - \`screenshots/07b-groups-mobile.png\`
+- \`screenshots/07c-host-editor-desktop.png\`
+- \`screenshots/07c-host-editor-mobile.png\`
+- \`screenshots/07c-hosts-desktop.png\`
+- \`screenshots/07d-host-detail-desktop.png\`
+- \`screenshots/07e-host-detail-mobile.png\`
 - \`screenshots/08-route-desktop.png\`
 - \`screenshots/09-route-compact.png\`
 - \`screenshots/10-route-mobile.png\`

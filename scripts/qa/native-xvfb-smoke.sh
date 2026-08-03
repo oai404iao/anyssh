@@ -330,6 +330,9 @@ if [[ "$WINDOW_READY" -ne 1 ]]; then
 fi
 
 sleep 3
+"$DRIVER" probe "$RUN_DIR/00-welcome.bmp" >"$RUN_DIR/windows.txt"
+"$DRIVER" click 640 570
+sleep 1
 "$DRIVER" probe "$RUN_DIR/01-vault-create.bmp" >"$RUN_DIR/windows.txt"
 "$DRIVER" click 640 430
 sleep 0.25
@@ -371,7 +374,7 @@ fi
 
 sleep 1
 "$DRIVER" probe "$RUN_DIR/03-native-ready.bmp" >/dev/null
-"$DRIVER" click 1208 44
+"$DRIVER" click 1208 66
 sleep 1
 "$DRIVER" probe "$RUN_DIR/04-vault-locked.bmp" >/dev/null
 "$DRIVER" click 640 460
@@ -829,7 +832,7 @@ COMMAND_SUCCEEDED=0
 for _ in $(seq 1 20); do
   # Before authentication this point is the Trust button. Once connected it
   # is harmless terminal space and helps preserve terminal focus.
-  "$DRIVER" click 700 532
+  "$DRIVER" click 700 595
   sleep 0.5
   "$DRIVER" click 500 260
   "$DRIVER" type "touch /tmp/anyssh-native-ok"
@@ -1096,7 +1099,7 @@ if grep -R -a -F --exclude-dir=font-assets \
   exit 1
 fi
 
-"$DRIVER" click 1117 44
+"$DRIVER" click 1117 66
 sleep 1
 "$DRIVER" probe "$RUN_DIR/15-disconnected.bmp" >/dev/null
 for port in "$LOCAL_FORWARD_PORT" "$DYNAMIC_FORWARD_PORT"; do
@@ -1259,7 +1262,7 @@ if [[ "$FIRST_TAB_SURVIVED_CLOSE" -ne 1 ]]; then
 fi
 "$DRIVER" probe "$RUN_DIR/16c-first-tab-after-close.bmp" >/dev/null
 
-"$DRIVER" click 1117 44
+"$DRIVER" click 1117 66
 sleep 1
 
 "$DRIVER" click 100 340
@@ -1312,7 +1315,7 @@ scroll_connection_panel_top
 "$DRIVER" click 1100 495
 sleep 1
 "$DRIVER" probe "$RUN_DIR/20-tofu-after-forget.bmp" >/dev/null
-"$DRIVER" click 700 532
+"$DRIVER" click 700 595
 docker exec "$CONTAINER_NAME" rm -f /tmp/anyssh-native-retrusted-ok
 RETRUSTED_CONNECTION_SUCCEEDED=0
 for attempt in 1 2 3; do
@@ -1344,7 +1347,7 @@ if [[ "$RETRUSTED_CONNECTION_SUCCEEDED" -ne 1 ]]; then
   "$DRIVER" probe "$RUN_DIR/failed-retrusted-connection.bmp" >/dev/null || true
   exit 1
 fi
-"$DRIVER" click 1117 44
+"$DRIVER" click 1117 66
 sleep 1
 
 docker exec "$CONTAINER_NAME" sh -c \
@@ -1373,7 +1376,7 @@ if docker exec "$CONTAINER_NAME" \
   echo "The rotated Host Key bypassed the hard-block dialog." >&2
   exit 1
 fi
-"$DRIVER" click 455 590
+"$DRIVER" click 455 620
 sleep 1
 
 scroll_connection_panel_top
@@ -1390,7 +1393,7 @@ scroll_connection_panel_top
 "$DRIVER" enter
 sleep 2
 "$DRIVER" probe "$RUN_DIR/22-interactive-host-key.bmp" >/dev/null
-"$DRIVER" click 700 532
+"$DRIVER" click 700 595
 sleep 2
 "$DRIVER" probe "$RUN_DIR/23-interactive-challenge.bmp" >/dev/null
 "$DRIVER" type "$INTERACTIVE_RESPONSE"
@@ -1482,7 +1485,7 @@ if ! ss -ltn 2>/dev/null |
   exit 1
 fi
 "$DRIVER" probe "$RUN_DIR/25a-multi-tab-before-vault-lock.bmp" >/dev/null
-"$DRIVER" click 1208 44
+"$DRIVER" click 1208 66
 sleep 1
 "$DRIVER" probe "$RUN_DIR/26-vault-locked-after-session.bmp" >/dev/null
 if ss -ltn 2>/dev/null |
@@ -1522,6 +1525,8 @@ cat >"$RUN_DIR/report.md" <<EOF
 
 - Tauri launched a mapped X11 window named \`AnySSH\` without a desktop environment.
 - WebKitGTK loaded the React/xterm.js application through the native runtime.
+- First launch rendered the product Welcome before local PIN setup without
+  exposing cryptographic implementation names.
 - A PIN Slot created a SQLCipher Vault inside an isolated app-data directory.
 - The test PIN was absent from the Bootstrap, database, WAL, and sidecar files.
 - The SQLCipher database did not expose the plaintext SQLite file header.
@@ -1592,6 +1597,7 @@ cat >"$RUN_DIR/report.md" <<EOF
 
 ## Evidence
 
+- \`00-welcome.bmp\`
 - \`01-vault-create.bmp\`
 - \`02-vault-pin-entered.bmp\`
 - \`03-native-ready.bmp\`

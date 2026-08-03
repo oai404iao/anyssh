@@ -1,0 +1,152 @@
+@font-face {
+  font-family: "AnySSH Nerd Mono";
+  src: url("../assets/fonts/JetBrainsMonoNerdFontMono-Regular.ttf")
+    format("truetype");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400;
+}
+
+:root {
+  color: #e4eae6;
+  background: #0e1512;
+  color-scheme: dark;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --md-sys-color-primary: #80dac6;
+  --md-sys-color-on-primary: #00382f;
+  --md-sys-color-primary-container: #005045;
+  --md-sys-color-on-primary-container: #9cf7e1;
+  --md-sys-color-secondary: #b1ccc3;
+  --md-sys-color-surface: #0e1512;
+  --md-sys-color-surface-container-low: #151c19;
+  --md-sys-color-surface-container: #19211e;
+  --md-sys-color-surface-container-high: #202825;
+  --md-sys-color-surface-container-highest: #2a322e;
+  --md-sys-color-on-surface: #e4eae6;
+  --md-sys-color-on-surface-variant: #bec9c4;
+  --md-sys-color-outline: #89938f;
+  --md-sys-color-outline-variant: #3f4945;
+  --md-sys-color-error: #ffb4ab;
+  --md-sys-color-warning: #f0bd72;
+  --md-sys-color-success: #80dac6;
+  --md-sys-color-scrim: #000000;
+  --md-sys-shape-extra-small: 4px;
+  --md-sys-shape-small: 8px;
+  --md-sys-shape-medium: 12px;
+  --md-sys-shape-large: 16px;
+  --md-sys-shape-extra-large: 28px;
+  --md-sys-shape-full: 999px;
+  --md-sys-motion-short: 120ms;
+  --md-sys-motion-medium: 180ms;
+  --md-sys-motion-emphasized: cubic-bezier(0.2, 0, 0, 1);
+  --background: var(--md-sys-color-surface);
+  --panel: var(--md-sys-color-surface-container);
+  --panel-elevated: var(--md-sys-color-surface-container-high);
+  --panel-soft: var(--md-sys-color-surface-container-highest);
+  --border: color-mix(
+    in srgb,
+    var(--md-sys-color-outline-variant) 72%,
+    transparent
+  );
+  --border-strong: color-mix(
+    in srgb,
+    var(--md-sys-color-outline) 56%,
+    transparent
+  );
+  --text: var(--md-sys-color-on-surface);
+  --text-muted: var(--md-sys-color-on-surface-variant);
+  --cyan: var(--md-sys-color-primary);
+  --cyan-strong: var(--md-sys-color-primary);
+  --violet: #c6bfff;
+  --danger: var(--md-sys-color-error);
+  --warning: var(--md-sys-color-warning);
+}
+
+:root[data-app-theme="light"] {
+  color: #18201d;
+  background: #f5fbf8;
+  color-scheme: light;
+  --md-sys-color-primary: #006b5c;
+  --md-sys-color-on-primary: #ffffff;
+  --md-sys-color-primary-container: #9cf7e1;
+  --md-sys-color-on-primary-container: #00201a;
+  --md-sys-color-secondary: #4c635c;
+  --md-sys-color-surface: #f5fbf8;
+  --md-sys-color-surface-container-low: #eff5f2;
+  --md-sys-color-surface-container: #e9efec;
+  --md-sys-color-surface-container-high: #e3eae6;
+  --md-sys-color-surface-container-highest: #dde4e0;
+  --md-sys-color-on-surface: #18201d;
+  --md-sys-color-on-surface-variant: #3f4945;
+  --md-sys-color-outline: #6f7975;
+  --md-sys-color-outline-variant: #bec9c4;
+  --md-sys-color-error: #ba1a1a;
+  --md-sys-color-warning: #815600;
+  --md-sys-color-success: #006b5c;
+  --background: var(--md-sys-color-surface);
+  --panel: #ffffff;
+  --panel-elevated: var(--md-sys-color-surface-container-low);
+  --panel-soft: var(--md-sys-color-surface-container);
+  --border: color-mix(
+    in srgb,
+    var(--md-sys-color-outline-variant) 72%,
+    transparent
+  );
+  --border-strong: color-mix(
+    in srgb,
+    var(--md-sys-color-outline) 52%,
+    transparent
+  );
+  --text: var(--md-sys-color-on-surface);
+  --text-muted: var(--md-sys-color-on-surface-variant);
+  --cyan: var(--md-sys-color-primary);
+  --cyan-strong: var(--md-sys-color-primary);
+  --violet: #6557d9;
+  --danger: var(--md-sys-color-error);
+  --warning: var(--md-sys-color-warning);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-width: 320px;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 3px;
+}

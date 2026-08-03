@@ -125,7 +125,7 @@ State 编码：
 - `crates/anyssh-app/src/lib.rs`
 - `apps/client/src-tauri/src/lib.rs`
 - `apps/client/src/lib/host-bridge.ts`
-- `apps/client/src/components/ConfigurationWorkspace.tsx`
+- `apps/client/src/features/groups/GroupWorkspace.tsx`
 
 ## UI
 

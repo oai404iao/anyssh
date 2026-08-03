@@ -1,5 +1,25 @@
 import { expect, test } from "@playwright/test";
 
+test("keeps the Android product shell in landscape by platform identity", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    userAgent:
+      "Mozilla/5.0 (Linux; Android 16; Pixel 9) AppleWebKit/537.36 Chrome/140 Mobile Safari/537.36",
+    viewport: { width: 844, height: 390 },
+  });
+  const page = await context.newPage();
+  await page.goto("/");
+
+  await expect(page.locator(".app-shell")).toHaveClass(/compact-product-shell/);
+  await expect(
+    page.getByRole("navigation", { name: "Terminal actions" }),
+  ).toBeVisible();
+  await expect(page.locator(".sidebar")).toBeHidden();
+
+  await context.close();
+});
+
 test("connects through the host-key preview flow", async ({ page }) => {
   await page.goto("/");
 

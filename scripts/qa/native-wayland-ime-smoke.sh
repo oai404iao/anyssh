@@ -391,8 +391,11 @@ if ! grep -Eq '^[[:space:]]+libpinyin[[:space:]]' "$RUN_DIR/ibus-engines.txt"; t
 fi
 
 sleep 3
-"$DRIVER" probe "$RUN_DIR/01-vault-create.bmp" >"$RUN_DIR/windows.txt"
+"$DRIVER" probe "$RUN_DIR/00-welcome.bmp" >"$RUN_DIR/windows.txt"
 set_ibus_engine "xkb:us::eng"
+"$DRIVER" click 640 570
+sleep 1
+"$DRIVER" probe "$RUN_DIR/01-vault-create.bmp" >"$RUN_DIR/windows.txt"
 "$DRIVER" click 640 430
 sleep 0.5
 "$DRIVER" type "246810"
@@ -443,7 +446,7 @@ sleep 0.5
 "$DRIVER" click 1100 495
 sleep 1
 "$DRIVER" probe "$RUN_DIR/03-host-key-dialog.bmp" >/dev/null
-"$DRIVER" click 700 532
+"$DRIVER" click 700 595
 sleep 3
 
 "$DRIVER" click 500 260
@@ -717,7 +720,7 @@ if grep -R -a -F --exclude-dir=font-assets \
   exit 1
 fi
 
-"$DRIVER" click 1117 44
+"$DRIVER" click 1117 66
 sleep 1
 "$DRIVER" probe "$RUN_DIR/05-disconnected.bmp" >/dev/null
 for port in "$LOCAL_FORWARD_PORT" "$DYNAMIC_FORWARD_PORT"; do
@@ -793,7 +796,7 @@ sleep 0.5
 "$DRIVER" enter
 sleep 2
 "$DRIVER" probe "$RUN_DIR/06a-multi-tab-interactive-host-key.bmp" >/dev/null
-"$DRIVER" click 700 532
+"$DRIVER" click 700 595
 sleep 2
 "$DRIVER" probe "$RUN_DIR/06b-multi-tab-interactive-challenge.bmp" >/dev/null
 "$DRIVER" type "$INTERACTIVE_RESPONSE"
@@ -866,7 +869,7 @@ if [[ "$FIRST_TAB_SURVIVED_CLOSE" -ne 1 ]]; then
   exit 1
 fi
 "$DRIVER" probe "$RUN_DIR/06d-wayland-first-tab-after-close.bmp" >/dev/null
-"$DRIVER" click 1117 44
+"$DRIVER" click 1117 66
 sleep 1
 "$DRIVER" probe "$RUN_DIR/07-disconnected-after-reconnect.bmp" >/dev/null
 
@@ -898,6 +901,8 @@ cat >"$RUN_DIR/report.md" <<EOF
 - AnySSH launched with \`GDK_BACKEND=wayland\` and no \`DISPLAY\` environment variable.
 - WebKitGTK rendered the native Tauri application on a real Wayland socket.
 - XTest input entered Weston and reached the native Wayland WebView.
+- First launch rendered the product Welcome before local PIN setup without
+  exposing cryptographic implementation names.
 - Native Wayland input created an encrypted SQLCipher Vault.
 - The Appearance workspace rendered App Theme, Terminal Theme, Font, size,
   line-height, ligature, and ambiguous-width controls. Returning to Terminal
@@ -929,6 +934,7 @@ cat >"$RUN_DIR/report.md" <<EOF
 
 ## Evidence
 
+- \`00-welcome.bmp\`
 - \`01-vault-create.bmp\`
 - \`02-wayland-ready.bmp\`
 - \`02a-appearance-settings.bmp\`

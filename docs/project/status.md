@@ -1,10 +1,16 @@
 # 项目状态
 
-> 更新日期：2026-07-29
+> 更新日期：2026-08-03
 
 ## 当前阶段
 
-**Phase 0 completed; Phase 1 Desktop MVP in progress**
+**Phase 0 completed; Phase 1 Core completed in depth; Material 3 production UI
+refactor in progress**
+
+2026-08-02，项目负责人明确首要产品交付平台为 Linux 与 Android，界面采用
+Material Design 3，并确认独立设计评审网页通过。当前暂停继续堆叠产品功能，
+优先把评审结果迁移到生产 React UI、完成结构化代码组织、Linux 自定义窗口框和
+Android Product Shell。
 
 当前仓库已完成：
 
@@ -207,18 +213,43 @@
   - Windows：`04496523aae3835a6a0c0e36e298faca5eb7550262a2336909f5337070b810d6`
 - ADR-0020 已接受，Terminal Appearance, Font, and Snippet Productization
   ExecPlan 已完成。
+- Linux/Android Material Design 3 评审网页已完成 18 个界面、5 条流程和
+  本地评审记录；项目负责人于 2026-08-02 确认评审通过。
+- Proposed ADR-0021、Material 3 Production UI Shell Design 和 ExecPlan 0012
+  已创建。生产 UI 已建立 `app/`、`features/`、`shared/`、`styles/` 分层，
+  `App.tsx` 从约 2,431 行降至 696 行。Repository Lifecycle 已进入
+  `app/useRepositoryWorkspace.ts`，SSH Session/Event/Auth/Forward Runtime
+  已进入 `features/sessions/useSessionRuntime.ts`。
+- 原 2,106 行 `ConfigurationWorkspace.tsx` 已拆为 Configuration
+  Orchestrator、共享 Manager Primitive 和 Host/Group/Credential/Route/
+  Known Host Feature；当前最大拆分 Feature 为 714 行。
+- Vault 已迁移 Welcome/Create/Unlock，产品首屏不再暴露 Argon2id、SQLCipher
+  等实现名词。Host 已迁移搜索、Group Filter、Card、Connection Plan Detail
+  和三段式 Editor；Host Key、Changed Key 和 Keyboard-interactive Dialog
+  已使用新的 Material 3 呈现。
+- 原 `App.css` 已拆分为 Material 3 Token、Window、Shell、Terminal、Dialog、
+  Management、Appearance 和 Responsive 样式；Linux Platform Config 关闭
+  原生 Decorations，并只为 `main` Window 授予 Drag/Minimize/Maximize/Close。
+- Android/Compact Product Shell 已实现五项 Bottom Navigation、More 管理
+  Sheet、全高 Terminal、Session Context Action、Esc/Ctrl/Alt/Tab/方向键辅助栏
+  和 xterm Soft Keyboard Focus。Android UA 在横屏宽度超过 780 px 时仍保持
+  Product Shell；真机 Runtime Evidence 尚未完成。
+- Browser 14 个 Playwright E2E、39 个 Frontend Test、agent-browser 全流程、
+  Linux X11 Native、无 `DISPLAY` Wayland/IBus 和 Android ARM64 Build 已通过。
+  X11/Wayland 截图均显示应用内 Window Titlebar，不再依赖 GNOME 原生大白框。
 - CI 工作流。
 
 当前仓库尚未完成：
 
 - OpenSSH `known_hosts` 导入/导出。
 - Linux 真实桌面、GPU/WebGL 回退与更多桌面环境检查。
-- Android Runtime、Content URI、软键盘与生命周期验证。
+- Android 真机 Runtime、Content URI、系统软键盘/中文 IME 与生命周期验证。
 - iOS 构建验证；当前没有 macOS/Xcode 环境，按维护者指示暂缓。
 
-## 待项目负责人确认
+## 当前待验证
 
-1. 首个公开版本是否以 Linux + Windows 为主要交付平台。
+1. Android 真机软键盘、IME、生命周期和全屏终端。
+2. Linux 有 Window Manager 的 GNOME/KDE 实机拖动、最小化、最大化和 Resize。
 
 ## 已确认项目身份
 
@@ -233,8 +264,10 @@
 
 ## 当前活动计划
 
-当前没有活动 ExecPlan。下一项工作需先由项目负责人在 Desktop Platform Slot、
-OpenSSH `known_hosts` Import/Export 和 Release Packaging 之间确认优先级。
+- [`Material 3 生产 UI 重构与 Linux 自定义窗口框`](../execplans/active/0012-material3-production-ui-and-linux-window-chrome.md)
+
+当前先完成生产 UI Feature 拆分和 Linux/Android Runtime Evidence；在此之前
+不直接进入 WebDAV、SFTP、Runbook 或 Plugin。
 
 ## 已完成计划
 
@@ -248,3 +281,4 @@ OpenSSH `known_hosts` Import/Export 和 Release Packaging 之间确认优先级�
 - [`Phase 1：SSH Port Forwarding`](../execplans/completed/0008-ssh-port-forwarding.md)
 - [`Phase 1：Private Key Generation and Encrypted Export`](../execplans/completed/0009-private-key-generation-and-encrypted-export.md)
 - [`Phase 1：Terminal Appearance, Font, and Snippet Productization`](../execplans/completed/0010-terminal-appearance-font-and-snippet-productization.md)
+- [`Linux/Android Material 3 设计评审网页`](../execplans/completed/0011-linux-android-material3-design-review.md)
